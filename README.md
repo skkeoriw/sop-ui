@@ -60,21 +60,18 @@ npm run build
 nohup node scripts/serve.mjs --host 0.0.0.0 --port 5180 > /tmp/sop-ui.log 2>&1 &
 ```
 
-Then register the local port with the machine's channel registration tool. On
-the current 165 SOP UI machine, `ai-api-cli` is not installed and is not
-available from npm. The existing channel tool is the same auto-domain agent used
-by the other services:
+Then register the local port with `ai-api-cli`. On the current 165 SOP UI
+machine, no global `ai-api-cli` command was installed and no npm package with
+that name exists, so this repo provides a small compatible wrapper that calls the
+machine's existing auto-domain agent:
 
 ```bash
 METADATA='{"title":"SOP UI","type":"frontend","sop_ui":"true","runtime_endpoint":"https://youtube-wiki.chxyka.ccwu.cc","sop_api":"https://youtube-wiki.chxyka.ccwu.cc/api/sop","github_repo":"https://github.com/skkeoriw/sop-ui","local_port":"5180"}'
 
-nohup node /root/.auto-domain/agent.js \
-  --port=5180 \
-  --token=myproxy-token-2026 \
+nohup npm run ai-api-cli -- register \
   --name=sop-ui \
+  --port=5180 \
   --metadata="$METADATA" \
-  --replace \
-  --server=wss://tunnel-api.chxyka.ccwu.cc \
   > /tmp/sop-ui-domain.log 2>&1 &
 ```
 
