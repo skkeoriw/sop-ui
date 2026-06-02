@@ -14,6 +14,7 @@ import {
 import type { DagEdge, DagNode, NodeDetail, NodeLog, SopDag, SopRun, SopSummary } from "./types";
 
 const STATUS_ORDER = ["failed", "running", "waiting", "skipped", "done"];
+const PREFERRED_SOP_ID = "wiki-sop-dag-smoke";
 
 function statusClass(status = "waiting") {
   if (status === "done") return "done";
@@ -181,8 +182,9 @@ export default function App() {
     const items = manifest.sops || [];
     setSops(items);
     if (!selectedSop && items[0]) {
-      setSelectedSop(items[0].id);
-      setRepo(items[0].repo || repo);
+      const preferred = items.find((item) => item.id === PREFERRED_SOP_ID) || items[0];
+      setSelectedSop(preferred.id);
+      setRepo(preferred.repo || repo);
     }
   }, [endpoint, repo, selectedSop]);
 

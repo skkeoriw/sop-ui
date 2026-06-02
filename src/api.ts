@@ -17,12 +17,10 @@ export function normalizeEndpoint(value: string): string {
 
 async function requestJson<T>(endpoint: string, path: string, init?: RequestInit): Promise<T> {
   const url = `${normalizeEndpoint(endpoint)}${path}`;
+  const headers = init?.headers ? { ...(init.headers as Record<string, string>) } : undefined;
   const response = await fetch(url, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {})
-    }
+    headers
   });
   const text = await response.text();
   if (!response.ok) {
@@ -87,6 +85,9 @@ export async function triggerRun(
 ): Promise<TriggerResponse> {
   return requestJson<TriggerResponse>(endpoint, `/api/sop/${encodeURIComponent(sopId)}/runs`, {
     method: "POST",
+    headers: {
+      "Content-Type": "text/plain"
+    },
     body: JSON.stringify({
       repo,
       input: { url }
