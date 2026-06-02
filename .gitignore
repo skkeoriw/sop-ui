@@ -3,3 +3,6 @@ dist
 .DS_Store
 .env.local
 npm-debug.log*
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
