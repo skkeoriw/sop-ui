@@ -2,14 +2,18 @@ import type {
   DagNode,
   NodeDetail,
   NodeLog,
+  RuntimeChannel,
   RunsResponse,
   SopDag,
   SopManifest,
   SopRun,
+  TunnelListResponse,
+  TunnelMetadata,
   TriggerResponse
 } from "./types";
 
 export const DEFAULT_ENDPOINT = "https://youtube-wiki.chxyka.ccwu.cc";
+export const TUNNEL_ADMIN_API = "https://tunnel-api.chxyka.ccwu.cc";
 
 export function normalizeEndpoint(value: string): string {
   return value.trim().replace(/\/+$/, "");
@@ -35,6 +39,46 @@ async function requestJson<T>(endpoint: string, path: string, init?: RequestInit
 
 export async function getManifest(endpoint: string): Promise<SopManifest> {
   return requestJson<SopManifest>(endpoint, "/api/sop");
+}
+
+function parseMetadata(value: unknown): TunnelMetadata | undefined {
+  if (!value) return undefined;
+  if (typeof value === "object") return value as TunnelMetadata;
+  if (typeof value !== "string") return undefined;
+  try {
+    return JSON.parse(value) as TunnelMetadata;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function getRuntimeChannels(): Promise<RuntimeChannel[]> {
+  const response = await fetch(`${TUNNEL_ADMIN_API}/admin/tunnels?limit=200`);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}: ${text.slice(0, 500)}`);
+  }
+  const data = JSON.parse(text) as TunnelListResponse;
+  const channels: RuntimeChannel[] = [];
+  for (const tunnel of data.tunnels || []) {
+    const metadata = parseMetadata(tunnel.metadata);
+    if (metadata?.type !== "sop-runtime") continue;
+    const channelUrl = normalizeEndpoint(metadata.channel_url || metadata.endpoint_url || "");
+    if (!channelUrl) continue;
+    const runtimeId = metadata.runtime_id || tunnel.subdomain;
+    channels.push({
+      id: runtimeId,
+      subdomain: tunnel.subdomain,
+      status: tunnel.status,
+      local_status: tunnel.local_status,
+      runtime_id: runtimeId,
+      channel_name: metadata.channel_name || tunnel.subdomain,
+      channel_url: channelUrl,
+      spi_base_url: metadata.spi_base_url,
+      wiki_repo: metadata.wiki_repo
+    });
+  }
+  return channels.sort((a, b) => a.channel_name.localeCompare(b.channel_name));
 }
 
 export async function getDag(endpoint: string, sopId: string): Promise<SopDag> {

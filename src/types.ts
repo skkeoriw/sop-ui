@@ -25,6 +25,46 @@ export interface SopManifest {
   sops: SopSummary[];
 }
 
+export interface TunnelMetadata {
+  title?: string;
+  type?: string;
+  runtime_id?: string;
+  channel_name?: string;
+  channel_url?: string;
+  spi_base_url?: string;
+  supported_sop_types?: string[];
+  ui_url?: string;
+  endpoint_url?: string;
+  wiki_repo?: string;
+}
+
+export interface TunnelRecord {
+  subdomain: string;
+  status?: string;
+  local_status?: string;
+  client_ip?: string;
+  local_port?: string;
+  metadata?: string | TunnelMetadata;
+  created_at?: string;
+  last_seen_at?: string;
+}
+
+export interface TunnelListResponse {
+  tunnels: TunnelRecord[];
+}
+
+export interface RuntimeChannel {
+  id: string;
+  subdomain: string;
+  status?: string;
+  local_status?: string;
+  runtime_id: string;
+  channel_name: string;
+  channel_url: string;
+  spi_base_url?: string;
+  wiki_repo?: string;
+}
+
 export interface DagNode {
   id: string;
   title?: string;

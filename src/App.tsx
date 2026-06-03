@@ -3,6 +3,7 @@ import {
   DEFAULT_ENDPOINT,
   getDag,
   getManifest,
+  getRuntimeChannels,
   getNodeDetail,
   getNodeLog,
   getRun,
@@ -11,7 +12,7 @@ import {
   normalizeEndpoint,
   triggerRun
 } from "./api";
-import type { DagEdge, DagNode, NodeDetail, NodeLog, SopDag, SopRun, SopSummary } from "./types";
+import type { DagEdge, DagNode, NodeDetail, NodeLog, RuntimeChannel, SopDag, SopRun, SopSummary } from "./types";
 
 const STATUS_ORDER = ["failed", "running", "waiting", "skipped", "done"];
 const PREFERRED_INSTANCE_ID = "wiki-sop-dag-smoke";
@@ -159,6 +160,8 @@ function DagView({
 export default function App() {
   const [endpoint, setEndpoint] = useState(getInitialEndpoint);
   const [endpointDraft, setEndpointDraft] = useState(endpoint);
+  const [runtimeChannels, setRuntimeChannels] = useState<RuntimeChannel[]>([]);
+  const [runtimeError, setRuntimeError] = useState("");
   const [sops, setSops] = useState<SopSummary[]>([]);
   const [runtimeId, setRuntimeId] = useState("");
   const [channelName, setChannelName] = useState("");
@@ -177,7 +180,23 @@ export default function App() {
   const [busy, setBusy] = useState(false);
 
   const selectedSopSummary = sops.find((sop) => sop.id === selectedSop);
+  const selectedRuntime = runtimeChannels.find((runtime) => normalizeEndpoint(runtime.channel_url) === endpoint);
   const running = run?.status === "running" || Object.values(run?.nodes || {}).some((status) => status === "running");
+
+  function resetSopState() {
+    setSops([]);
+    setRuntimeId("");
+    setChannelName("");
+    setChannelUrl("");
+    setSelectedSop("");
+    setDag(undefined);
+    setRuns([]);
+    setSelectedRunId("");
+    setRun(undefined);
+    setSelectedNode("");
+    setNodeDetail(undefined);
+    setNodeLog(undefined);
+  }
 
   const loadManifest = useCallback(async () => {
     setError("");
@@ -194,6 +213,22 @@ export default function App() {
       setRepo(preferred.repo || repo);
     }
   }, [endpoint, repo, selectedSop]);
+
+  const loadRuntimeChannels = useCallback(async () => {
+    setRuntimeError("");
+    const channels = await getRuntimeChannels();
+    setRuntimeChannels(channels);
+  }, []);
+
+  function applyEndpointValue(value: string) {
+    const next = normalizeEndpoint(value);
+    setEndpoint(next);
+    setEndpointDraft(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("endpoint", next);
+    window.history.replaceState({}, "", url);
+    resetSopState();
+  }
 
   const loadSopData = useCallback(
     async (sopId: string) => {
@@ -245,6 +280,10 @@ export default function App() {
   }, [loadManifest]);
 
   useEffect(() => {
+    loadRuntimeChannels().catch((err) => setRuntimeError(err.message));
+  }, [loadRuntimeChannels]);
+
+  useEffect(() => {
     if (!selectedSop) return;
     loadSopData(selectedSop).catch((err) => setError(err.message));
   }, [loadSopData, selectedSop]);
@@ -273,23 +312,13 @@ export default function App() {
 
   function applyEndpoint(event: FormEvent) {
     event.preventDefault();
-    const next = normalizeEndpoint(endpointDraft);
-    setEndpoint(next);
-    const url = new URL(window.location.href);
-    url.searchParams.set("endpoint", next);
-    window.history.replaceState({}, "", url);
-    setSelectedSop("");
-    setDag(undefined);
-    setRuns([]);
-    setSelectedRunId("");
-    setRun(undefined);
-    setNodeDetail(undefined);
-    setNodeLog(undefined);
+    applyEndpointValue(endpointDraft);
   }
 
   async function refreshAll() {
     try {
       setBusy(true);
+      await loadRuntimeChannels();
       await loadManifest();
       if (selectedSop) await loadSopData(selectedSop);
       if (selectedRunId) await loadRunData(selectedRunId);
@@ -352,6 +381,32 @@ export default function App() {
 
       <aside className="sidebar">
         <section>
+          <div className="section-title">Runtime</div>
+          {runtimeError && <div className="inline-error">{runtimeError}</div>}
+          {runtimeChannels.map((runtime) => (
+            <button
+              type="button"
+              className={`list-item runtime-item ${normalizeEndpoint(runtime.channel_url) === endpoint ? "active" : ""}`}
+              key={`${runtime.subdomain}-${runtime.runtime_id}`}
+              onClick={() => {
+                setRepo(runtime.wiki_repo || repo);
+                applyEndpointValue(runtime.channel_url);
+              }}
+            >
+              <div className="run-row">
+                <strong>{runtime.channel_name}</strong>
+                <span className={`pill ${runtime.status === "active" ? "done" : "waiting"}`}>
+                  {runtime.local_status || runtime.status || "unknown"}
+                </span>
+              </div>
+              <span>{runtime.runtime_id}</span>
+              <span>{runtime.channel_url}</span>
+            </button>
+          ))}
+          {!runtimeChannels.length && !runtimeError && <div className="empty">No runtimes discovered</div>}
+        </section>
+
+        <section>
           <div className="section-title">Instances</div>
           {sops.map((sop) => (
             <button
@@ -394,7 +449,8 @@ export default function App() {
           <div>
             <h1>{selectedSopSummary?.title || "SOP DAG"}</h1>
             <p>
-              Channel: {channelName || "-"} | Runtime: {runtimeId || "-"} | URL: {channelUrl || endpoint}
+              Channel: {channelName || selectedRuntime?.channel_name || "-"} | Runtime:{" "}
+              {runtimeId || selectedRuntime?.runtime_id || "-"} | URL: {channelUrl || endpoint}
             </p>
             <p>
               Instance: {selectedSopSummary?.instance_id || selectedSop || "-"} | Repo:{" "}
