@@ -14,7 +14,7 @@ import {
 import type { DagEdge, DagNode, NodeDetail, NodeLog, SopDag, SopRun, SopSummary } from "./types";
 
 const STATUS_ORDER = ["failed", "running", "waiting", "skipped", "done"];
-const PREFERRED_SOP_ID = "wiki-sop-dag-smoke";
+const PREFERRED_INSTANCE_ID = "wiki-sop-dag-smoke";
 
 function statusClass(status = "waiting") {
   if (status === "done") return "done";
@@ -160,6 +160,9 @@ export default function App() {
   const [endpoint, setEndpoint] = useState(getInitialEndpoint);
   const [endpointDraft, setEndpointDraft] = useState(endpoint);
   const [sops, setSops] = useState<SopSummary[]>([]);
+  const [runtimeId, setRuntimeId] = useState("");
+  const [channelName, setChannelName] = useState("");
+  const [channelUrl, setChannelUrl] = useState("");
   const [selectedSop, setSelectedSop] = useState("");
   const [dag, setDag] = useState<SopDag>();
   const [runs, setRuns] = useState<SopRun[]>([]);
@@ -179,10 +182,14 @@ export default function App() {
   const loadManifest = useCallback(async () => {
     setError("");
     const manifest = await getManifest(endpoint);
+    setRuntimeId(manifest.runtime_id || manifest.runtime || "");
+    setChannelName(manifest.channel?.name || "");
+    setChannelUrl(manifest.channel?.url || endpoint);
     const items = manifest.sops || [];
     setSops(items);
     if (!selectedSop && items[0]) {
-      const preferred = items.find((item) => item.id === PREFERRED_SOP_ID) || items[0];
+      const preferred =
+        items.find((item) => (item.instance_id || item.id) === PREFERRED_INSTANCE_ID) || items[0];
       setSelectedSop(preferred.id);
       setRepo(preferred.repo || repo);
     }
@@ -331,7 +338,7 @@ export default function App() {
           </div>
         </div>
         <form className="endpoint-form" onSubmit={applyEndpoint}>
-          <label>Runtime endpoint</label>
+          <label>Channel URL</label>
           <input value={endpointDraft} onChange={(event) => setEndpointDraft(event.target.value)} />
           <button type="submit">Apply</button>
         </form>
@@ -345,7 +352,7 @@ export default function App() {
 
       <aside className="sidebar">
         <section>
-          <div className="section-title">SOPs</div>
+          <div className="section-title">Instances</div>
           {sops.map((sop) => (
             <button
               type="button"
@@ -357,7 +364,8 @@ export default function App() {
               }}
             >
               <strong>{sop.title || sop.id}</strong>
-              <span>{sop.repo || sop.id}</span>
+              <span>{sop.instance_id || sop.id}</span>
+              <span>{sop.repo || sop.sop_type || sop.id}</span>
             </button>
           ))}
         </section>
@@ -385,7 +393,13 @@ export default function App() {
         <div className="main-head">
           <div>
             <h1>{selectedSopSummary?.title || "SOP DAG"}</h1>
-            <p>{endpoint}</p>
+            <p>
+              Channel: {channelName || "-"} | Runtime: {runtimeId || "-"} | URL: {channelUrl || endpoint}
+            </p>
+            <p>
+              Instance: {selectedSopSummary?.instance_id || selectedSop || "-"} | Repo:{" "}
+              {selectedSopSummary?.repo || repo || "-"}
+            </p>
           </div>
           <form className="trigger-form" onSubmit={submitTrigger}>
             <input value={repo} onChange={(event) => setRepo(event.target.value)} aria-label="repo" />
@@ -410,6 +424,10 @@ export default function App() {
           <div className="fact-grid">
             <span>pipeline</span>
             <code>{run?.pipeline_id || "-"}</code>
+            <span>instance</span>
+            <code>{selectedSopSummary?.instance_id || selectedSop || "-"}</code>
+            <span>repo</span>
+            <code>{selectedSopSummary?.repo || run?.repo || "-"}</code>
             <span>run_id</span>
             <code>{nodeDetail?.run_id || "-"}</code>
             <span>mode</span>

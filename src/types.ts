@@ -2,6 +2,8 @@ export type NodeStatus = "waiting" | "running" | "done" | "failed" | "skipped" |
 
 export interface SopSummary {
   id: string;
+  instance_id?: string;
+  sop_type?: string;
   title: string;
   version?: string;
   repo?: string;
@@ -10,8 +12,16 @@ export interface SopSummary {
   runs_url?: string;
 }
 
+export interface SopChannel {
+  name?: string;
+  url?: string;
+  spi_base_url?: string;
+}
+
 export interface SopManifest {
   runtime?: string;
+  runtime_id?: string;
+  channel?: SopChannel;
   sops: SopSummary[];
 }
 
