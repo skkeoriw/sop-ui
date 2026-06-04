@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { getMode, getProvider, normalizeEndpoint, setMode as writeMode } from "./data/provider";
 import { queryKeys } from "./data/query-keys";
-import type { Dag, DagNode, DataMode, Instance, Run, Runtime, StageStatus } from "./data/types";
+import type { Artifact, Dag, DagNode, DataMode, Instance, Run, Runtime, StageStatus } from "./data/types";
 
 type InspectorTab = "overview" | "inputs" | "outputs" | "logs";
 
@@ -363,6 +363,12 @@ export default function App() {
               {inspectorTab === "overview" && (
                 <>
                   <DetailBlock title="Runtime Context"><KeyValues data={{ runtime: runtime.id, instance: instance.instanceId, repo: instance.repo, pipeline: selectedRun.pipelineId, mode: nodeQuery.data?.mode || selectedStage.mode }} /></DetailBlock>
+                  <DetailBlock title="Executor"><KeyValues data={nodeQuery.data?.executor || {}} /></DetailBlock>
+                  {nodeQuery.data?.validation && (
+                    <DetailBlock title="Output Validation">
+                      <ValidationSummary validation={nodeQuery.data.validation} />
+                    </DetailBlock>
+                  )}
                   <DetailBlock title="Stage Summary">
                     <p className="body-copy">{nodeQuery.data?.error || selectedStage.summary || selectedStage.id}</p>
                     {selectedStatus === "failed" && (mode === "mock" && provider.retryNode
@@ -371,8 +377,21 @@ export default function App() {
                   </DetailBlock>
                 </>
               )}
-              {inspectorTab === "inputs" && <DetailBlock title="Inputs"><KeyValues data={nodeQuery.data?.inputs || selectedStage.inputs} /></DetailBlock>}
-              {inspectorTab === "outputs" && <DetailBlock title="Outputs"><KeyValues data={nodeQuery.data?.outputs || selectedStage.outputs} /></DetailBlock>}
+              {inspectorTab === "inputs" && (
+                <>
+                  <DetailBlock title="Declared Inputs"><KeyValues data={nodeQuery.data?.declaredInputs || selectedStage.inputs} /></DetailBlock>
+                  <DetailBlock title="Resolved Inputs"><KeyValues data={nodeQuery.data?.resolvedInputs || {}} /></DetailBlock>
+                </>
+              )}
+              {inspectorTab === "outputs" && (
+                <>
+                  <DetailBlock title="Declared Outputs"><KeyValues data={nodeQuery.data?.declaredOutputs || selectedStage.outputs} /></DetailBlock>
+                  <DetailBlock title="Actual Outputs"><KeyValues data={nodeQuery.data?.actualOutputs || {}} /></DetailBlock>
+                  <DetailBlock title={`Artifacts · ${nodeQuery.data?.artifacts.length || 0}`}>
+                    <ArtifactList artifacts={nodeQuery.data?.artifacts || []} />
+                  </DetailBlock>
+                </>
+              )}
               {inspectorTab === "logs" && <DetailBlock title="Logs">{logQuery.isLoading ? <Skeleton /> : <pre className="log-box">{logQuery.data?.log || "没有日志"}</pre>}</DetailBlock>}
             </>
           )}
@@ -429,10 +448,53 @@ function DetailBlock({ title, children }: { title: string; children: React.React
   return <section className="detail-block"><div className="section-title"><span>{title}</span></div>{children}</section>;
 }
 
-function KeyValues({ data }: { data: Record<string, string> }) {
+function KeyValues({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data || {});
   if (!entries.length) return <Empty text="没有数据" />;
-  return <div className="kv">{entries.map(([key, value]) => <div key={key} className="kv-row"><span>{key}</span><code>{value || "-"}</code></div>)}</div>;
+  return <div className="kv">{entries.map(([key, value]) => <div key={key} className="kv-row"><span>{key}</span><code>{formatValue(value)}</code></div>)}</div>;
+}
+
+function formatValue(value: unknown) {
+  if (value === undefined || value === null || value === "") return "-";
+  if (typeof value === "string") return value;
+  return JSON.stringify(value, null, 2);
+}
+
+function ValidationSummary({ validation }: { validation: { status: string; missingOutputs: string[]; unexpectedOutputs: string[] } }) {
+  return (
+    <div className={`validation-summary ${validation.status}`}>
+      <div className="row"><strong>{validation.status === "passed" ? "Contract passed" : "Contract warning"}</strong><span className={`status-pill ${validation.status === "passed" ? "done" : "waiting"}`}>{validation.status}</span></div>
+      {validation.missingOutputs.length > 0 && <p>缺失输出：{validation.missingOutputs.join(", ")}</p>}
+      {validation.unexpectedOutputs.length > 0 && <p>意外输出：{validation.unexpectedOutputs.join(", ")}</p>}
+      {!validation.missingOutputs.length && !validation.unexpectedOutputs.length && <p>声明输出均已解析到实际产物。</p>}
+    </div>
+  );
+}
+
+function ArtifactList({ artifacts }: { artifacts: Artifact[] }) {
+  const [openId, setOpenId] = useState("");
+  if (!artifacts.length) return <Empty text="当前历史 Run 没有解析到 Artifact" />;
+  return (
+    <div className="artifact-list">
+      {artifacts.map((artifact) => (
+        <article key={artifact.id} className="artifact-item">
+          <button type="button" className="artifact-head" onClick={() => setOpenId(openId === artifact.id ? "" : artifact.id)}>
+            <div><strong>{artifact.title}</strong><span>{artifact.type} · {artifact.format} · {formatBytes(artifact.size)}</span></div>
+            <span className={`resolution ${artifact.resolution}`}>{artifact.resolution}</span>
+          </button>
+          <code>{artifact.path}</code>
+          {artifact.tags.length > 0 && <div className="artifact-tags">{artifact.tags.map((tag) => <span key={tag}>{tag}</span>)}</div>}
+          {openId === artifact.id && <pre className="artifact-preview">{artifact.preview || "该 Artifact 暂不支持内联预览。"}</pre>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function LoadingOrEmpty({ loading, text }: { loading: boolean; text: string }) {

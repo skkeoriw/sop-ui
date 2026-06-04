@@ -65,6 +65,35 @@ export interface NodeDetail {
   inputs: Record<string, string>;
   outputs: Record<string, string>;
   optionalInputs: Record<string, string>;
+  executor: Record<string, unknown>;
+  declaredInputs: Record<string, unknown>;
+  resolvedInputs: Record<string, unknown>;
+  declaredOutputs: Record<string, unknown>;
+  actualOutputs: Record<string, string[]>;
+  artifacts: Artifact[];
+  validation: NodeValidation;
+}
+
+export interface Artifact {
+  id: string;
+  producer: string;
+  output: string;
+  type: string;
+  format: string;
+  path: string;
+  title: string;
+  size: number;
+  mimeType: string;
+  tags: string[];
+  resolution: string;
+  preview?: string;
+  previewTruncated?: boolean;
+}
+
+export interface NodeValidation {
+  status: string;
+  missingOutputs: string[];
+  unexpectedOutputs: string[];
 }
 
 export interface NodeLog {

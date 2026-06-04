@@ -141,7 +141,32 @@ export const sopProvider: SopDataProvider = {
       error: String(raw.error || ""),
       inputs: (raw.inputs as Record<string, string>) || {},
       outputs: (raw.outputs as Record<string, string>) || {},
-      optionalInputs: (raw.optional_inputs as Record<string, string>) || {}
+      optionalInputs: (raw.optional_inputs as Record<string, string>) || {},
+      executor: (raw.executor as Record<string, unknown>) || {},
+      declaredInputs: (raw.declared_inputs as Record<string, unknown>) || {},
+      resolvedInputs: (raw.resolved_inputs as Record<string, unknown>) || {},
+      declaredOutputs: (raw.declared_outputs as Record<string, unknown>) || {},
+      actualOutputs: (raw.actual_outputs as Record<string, string[]>) || {},
+      artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map((artifact) => ({
+        id: String(artifact.id || ""),
+        producer: String(artifact.producer || ""),
+        output: String(artifact.output || ""),
+        type: String(artifact.type || "file"),
+        format: String(artifact.format || "binary"),
+        path: String(artifact.path || ""),
+        title: String(artifact.title || artifact.path || ""),
+        size: Number(artifact.size || 0),
+        mimeType: String(artifact.mime_type || "application/octet-stream"),
+        tags: (artifact.tags as string[]) || [],
+        resolution: String(artifact.resolution || ""),
+        preview: artifact.preview ? String(artifact.preview) : undefined,
+        previewTruncated: Boolean(artifact.preview_truncated)
+      })),
+      validation: {
+        status: String((raw.validation as Record<string, unknown>)?.status || "unknown"),
+        missingOutputs: ((raw.validation as Record<string, unknown>)?.missing_outputs as string[]) || [],
+        unexpectedOutputs: ((raw.validation as Record<string, unknown>)?.unexpected_outputs as string[]) || []
+      }
     };
   },
 

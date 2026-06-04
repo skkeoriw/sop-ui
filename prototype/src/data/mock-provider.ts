@@ -100,6 +100,26 @@ export const mockProvider: SopDataProvider = {
       inputs: stage.inputs,
       outputs: stage.outputs,
       optionalInputs: {},
+      executor: { type: "agent-script", skill: `sop-${nodeId}` },
+      declaredInputs: Object.fromEntries(Object.entries(stage.inputs).map(([key, value]) => [key, { from: value, required: true }])),
+      resolvedInputs: Object.fromEntries(Object.keys(stage.inputs).map((key) => [key, key === "source_url" ? run.sourceUrl : [`raw/mock/${key}.md`]])),
+      declaredOutputs: Object.fromEntries(Object.entries(stage.outputs).map(([key, value]) => [key, { path: value, type: "files" }])),
+      actualOutputs: Object.fromEntries(Object.keys(stage.outputs).map((key) => [key, [`raw/mock/${nodeId}-${key}.md`]])),
+      artifacts: Object.keys(stage.outputs).map((output, index) => ({
+        id: `mock-${nodeId}-${output}`,
+        producer: nodeId,
+        output,
+        type: output.includes("image") ? "image" : "research.report",
+        format: "markdown",
+        path: `raw/mock/${nodeId}-${output}.md`,
+        title: `${stage.title} ${output}`,
+        size: 2048 + index * 321,
+        mimeType: "text/markdown",
+        tags: ["mock", "wiki-source"],
+        resolution: "recorded",
+        preview: `# ${stage.title}\n\n这是 ${output} 的 mock Artifact 预览，用于验证节点实际产物交互。`
+      })),
+      validation: { status: "passed", missingOutputs: [], unexpectedOutputs: [] },
       updatedAt: run.updatedAt,
       error: run.nodes[nodeId] === "failed" ? "Mock NotebookLM bridge error" : ""
     };
