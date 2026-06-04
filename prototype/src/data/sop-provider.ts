@@ -146,7 +146,7 @@ export const sopProvider: SopDataProvider = {
       declaredInputs: (raw.declared_inputs as Record<string, unknown>) || {},
       resolvedInputs: (raw.resolved_inputs as Record<string, unknown>) || {},
       declaredOutputs: (raw.declared_outputs as Record<string, unknown>) || {},
-      actualOutputs: (raw.actual_outputs as Record<string, string[]>) || {},
+      actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
       artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map((artifact) => ({
         id: String(artifact.id || ""),
         producer: String(artifact.producer || ""),

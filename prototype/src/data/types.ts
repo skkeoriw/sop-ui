@@ -69,7 +69,7 @@ export interface NodeDetail {
   declaredInputs: Record<string, unknown>;
   resolvedInputs: Record<string, unknown>;
   declaredOutputs: Record<string, unknown>;
-  actualOutputs: Record<string, string[]>;
+  actualOutputs: Record<string, unknown>;
   artifacts: Artifact[];
   validation: NodeValidation;
 }
