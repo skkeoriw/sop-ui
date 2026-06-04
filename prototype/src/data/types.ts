@@ -71,6 +71,9 @@ export interface NodeDetail {
   declaredOutputs: Record<string, unknown>;
   actualOutputs: Record<string, unknown>;
   artifacts: Artifact[];
+  discoveredCandidates?: Artifact[];
+  capabilities?: Record<string, unknown>;
+  plan?: Record<string, unknown> | null;
   validation: NodeValidation;
   infra?: { tgNotify?: boolean; logRecord?: boolean };
 }
@@ -129,6 +132,7 @@ export interface NodeConfig {
   params?: Record<string, unknown>;
   skillScript?: string | null;
   skillReadme?: string | null;
+  manifest?: Record<string, unknown>;
 }
 
 export interface TriggerInput {

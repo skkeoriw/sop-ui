@@ -123,9 +123,14 @@ export default function App() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<DataMode>(getMode);
   const provider = useMemo(() => getProvider(mode), [mode]);
-  const [manualRuntime, setManualRuntime] = useState<Runtime>();
-  const [manualEndpoint, setManualEndpoint] = useState("");
-  const [runtimeId, setRuntimeId] = useState("");
+  const initialEndpoint = useMemo(() => normalizeEndpoint(new URL(window.location.href).searchParams.get("endpoint") || ""), []);
+  const initialManualRuntime = useMemo<Runtime | undefined>(() => initialEndpoint ? ({
+    id: `manual:${initialEndpoint}`, name: initialEndpoint.replace(/^https?:\/\//, ""), endpoint: initialEndpoint,
+    status: "manual", localStatus: "unknown", manual: true
+  }) : undefined, [initialEndpoint]);
+  const [manualRuntime, setManualRuntime] = useState<Runtime | undefined>(initialManualRuntime);
+  const [manualEndpoint, setManualEndpoint] = useState(initialEndpoint);
+  const [runtimeId, setRuntimeId] = useState(initialManualRuntime?.id || "");
   const [instanceId, setInstanceId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedStageId, setSelectedStageId] = useState("");
@@ -137,6 +142,7 @@ export default function App() {
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
   const [rawLogOpen, setRawLogOpen] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<"live" | "reconnecting" | "polling fallback" | "closed">("closed");
 
   const runtimesQuery = useQuery({ queryKey: queryKeys.runtimes(mode), queryFn: () => provider.listRuntimes(), retry: 1 });
   const runtimes = useMemo(() => {
@@ -154,7 +160,7 @@ export default function App() {
     queryKey: queryKeys.runs(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listRuns(runtime, instance.instanceId),
     enabled: Boolean(runtime && instance),
-    refetchInterval: (query) => (query.state.data?.some((run) => run.status === "running") ? 3000 : false)
+    refetchInterval: (query) => (query.state.data?.some((run) => run.status === "running") && streamStatus !== "live" ? 15000 : false)
   });
   const runs = runsQuery.data || [];
   const selectedRunSummary = runs.find((run) => run.pipelineId === selectedRunId) || runs[0];
@@ -163,7 +169,7 @@ export default function App() {
     queryKey: queryKeys.run(mode, runtime, instance?.instanceId || "", selectedRunSummary?.pipelineId || ""),
     queryFn: () => provider.getRun(runtime, instance.instanceId, selectedRunSummary.pipelineId),
     enabled: Boolean(runtime && instance && selectedRunSummary),
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 3000 : false)
+    refetchInterval: (query) => (query.state.data?.status === "running" && streamStatus !== "live" ? 15000 : false)
   });
   const selectedRun = runQuery.data || selectedRunSummary;
   const dag = dagQuery.data;
@@ -233,6 +239,46 @@ export default function App() {
   useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); }, [instanceId]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 3000); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => { setInspectorTab("config"); setShowNodeConfig(false); }, [selectedStageId]);
+  useEffect(() => {
+    if (mode !== "real" || !runtime || !instance || !selectedRun || selectedRun.status !== "running") {
+      setStreamStatus("closed");
+      return;
+    }
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instance.instanceId)}/runs/${encodeURIComponent(selectedRun.pipelineId)}/events/stream`;
+    const stream = new EventSource(url);
+    let fallbackTimer = 0;
+    const refreshFromEvent = () => {
+      setStreamStatus("live");
+      queryClient.invalidateQueries({ queryKey: ["sop", mode] });
+    };
+    const eventTypes = [
+      "node.started", "node.progress", "artifact.created",
+      "git.committed", "git.failed", "telegram.sent", "telegram.failed",
+      "node.completed", "node.failed", "node.skipped", "node.cancelled",
+      "run.completed", "run.failed", "run.cancelled"
+    ];
+    eventTypes.forEach((eventType) => stream.addEventListener(eventType, refreshFromEvent));
+    stream.onopen = () => {
+      window.clearTimeout(fallbackTimer);
+      setStreamStatus("live");
+    };
+    stream.onerror = () => {
+      setStreamStatus("reconnecting");
+      window.clearTimeout(fallbackTimer);
+      fallbackTimer = window.setTimeout(() => setStreamStatus("polling fallback"), 5000);
+    };
+    return () => {
+      window.clearTimeout(fallbackTimer);
+      eventTypes.forEach((eventType) => stream.removeEventListener(eventType, refreshFromEvent));
+      stream.close();
+      setStreamStatus("closed");
+    };
+  }, [mode, runtime?.id, instance?.instanceId, selectedRun?.pipelineId, selectedRun?.status, queryClient]);
+  useEffect(() => {
+    if (!initialEndpoint || !runtimes.length) return;
+    const matched = runtimes.find((item) => normalizeEndpoint(item.endpoint) === initialEndpoint);
+    if (matched && runtimeId !== matched.id) setRuntimeId(matched.id);
+  }, [initialEndpoint, runtimes, runtimeId]);
 
   const flowNodes = useMemo(() => buildFlowNodes(dag, selectedRun, selectedStageId, openNodeConfig), [dag, selectedRun, selectedStageId]);
   const flowEdges = useMemo(() => buildFlowEdges(dag, selectedRun), [dag, selectedRun]);
@@ -364,7 +410,7 @@ export default function App() {
           </div>
           <Metric label="Stages done" value={`${completedCount}/${dag?.nodes.length || 0}`} subtext="selected run" />
           <Metric label="Active runs" value={runs.filter((run) => run.status === "running").length} subtext="自动每 3 秒刷新" />
-          <Metric label="Failed nodes" value={failedCount} subtext="点击节点 → Retry" />
+          <Metric label="Live events" value={streamStatus} subtext={streamStatus === "live" ? "SSE 实时更新" : "15 秒轮询降级"} />
         </section>
 
         <section className="flow-panel">
@@ -468,6 +514,9 @@ export default function App() {
                         <pre className="log-box" style={{ fontSize: 11, maxHeight: 260 }}>{cfg.skillReadme}</pre>
                       </DetailBlock>
                     )}
+                    {cfg.manifest && Object.keys(cfg.manifest).length > 0 && (
+                      <DetailBlock title="Node Manifest"><KeyValues data={cfg.manifest} /></DetailBlock>
+                    )}
                   </>
                 );
               })()}
@@ -519,11 +568,12 @@ export default function App() {
                       </DetailBlock>
 
                       <DetailBlock title="Capabilities">
-                        <div className="capabilities-grid">
-                          <CapabilityRow label="TG Notify" enabled={nodeQuery.data?.infra?.tgNotify !== false} />
-                          <CapabilityRow label="Log Record" enabled={nodeQuery.data?.infra?.logRecord !== false} />
-                        </div>
+                        <KeyValues data={nodeQuery.data?.capabilities || {
+                          telegram: { enabled: nodeQuery.data?.infra?.tgNotify !== false },
+                          log: { enabled: nodeQuery.data?.infra?.logRecord !== false }
+                        }} />
                       </DetailBlock>
+                      {nodeQuery.data?.plan && <DetailBlock title="Wiki Build Plan"><KeyValues data={nodeQuery.data.plan} /></DetailBlock>}
                     </>
                   )}
 
@@ -587,9 +637,15 @@ export default function App() {
 
                   {/* ── artifacts tab ── */}
                   {inspectorTab === "artifacts" && (
-                    <DetailBlock title={`Artifacts · ${nodeQuery.data?.artifacts.length || 0}`}>
-                      <ArtifactList artifacts={nodeQuery.data?.artifacts || []} />
-                    </DetailBlock>
+                    <>
+                      <DetailBlock title={`Actual Artifacts · ${nodeQuery.data?.artifacts.length || 0}`}>
+                        <ArtifactList artifacts={nodeQuery.data?.artifacts || []} />
+                      </DetailBlock>
+                      <DetailBlock title={`Discovered Candidates · ${nodeQuery.data?.discoveredCandidates?.length || 0}`}>
+                        <p className="candidate-warning">这些文件来自共享路径扫描，无法确认属于当前 Run，不会作为下游节点输入。</p>
+                        <ArtifactList artifacts={nodeQuery.data?.discoveredCandidates || []} />
+                      </DetailBlock>
+                    </>
                   )}
 
                   {/* ── logs tab: structured events + raw log ── */}

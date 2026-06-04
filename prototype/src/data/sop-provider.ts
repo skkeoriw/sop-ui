@@ -182,6 +182,9 @@ export const sopProvider: SopDataProvider = {
       declaredOutputs: (raw.declared_outputs as Record<string, unknown>) || {},
       actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
       artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+      discoveredCandidates: ((raw.discovered_candidates as Array<Record<string, unknown>>) || []).map(mapArtifact),
+      capabilities: (raw.capabilities as Record<string, unknown>) || {},
+      plan: (raw.plan as Record<string, unknown>) || null,
       validation: {
         status: String((raw.validation as Record<string, unknown>)?.status || "unknown"),
         missingOutputs: ((raw.validation as Record<string, unknown>)?.missing_outputs as string[]) || [],
@@ -237,6 +240,7 @@ export const sopProvider: SopDataProvider = {
       params: (raw.params as Record<string, unknown>) || {},
       skillScript: raw.skill_script ? String(raw.skill_script) : null,
       skillReadme: raw.skill_readme ? String(raw.skill_readme) : null,
+      manifest: (raw.manifest as Record<string, unknown>) || {},
     } satisfies NodeConfig;
   },
 
