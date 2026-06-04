@@ -1,4 +1,4 @@
-export type StageStatus = "done" | "running" | "waiting" | "failed";
+export type StageStatus = "done" | "running" | "waiting" | "failed" | "cancelled";
 
 export interface RuntimeMock {
   id: string;

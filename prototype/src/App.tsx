@@ -7,29 +7,37 @@ import {
   CheckCircle2,
   CircleDot,
   Clock,
+  Info,
   Loader2,
   Play,
   RefreshCw,
   RotateCcw,
   Search,
-  Server
+  Server,
+  X
 } from "lucide-react";
 import { getMode, getProvider, normalizeEndpoint, setMode as writeMode } from "./data/provider";
 import { queryKeys } from "./data/query-keys";
-import type { Artifact, Dag, DagNode, DataMode, Instance, Run, Runtime, StageStatus } from "./data/types";
+import type { Artifact, Dag, DagNode, DataMode, Instance, NodeEvent, Run, Runtime, StageStatus } from "./data/types";
 
-type InspectorTab = "overview" | "inputs" | "outputs" | "logs";
+type InspectorTab = "config" | "run" | "artifacts" | "logs";
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
   status: StageStatus;
   selected: boolean;
+  onInfo: (id: string) => void;
 }
 
 const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "done"];
 
 function statusLabel(status: StageStatus) {
-  return status === "done" ? "Done" : status === "running" ? "Running" : status === "failed" ? "Failed" : status === "skipped" ? "Skipped" : "Waiting";
+  if (status === "done") return "Done";
+  if (status === "running") return "Running";
+  if (status === "failed") return "Failed";
+  if (status === "skipped") return "Skipped";
+  if (status === "cancelled") return "Cancelled";
+  return "Waiting";
 }
 
 function statusIcon(status: StageStatus) {
@@ -39,25 +47,73 @@ function statusIcon(status: StageStatus) {
   return <Clock size={15} />;
 }
 
-const StageNode = memo(({ data }: NodeProps<Node<StageNodeData>>) => {
-  const { stage, status, selected } = data;
+const EVENT_META: Record<string, { icon: string; label: string }> = {
+  stage_start:        { icon: "⏳", label: "开始执行" },
+  stage_done:         { icon: "✅", label: "执行完成" },
+  stage_failed:       { icon: "❌", label: "执行失败" },
+  stage_skipped:      { icon: "⏭️", label: "已跳过" },
+  tg_notify_sent:     { icon: "📤", label: "TG 通知" },
+  tg_notify_failed:   { icon: "📤", label: "TG 通知失败" },
+  pipeline_cancelled: { icon: "🚫", label: "Pipeline 已取消" },
+  node_retry:         { icon: "🔄", label: "节点重试" },
+  node_cancelled:     { icon: "🚫", label: "节点已取消" },
+};
+
+function EventRow({ event }: { event: NodeEvent }) {
+  const meta = EVENT_META[event.event] || { icon: "•", label: event.event };
+  const time = event.ts ? event.ts.slice(11, 19) : "";
+  const isTg = event.event.startsWith("tg_notify");
+  const ok = event.ok !== false;
+  let detail = "";
+  if (event.duration_s) detail = `${event.duration_s}s`;
+  else if (event.trigger) detail = `(${event.trigger})`;
+  else if (event.error) detail = event.error.slice(0, 60);
   return (
-    <button type="button" className={`flow-node ${status} ${selected ? "selected" : ""}`}>
-      <Handle type="target" position={Position.Left} />
-      <div className="node-top">
-        <span className={`status-pill ${status}`}>
-          {statusIcon(status)}
-          {statusLabel(status)}
-        </span>
-        <span className="node-mode">{stage.mode}</span>
-      </div>
-      <strong>{stage.title}</strong>
-      <span>{stage.summary || stage.id}</span>
-      <div className="node-progress">
-        <i style={{ width: status === "done" ? "100%" : status === "running" ? "62%" : status === "failed" ? "100%" : "0%" }} />
-      </div>
-      <Handle type="source" position={Position.Right} />
-    </button>
+    <div className={`event-row ${isTg && !ok ? "event-error" : ""}`}>
+      <span className="event-icon">{meta.icon}</span>
+      <span className="event-time">{time}</span>
+      <span className="event-label">{meta.label}</span>
+      {detail && <span className="event-detail">{detail}</span>}
+      {isTg && <span className={`status-pill ${ok ? "done" : "failed"}`}>{ok ? "✅" : "❌"}</span>}
+    </div>
+  );
+}
+
+function CapabilityRow({ label, enabled }: { label: string; enabled: boolean }) {
+  return (
+    <div className="capability-row">
+      <span>{label}</span>
+      <span className={`status-pill ${enabled ? "done" : "waiting"}`}>{enabled ? "enabled" : "disabled"}</span>
+    </div>
+  );
+}
+
+const StageNode = memo(({ data }: NodeProps<Node<StageNodeData>>) => {
+  const { stage, status, selected, onInfo } = data;
+  return (
+    <div className={`flow-node-wrap ${selected ? "selected" : ""}`}>
+      <button type="button" className={`flow-node ${status}`}>
+        <Handle type="target" position={Position.Left} />
+        <div className="node-top">
+          <span className={`status-pill ${status}`}>{statusIcon(status)}{statusLabel(status)}</span>
+          <span className="node-mode">{stage.mode}</span>
+        </div>
+        <strong>{stage.title}</strong>
+        <span>{stage.summary || stage.id}</span>
+        <div className="node-progress">
+          <i style={{ width: status === "done" ? "100%" : status === "running" ? "62%" : status === "failed" ? "100%" : "0%" }} />
+        </div>
+        <Handle type="source" position={Position.Right} />
+      </button>
+      <button
+        type="button"
+        className="node-info-btn"
+        title="查看节点配置"
+        onClick={(e) => { e.stopPropagation(); onInfo(stage.id); }}
+      >
+        <Info size={13} />
+      </button>
+    </div>
   );
 });
 
@@ -73,36 +129,27 @@ export default function App() {
   const [instanceId, setInstanceId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedStageId, setSelectedStageId] = useState("");
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [triggerUrl, setTriggerUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   const [confirmRealTrigger, setConfirmRealTrigger] = useState(false);
   const [toast, setToast] = useState("");
+  const [showNodeConfig, setShowNodeConfig] = useState(false);
+  const [nodeConfigId, setNodeConfigId] = useState("");
+  const [rawLogOpen, setRawLogOpen] = useState(false);
 
-  const runtimesQuery = useQuery({
-    queryKey: queryKeys.runtimes(mode),
-    queryFn: () => provider.listRuntimes(),
-    retry: 1
-  });
+  const runtimesQuery = useQuery({ queryKey: queryKeys.runtimes(mode), queryFn: () => provider.listRuntimes(), retry: 1 });
   const runtimes = useMemo(() => {
     const items = runtimesQuery.data || [];
     return manualRuntime && !items.some((item) => item.endpoint === manualRuntime.endpoint) ? [manualRuntime, ...items] : items;
   }, [manualRuntime, runtimesQuery.data]);
   const runtime = runtimes.find((item) => item.id === runtimeId) || runtimes[0];
 
-  const instancesQuery = useQuery({
-    queryKey: queryKeys.instances(mode, runtime),
-    queryFn: () => provider.listInstances(runtime),
-    enabled: Boolean(runtime)
-  });
+  const instancesQuery = useQuery({ queryKey: queryKeys.instances(mode, runtime), queryFn: () => provider.listInstances(runtime), enabled: Boolean(runtime) });
   const instances = instancesQuery.data || [];
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
 
-  const dagQuery = useQuery({
-    queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""),
-    queryFn: () => provider.getDag(runtime, instance.instanceId),
-    enabled: Boolean(runtime && instance)
-  });
+  const dagQuery = useQuery({ queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""), queryFn: () => provider.getDag(runtime, instance.instanceId), enabled: Boolean(runtime && instance) });
   const runsQuery = useQuery({
     queryKey: queryKeys.runs(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listRuns(runtime, instance.instanceId),
@@ -134,6 +181,11 @@ export default function App() {
     queryFn: () => provider.getNodeLog(runtime, instance.instanceId, selectedRun.pipelineId, selectedStageKey),
     enabled: Boolean(runtime && instance && selectedRun && selectedStage && inspectorTab === "logs")
   });
+  const nodeConfigQuery = useQuery({
+    queryKey: queryKeys.nodeConfig(mode, runtime, instance?.instanceId || "", nodeConfigId),
+    queryFn: () => provider.getNodeConfig(runtime, instance.instanceId, nodeConfigId),
+    enabled: Boolean(runtime && instance && showNodeConfig && nodeConfigId)
+  });
 
   const triggerMutation = useMutation({
     mutationFn: () => provider.triggerRun(runtime, instance.instanceId, { repo: instance.repo, url: triggerUrl }),
@@ -145,72 +197,65 @@ export default function App() {
       if (result.pipelineId) setSelectedRunId(result.pipelineId);
     }
   });
+
   const retryMutation = useMutation({
-    mutationFn: () => provider.retryNode!(runtime, instance.instanceId, selectedRun.pipelineId, selectedStageKey),
+    mutationFn: () => provider.retryNode(runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey),
     onSuccess: async () => {
-      setToast(`${selectedStage?.title || selectedStageKey} 已进入重试`);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, instance.instanceId) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.run(mode, runtime, instance.instanceId, selectedRun.pipelineId) });
+      setToast(`${selectedStage?.title || selectedStageKey} 重试中`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.run(mode, runtime, instance.instanceId, selectedRun!.pipelineId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.node(mode, runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey) });
     }
   });
 
-  useEffect(() => {
-    if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id);
-  }, [runtimeId, runtimes]);
-  useEffect(() => {
-    if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId);
-  }, [instanceId, instances]);
-  useEffect(() => {
-    if (runs.length && !runs.some((run) => run.pipelineId === selectedRunId)) setSelectedRunId(runs[0].pipelineId);
-  }, [runs, selectedRunId]);
-  useEffect(() => {
-    if (dag?.nodes.length && !dag.nodes.some((stage) => stage.id === selectedStageId)) setSelectedStageId(dag.nodes[0].id);
-  }, [dag, selectedStageId]);
-  useEffect(() => {
-    setInstanceId("");
-    setSelectedRunId("");
-    setSelectedStageId("");
-  }, [runtimeId]);
-  useEffect(() => {
-    setSelectedRunId("");
-    setSelectedStageId("");
-  }, [instanceId]);
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(""), 3000);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
+  const cancelRunMutation = useMutation({
+    mutationFn: () => provider.cancelRun(runtime, instance.instanceId, selectedRun!.pipelineId),
+    onSuccess: async () => {
+      setToast("Run 已取消");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.run(mode, runtime, instance.instanceId, selectedRun!.pipelineId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, instance.instanceId) });
+    }
+  });
 
-  const flowNodes = useMemo(() => buildFlowNodes(dag, selectedRun, selectedStageId), [dag, selectedRun, selectedStageId]);
+  const cancelNodeMutation = useMutation({
+    mutationFn: () => provider.cancelNode(runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey),
+    onSuccess: async () => {
+      setToast(`节点 ${selectedStageKey} 已取消`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.run(mode, runtime, instance.instanceId, selectedRun!.pipelineId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.node(mode, runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey) });
+    }
+  });
+
+  useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
+  useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
+  useEffect(() => { if (runs.length && !runs.some((run) => run.pipelineId === selectedRunId)) setSelectedRunId(runs[0].pipelineId); }, [runs, selectedRunId]);
+  useEffect(() => { if (dag?.nodes.length && !dag.nodes.some((stage) => stage.id === selectedStageId)) setSelectedStageId(dag.nodes[0].id); }, [dag, selectedStageId]);
+  useEffect(() => { setInstanceId(""); setSelectedRunId(""); setSelectedStageId(""); }, [runtimeId]);
+  useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); }, [instanceId]);
+  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 3000); return () => window.clearTimeout(timer); }, [toast]);
+  useEffect(() => { setInspectorTab("config"); setShowNodeConfig(false); }, [selectedStageId]);
+
+  const flowNodes = useMemo(() => buildFlowNodes(dag, selectedRun, selectedStageId, openNodeConfig), [dag, selectedRun, selectedStageId]);
   const flowEdges = useMemo(() => buildFlowEdges(dag, selectedRun), [dag, selectedRun]);
   const sortedRuns = [...runs].sort((a, b) => {
     const delta = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
     return delta || b.updatedAt.localeCompare(a.updatedAt);
   });
-  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error, logQuery.error].find(Boolean);
+  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error].find(Boolean);
+  const completedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "done").length : 0;
+  const failedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "failed").length : 0;
 
   function changeMode(nextMode: DataMode) {
     writeMode(nextMode);
     setMode(nextMode);
     setManualRuntime(undefined);
-    setRuntimeId("");
-    setInstanceId("");
-    setSelectedRunId("");
-    setSelectedStageId("");
+    setRuntimeId(""); setInstanceId(""); setSelectedRunId(""); setSelectedStageId("");
   }
 
   function addManualEndpoint(event: FormEvent) {
     event.preventDefault();
     const endpoint = normalizeEndpoint(manualEndpoint);
     if (!endpoint) return;
-    const item: Runtime = {
-      id: `manual:${endpoint}`,
-      name: endpoint.replace(/^https?:\/\//, ""),
-      endpoint,
-      status: "manual",
-      localStatus: "unknown",
-      manual: true
-    };
+    const item: Runtime = { id: `manual:${endpoint}`, name: endpoint.replace(/^https?:\/\//, ""), endpoint, status: "manual", localStatus: "unknown", manual: true };
     setManualRuntime(item);
     setRuntimeId(item.id);
   }
@@ -220,8 +265,25 @@ export default function App() {
     setToast("数据已刷新");
   }
 
-  const completedCount = selectedRun ? Object.values(selectedRun.nodes).filter((value) => value === "done").length : 0;
-  const failedCount = selectedRun ? Object.values(selectedRun.nodes).filter((value) => value === "failed").length : 0;
+  function openNodeConfig(nodeId: string) {
+    setNodeConfigId(nodeId);
+    setShowNodeConfig(true);
+  }
+
+  function handleCancelRun() {
+    if (!window.confirm(`确认取消 Run: ${selectedRun?.pipelineId}？\n当前阶段完成后不会触发下一阶段。`)) return;
+    cancelRunMutation.mutate();
+  }
+
+  function handleCancelNode() {
+    if (!window.confirm(`确认取消节点: ${selectedStageKey}？`)) return;
+    cancelNodeMutation.mutate();
+  }
+
+  function handleRetry() {
+    if (mode === "real" && !window.confirm(`确认重试节点: ${selectedStageKey}？`)) return;
+    retryMutation.mutate();
+  }
 
   return (
     <div className="app-shell">
@@ -235,17 +297,8 @@ export default function App() {
         </div>
         <div className="runtime-switch" role="tablist" aria-label="Runtime selector">
           {runtimes.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`runtime-tab ${runtime?.id === item.id ? "active" : ""}`}
-              role="tab"
-              aria-selected={runtime?.id === item.id}
-              onClick={() => setRuntimeId(item.id)}
-            >
-              <Server size={16} />
-              <span>{item.name}</span>
-              <small>{item.machine || item.localStatus}</small>
+            <button key={item.id} type="button" className={`runtime-tab ${runtime?.id === item.id ? "active" : ""}`} role="tab" aria-selected={runtime?.id === item.id} onClick={() => setRuntimeId(item.id)}>
+              <Server size={16} /><span>{item.name}</span><small>{item.machine || item.localStatus}</small>
             </button>
           ))}
         </div>
@@ -266,10 +319,7 @@ export default function App() {
           <div className="section-title"><span>Runtime</span><span>{mode}</span></div>
           {runtime ? (
             <div className="runtime-card">
-              <div className="row">
-                <strong>{runtime.name}</strong>
-                <span className={`status-pill ${runtime.localStatus === "ok" ? "done" : "waiting"}`}>{runtime.localStatus}</span>
-              </div>
+              <div className="row"><strong>{runtime.name}</strong><span className={`status-pill ${runtime.localStatus === "ok" ? "done" : "waiting"}`}>{runtime.localStatus}</span></div>
               <code>{runtime.endpoint}</code>
               <span>{runtime.manual ? "手动 endpoint" : `${runtime.machine || "remote"} service machine`}</span>
             </div>
@@ -281,7 +331,6 @@ export default function App() {
             </form>
           )}
         </section>
-
         <section>
           <div className="section-title"><span>Instances</span><span>{instances.length}</span></div>
           {instances.map((item) => (
@@ -291,7 +340,6 @@ export default function App() {
           ))}
           {!instances.length && <LoadingOrEmpty loading={instancesQuery.isLoading} text="当前 Runtime 没有 enabled instance" />}
         </section>
-
         <section className="runs-section">
           <div className="section-title"><span>Runs</span><span>{runs.length}</span></div>
           {sortedRuns.map((run) => (
@@ -316,13 +364,21 @@ export default function App() {
           </div>
           <Metric label="Stages done" value={`${completedCount}/${dag?.nodes.length || 0}`} subtext="selected run" />
           <Metric label="Active runs" value={runs.filter((run) => run.status === "running").length} subtext="自动每 3 秒刷新" />
-          <Metric label="Failed nodes" value={failedCount} subtext={mode === "real" ? "真实 Retry SPI 未提供" : "mock retry 可用"} />
+          <Metric label="Failed nodes" value={failedCount} subtext="点击节点 → Retry" />
         </section>
 
         <section className="flow-panel">
           <div className="panel-head">
-            <div><strong>DAG Canvas</strong><span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span></div>
+            <div>
+              <strong>DAG Canvas</strong>
+              <span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
+            </div>
             <div className="head-actions">
+              {selectedRun?.status === "running" && (
+                <button type="button" className="btn-danger-sm" disabled={cancelRunMutation.isPending} onClick={handleCancelRun}>
+                  <X size={14} />Cancel Run
+                </button>
+              )}
               {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
               <button type="button" onClick={() => dag?.nodes[0] && setSelectedStageId(dag.nodes[0].id)}><Search size={15} />Focus</button>
             </div>
@@ -337,80 +393,253 @@ export default function App() {
         </section>
 
         <section className="timeline-panel">
-          <div className="panel-head compact"><strong>Run Timeline</strong><span>点击 Stage 查看详情</span></div>
+          <div className="panel-head compact"><strong>Run Timeline</strong><span>点击 Stage 查看详情 · ⓘ 查看节点配置</span></div>
           <div className="timeline">
             {(dag?.nodes || []).map((stage) => {
               const state = selectedRun?.nodes[stage.id] || "waiting";
-              return <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => setSelectedStageId(stage.id)}><span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span></button>;
+              return (
+                <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => setSelectedStageId(stage.id)}>
+                  <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
+                </button>
+              );
             })}
           </div>
         </section>
       </main>
 
+      {/* ── Inspector panel ── */}
       <aside className="inspector">
-        <div className="inspector-head">
-          <div className="row">
-            <div><h2>{selectedStage?.title || "Node Inspector"}</h2><span>{selectedStage?.mode || "选择 DAG 节点"}</span></div>
-            {selectedStage && <span className={`status-pill ${selectedStatus}`}>{statusIcon(selectedStatus)}{statusLabel(selectedStatus)}</span>}
-          </div>
-          <div className="tabs">
-            {(["overview", "inputs", "outputs", "logs"] as InspectorTab[]).map((tab) => <button key={tab} type="button" className={inspectorTab === tab ? "active" : ""} onClick={() => setInspectorTab(tab)}>{tab}</button>)}
-          </div>
-        </div>
-        <div className="inspector-body">
-          {!selectedStage || !selectedRun || !instance || !runtime ? <Empty text="选择一个 Run 和 Stage 查看详情" /> : (
-            <>
-              {inspectorTab === "overview" && (
+        {showNodeConfig ? (
+          /* Node Config Panel — static, run-independent */
+          <>
+            <div className="inspector-head">
+              <div className="row">
+                <div>
+                  <h2>{nodeConfigQuery.data?.title || nodeConfigId || "节点配置"}</h2>
+                  <span>{nodeConfigQuery.data?.mode || "加载中…"}</span>
+                </div>
+                <button type="button" className="icon-btn" title="返回 Inspector" onClick={() => setShowNodeConfig(false)}>
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="inspector-body">
+              {nodeConfigQuery.isLoading ? <Skeleton /> : !nodeConfigQuery.data ? <Empty text="节点配置加载失败" /> : (() => {
+                const cfg = nodeConfigQuery.data;
+                return (
+                  <>
+                    <DetailBlock title="Executor">
+                      <KeyValues data={Object.fromEntries(Object.entries(cfg.executor || {}).filter(([, v]) => v))} />
+                      {cfg.skillScript && <div className="kv"><div className="kv-row"><span>script</span><code title={cfg.skillScript}>{cfg.skillScript}</code></div></div>}
+                    </DetailBlock>
+
+                    {(cfg.needs?.length ?? 0) > 0 && (
+                      <DetailBlock title="Depends On">
+                        <div className="needs-list">{cfg.needs!.map((n) => <span key={n} className="needs-chip">{n}</span>)}</div>
+                      </DetailBlock>
+                    )}
+
+                    <DetailBlock title="Input Contract">
+                      <KeyValues data={cfg.inputs as Record<string, unknown> || {}} />
+                    </DetailBlock>
+                    <DetailBlock title="Output Contract">
+                      <KeyValues data={cfg.outputs as Record<string, unknown> || {}} />
+                    </DetailBlock>
+
+                    {cfg.optionalInputs && Object.keys(cfg.optionalInputs).length > 0 && (
+                      <DetailBlock title="Optional Inputs">
+                        <KeyValues data={cfg.optionalInputs as Record<string, unknown>} />
+                      </DetailBlock>
+                    )}
+
+                    <DetailBlock title="Capabilities">
+                      <div className="capabilities-grid">
+                        <CapabilityRow label="TG Notify" enabled={cfg.infra?.tgNotify !== false} />
+                        <CapabilityRow label="Log Record" enabled={cfg.infra?.logRecord !== false} />
+                      </div>
+                    </DetailBlock>
+
+                    {cfg.params && Object.keys(cfg.params).length > 0 && (
+                      <DetailBlock title="Params"><KeyValues data={cfg.params as Record<string, unknown>} /></DetailBlock>
+                    )}
+
+                    {cfg.skillReadme && (
+                      <DetailBlock title="Skill README">
+                        <pre className="log-box" style={{ fontSize: 11, maxHeight: 260 }}>{cfg.skillReadme}</pre>
+                      </DetailBlock>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </>
+        ) : (
+          /* Run Inspector */
+          <>
+            <div className="inspector-head">
+              <div className="row">
+                <div>
+                  <h2>{selectedStage?.title || "Node Inspector"}</h2>
+                  <span>{selectedStage?.mode || "选择 DAG 节点"}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {selectedStage && <span className={`status-pill ${selectedStatus}`}>{statusIcon(selectedStatus)}{statusLabel(selectedStatus)}</span>}
+                  {selectedStage && (
+                    <button type="button" className="icon-btn" title="查看节点配置" onClick={() => openNodeConfig(selectedStageKey)}>
+                      <Info size={15} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="tabs">
+                {(["config", "run", "artifacts", "logs"] as InspectorTab[]).map((tab) => (
+                  <button key={tab} type="button" className={inspectorTab === tab ? "active" : ""} onClick={() => setInspectorTab(tab)}>{tab}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="inspector-body">
+              {!selectedStage || !selectedRun || !instance || !runtime ? <Empty text="选择一个 Run 和 Stage 查看详情" /> : (
                 <>
-                  <DetailBlock title="Runtime Context"><KeyValues data={{ runtime: runtime.id, instance: instance.instanceId, repo: instance.repo, pipeline: selectedRun.pipelineId, mode: nodeQuery.data?.mode || selectedStage.mode }} /></DetailBlock>
-                  <DetailBlock title="Executor"><KeyValues data={nodeQuery.data?.executor || {}} /></DetailBlock>
-                  {nodeQuery.data?.validation && (
-                    <DetailBlock title="Output Validation">
-                      <ValidationSummary validation={nodeQuery.data.validation} />
+                  {/* ── config tab: static node configuration ── */}
+                  {inspectorTab === "config" && (
+                    <>
+                      <DetailBlock title="Executor">
+                        {nodeQuery.data?.executor ? (
+                          <KeyValues data={Object.fromEntries(Object.entries(nodeQuery.data.executor).filter(([, v]) => v))} />
+                        ) : <Empty text="选择节点后加载" />}
+                      </DetailBlock>
+
+                      <DetailBlock title="Input Contract">
+                        <KeyValues data={nodeQuery.data?.declaredInputs || selectedStage.inputs} />
+                      </DetailBlock>
+
+                      <DetailBlock title="Output Contract">
+                        <KeyValues data={nodeQuery.data?.declaredOutputs || selectedStage.outputs} />
+                      </DetailBlock>
+
+                      <DetailBlock title="Capabilities">
+                        <div className="capabilities-grid">
+                          <CapabilityRow label="TG Notify" enabled={nodeQuery.data?.infra?.tgNotify !== false} />
+                          <CapabilityRow label="Log Record" enabled={nodeQuery.data?.infra?.logRecord !== false} />
+                        </div>
+                      </DetailBlock>
+                    </>
+                  )}
+
+                  {/* ── run tab: runtime execution details ── */}
+                  {inspectorTab === "run" && (
+                    <>
+                      <DetailBlock title="Execution">
+                        <div className="kv">
+                          {[
+                            ["pipeline", selectedRun.pipelineId],
+                            ["run_id", nodeQuery.data?.runId || "-"],
+                            ["started", nodeQuery.data?.startedAt || "-"],
+                            ["finished", nodeQuery.data?.finishedAt || "-"],
+                            ["instance", instance.instanceId],
+                            ["repo", instance.repo],
+                          ].map(([key, value]) => (
+                            <div key={key} className="kv-row"><span>{key}</span><code>{value}</code></div>
+                          ))}
+                        </div>
+                      </DetailBlock>
+
+                      {/* Validation */}
+                      {nodeQuery.data?.validation && (
+                        <DetailBlock title="Output Validation">
+                          <ValidationSummary validation={nodeQuery.data.validation} />
+                        </DetailBlock>
+                      )}
+
+                      <DetailBlock title="Resolved Inputs">
+                        <KeyValues data={nodeQuery.data?.resolvedInputs || {}} />
+                      </DetailBlock>
+
+                      <DetailBlock title="Actual Outputs">
+                        <KeyValues data={nodeQuery.data?.actualOutputs || {}} />
+                      </DetailBlock>
+
+                      {/* Error */}
+                      {nodeQuery.data?.error && (
+                        <DetailBlock title="Error">
+                          <pre className="log-box error-log">{nodeQuery.data.error}</pre>
+                        </DetailBlock>
+                      )}
+
+                      {/* Operations */}
+                      <DetailBlock title="Operations">
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          {(selectedStatus === "failed" || selectedStatus === "cancelled" || selectedStatus === "done") && (
+                            <button type="button" className="retry-button" disabled={retryMutation.isPending} onClick={handleRetry}>
+                              <RotateCcw size={16} />{retryMutation.isPending ? "重试中…" : "Retry"}
+                            </button>
+                          )}
+                          {selectedStatus === "running" && (
+                            <button type="button" className="cancel-button" disabled={cancelNodeMutation.isPending} onClick={handleCancelNode}>
+                              <X size={16} />{cancelNodeMutation.isPending ? "取消中…" : "Cancel Node"}
+                            </button>
+                          )}
+                        </div>
+                      </DetailBlock>
+                    </>
+                  )}
+
+                  {/* ── artifacts tab ── */}
+                  {inspectorTab === "artifacts" && (
+                    <DetailBlock title={`Artifacts · ${nodeQuery.data?.artifacts.length || 0}`}>
+                      <ArtifactList artifacts={nodeQuery.data?.artifacts || []} />
                     </DetailBlock>
                   )}
-                  <DetailBlock title="Stage Summary">
-                    <p className="body-copy">{nodeQuery.data?.error || selectedStage.summary || selectedStage.id}</p>
-                    {selectedStatus === "failed" && (mode === "mock" && provider.retryNode
-                      ? <button type="button" className="retry-button" disabled={retryMutation.isPending} onClick={() => retryMutation.mutate()}><RotateCcw size={16} />Retry failed stage</button>
-                      : <button type="button" className="retry-button" disabled title="真实 Retry SPI 尚未提供"><RotateCcw size={16} />真实 Retry SPI 尚未提供</button>)}
-                  </DetailBlock>
+
+                  {/* ── logs tab: structured events + raw log ── */}
+                  {inspectorTab === "logs" && (
+                    <>
+                      {logQuery.isLoading ? <Skeleton /> : (
+                        <>
+                          {(logQuery.data?.events ?? []).length > 0 && (
+                            <DetailBlock title="Events">
+                              <div className="event-list">
+                                {(logQuery.data?.events ?? []).map((ev, i) => <EventRow key={i} event={ev} />)}
+                              </div>
+                            </DetailBlock>
+                          )}
+                          <DetailBlock title={
+                            <button type="button" className="log-toggle" onClick={() => setRawLogOpen((v) => !v)}>
+                              Raw Log {rawLogOpen ? "▲" : "▼"}
+                            </button> as unknown as string
+                          }>
+                            {rawLogOpen && <pre className="log-box">{logQuery.data?.log || "没有日志"}</pre>}
+                            {!rawLogOpen && <div className="empty-state" style={{ fontSize: 12 }}>点击 Raw Log 展开</div>}
+                          </DetailBlock>
+                        </>
+                      )}
+                    </>
+                  )}
                 </>
               )}
-              {inspectorTab === "inputs" && (
-                <>
-                  <DetailBlock title="Declared Inputs"><KeyValues data={nodeQuery.data?.declaredInputs || selectedStage.inputs} /></DetailBlock>
-                  <DetailBlock title="Resolved Inputs"><KeyValues data={nodeQuery.data?.resolvedInputs || {}} /></DetailBlock>
-                </>
-              )}
-              {inspectorTab === "outputs" && (
-                <>
-                  <DetailBlock title="Declared Outputs"><KeyValues data={nodeQuery.data?.declaredOutputs || selectedStage.outputs} /></DetailBlock>
-                  <DetailBlock title="Actual Outputs"><KeyValues data={nodeQuery.data?.actualOutputs || {}} /></DetailBlock>
-                  <DetailBlock title={`Artifacts · ${nodeQuery.data?.artifacts.length || 0}`}>
-                    <ArtifactList artifacts={nodeQuery.data?.artifacts || []} />
-                  </DetailBlock>
-                  <DetailBlock title={`Discovered Candidates · ${nodeQuery.data?.discoveredCandidates.length || 0}`}>
-                    <p className="candidate-warning">这些文件来自共享路径扫描，无法确认属于当前 Run，不会作为下游节点输入。</p>
-                    <ArtifactList artifacts={nodeQuery.data?.discoveredCandidates || []} />
-                  </DetailBlock>
-                </>
-              )}
-              {inspectorTab === "logs" && <DetailBlock title="Logs">{logQuery.isLoading ? <Skeleton /> : <pre className="log-box">{logQuery.data?.log || "没有日志"}</pre>}</DetailBlock>}
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </aside>
 
       {triggerOpen && runtime && instance && (
         <div className="modal-backdrop" role="presentation">
           <form className="trigger-modal" onSubmit={(event) => { event.preventDefault(); triggerMutation.mutate(); }}>
-            <div className="modal-head"><div><h2>{mode === "real" ? "触发真实 SOP Run" : "Trigger mock run"}</h2><span>{mode === "real" ? "此操作会在服务机器上启动真实流程。" : "创建模拟 pipeline 并观察状态推进。"}</span></div><button type="button" onClick={() => setTriggerOpen(false)}>Close</button></div>
+            <div className="modal-head">
+              <div><h2>{mode === "real" ? "触发真实 SOP Run" : "Trigger mock run"}</h2><span>{mode === "real" ? "此操作会在服务机器上启动真实流程。" : "创建模拟 pipeline 并观察状态推进。"}</span></div>
+              <button type="button" onClick={() => setTriggerOpen(false)}>Close</button>
+            </div>
             <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />
             <label>YouTube URL<input value={triggerUrl} onChange={(event) => setTriggerUrl(event.target.value)} /></label>
             {mode === "real" && <label className="confirm-row"><input type="checkbox" checked={confirmRealTrigger} onChange={(event) => setConfirmRealTrigger(event.target.checked)} />我确认要触发真实 SOP Run</label>}
             {triggerMutation.error && <div className="inline-error">{String(triggerMutation.error.message)}</div>}
-            <div className="modal-actions"><button type="button" onClick={() => setTriggerOpen(false)}>Cancel</button><button type="submit" className="primary" disabled={triggerMutation.isPending || (mode === "real" && !confirmRealTrigger)}><Play size={16} />{triggerMutation.isPending ? "Submitting" : mode === "real" ? "Trigger real run" : "Start mock run"}</button></div>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setTriggerOpen(false)}>Cancel</button>
+              <button type="submit" className="primary" disabled={triggerMutation.isPending || (mode === "real" && !confirmRealTrigger)}>
+                <Play size={16} />{triggerMutation.isPending ? "Submitting" : mode === "real" ? "Trigger real run" : "Start mock run"}
+              </button>
+            </div>
           </form>
         </div>
       )}
@@ -419,7 +648,7 @@ export default function App() {
   );
 }
 
-function buildFlowNodes(dag: Dag | undefined, run: Run | undefined, selectedStageId: string): Node<StageNodeData>[] {
+function buildFlowNodes(dag: Dag | undefined, run: Run | undefined, selectedStageId: string, onInfo: (id: string) => void): Node<StageNodeData>[] {
   if (!dag) return [];
   const depths = new Map<string, number>();
   const parents = new Map<string, string[]>();
@@ -436,19 +665,29 @@ function buildFlowNodes(dag: Dag | undefined, run: Run | undefined, selectedStag
     const column = depth(stage.id);
     const row = rows.get(column) || 0;
     rows.set(column, row + 1);
-    return { id: stage.id, type: "stage", position: { x: 40 + column * 300, y: 70 + row * 175 }, data: { stage, status: run?.nodes[stage.id] || "waiting", selected: selectedStageId === stage.id } };
+    return {
+      id: stage.id,
+      type: "stage",
+      position: { x: 40 + column * 300, y: 70 + row * 175 },
+      data: { stage, status: run?.nodes[stage.id] || "waiting", selected: selectedStageId === stage.id, onInfo }
+    };
   });
 }
 
 function buildFlowEdges(dag: Dag | undefined, run: Run | undefined): Edge[] {
-  return (dag?.edges || []).map((edge) => ({ id: `${edge.source}-${edge.target}`, source: edge.source, target: edge.target, animated: run?.nodes[edge.target] === "running" }));
+  return (dag?.edges || []).map((edge) => ({
+    id: `${edge.source}-${edge.target}`,
+    source: edge.source,
+    target: edge.target,
+    animated: run?.nodes[edge.target] === "running"
+  }));
 }
 
 function Metric({ label, value, subtext }: { label: string; value: string | number; subtext: string }) {
   return <div className="metric-panel"><span>{label}</span><strong>{value}</strong><small>{subtext}</small></div>;
 }
 
-function DetailBlock({ title, children }: { title: string; children: React.ReactNode }) {
+function DetailBlock({ title, children }: { title: string | React.ReactNode; children: React.ReactNode }) {
   return <section className="detail-block"><div className="section-title"><span>{title}</span></div>{children}</section>;
 }
 
@@ -465,11 +704,11 @@ function formatValue(value: unknown) {
 }
 
 function ValidationSummary({ validation }: { validation: { status: string; missingOutputs: string[]; unexpectedOutputs: string[] } }) {
+  const ok = validation.status === "passed";
   return (
-    <div className={`validation-summary ${validation.status}`}>
-      <div className="row"><strong>{validation.status === "passed" ? "Contract passed" : "Contract warning"}</strong><span className={`status-pill ${validation.status === "passed" ? "done" : "waiting"}`}>{validation.status}</span></div>
+    <div className={`validation-summary ${ok ? "passed" : "warn"}`}>
+      <div className="row"><strong>{ok ? "Contract passed" : "Contract warning"}</strong><span className={`status-pill ${ok ? "done" : "waiting"}`}>{validation.status}</span></div>
       {validation.missingOutputs.length > 0 && <p>缺失输出：{validation.missingOutputs.join(", ")}</p>}
-      {validation.unexpectedOutputs.length > 0 && <p>意外输出：{validation.unexpectedOutputs.join(", ")}</p>}
       {!validation.missingOutputs.length && !validation.unexpectedOutputs.length && <p>声明输出均已解析到实际产物。</p>}
     </div>
   );
@@ -477,7 +716,7 @@ function ValidationSummary({ validation }: { validation: { status: string; missi
 
 function ArtifactList({ artifacts }: { artifacts: Artifact[] }) {
   const [openId, setOpenId] = useState("");
-  if (!artifacts.length) return <Empty text="当前历史 Run 没有解析到 Artifact" />;
+  if (!artifacts.length) return <Empty text="该节点暂无 Artifact 记录" />;
   return (
     <div className="artifact-list">
       {artifacts.map((artifact) => (

@@ -1,59 +1,28 @@
 import { baseRuns, nodeLog, runtimes as mockRuntimes, stages, stageState } from "../mock";
 import type { RunMock } from "../mock";
-import type { Dag, Instance, Run, Runtime, SopDataProvider, TriggerInput } from "./types";
+import type { Dag, Instance, NodeConfig, NodeLog, Run, Runtime, SopDataProvider, TriggerInput } from "./types";
 
 const runsByRuntime = new Map<string, RunMock[]>(mockRuntimes.map((runtime) => [runtime.id, baseRuns.map((run) => ({ ...run }))]));
 
 function runtime(id: string): Runtime {
   const item = mockRuntimes.find((candidate) => candidate.id === id) || mockRuntimes[0];
-  return {
-    id: item.id,
-    name: item.name,
-    machine: item.machine,
-    endpoint: item.endpoint,
-    status: "active",
-    localStatus: item.health
-  };
+  return { id: item.id, name: item.name, machine: item.machine, endpoint: item.endpoint, status: "active", localStatus: item.health };
 }
 
 function instance(runtimeId: string): Instance {
   const item = mockRuntimes.find((candidate) => candidate.id === runtimeId) || mockRuntimes[0];
-  return {
-    id: item.instanceId,
-    instanceId: item.instanceId,
-    sopType: "youtube-research-wiki",
-    title: "YouTube Wiki SOP",
-    version: "2.0",
-    repo: item.repo
-  };
+  return { id: item.instanceId, instanceId: item.instanceId, sopType: "youtube-research-wiki", title: "YouTube Wiki SOP", version: "2.0", repo: item.repo };
 }
 
 function mapRun(run: RunMock): Run {
-  return {
-    pipelineId: run.pipelineId,
-    status: run.status,
-    sourceUrl: run.sourceUrl,
-    sourceType: "youtube",
-    repo: "",
-    nodes: stageState(run.profile, run.status),
-    startedAt: run.startedAt,
-    updatedAt: run.updatedAt
-  };
+  return { pipelineId: run.pipelineId, status: run.status, sourceUrl: run.sourceUrl, sourceType: "youtube", repo: "", nodes: stageState(run.profile, run.status), startedAt: run.startedAt, updatedAt: run.updatedAt };
 }
 
 function mockDag(runtimeId: string): Dag {
   const target = instance(runtimeId);
   return {
     instanceId: target.instanceId,
-    nodes: stages.map((stage) => ({
-      id: stage.id,
-      title: stage.title,
-      mode: stage.mode,
-      summary: stage.summary,
-      inputs: stage.inputs,
-      outputs: stage.outputs,
-      optionalInputs: {}
-    })),
+    nodes: stages.map((stage) => ({ id: stage.id, title: stage.title, mode: stage.mode, summary: stage.summary, inputs: stage.inputs, outputs: stage.outputs, optionalInputs: {} })),
     edges: [
       { source: "youtube-fetch", target: "notebooklm-research" },
       { source: "youtube-fetch", target: "youtube-deep-research" },
@@ -65,28 +34,34 @@ function mockDag(runtimeId: string): Dag {
 
 export const mockProvider: SopDataProvider = {
   mode: "mock",
+
   async listRuntimes() {
     await delay();
     return mockRuntimes.map((item) => runtime(item.id));
   },
+
   async listInstances(target) {
     await delay();
     return [instance(target.id)];
   },
+
   async getDag(target) {
     await delay();
     return mockDag(target.id);
   },
+
   async listRuns(target) {
     await delay();
     return (runsByRuntime.get(target.id) || []).map(mapRun);
   },
+
   async getRun(target, _instanceId, pipelineId) {
     await delay();
     const run = (runsByRuntime.get(target.id) || []).find((item) => item.pipelineId === pipelineId);
     if (!run) throw new Error(`Mock run 不存在：${pipelineId}`);
     return mapRun(run);
   },
+
   async getNode(target, _instanceId, pipelineId, nodeId) {
     await delay();
     const run = await this.getRun(target, "", pipelineId);
@@ -100,7 +75,7 @@ export const mockProvider: SopDataProvider = {
       inputs: stage.inputs,
       outputs: stage.outputs,
       optionalInputs: {},
-      executor: { type: "agent-script", skill: `sop-${nodeId}` },
+      executor: { type: "skill", skill: `sop-${nodeId}`, webhook_route: `sop-${nodeId}` },
       declaredInputs: Object.fromEntries(Object.entries(stage.inputs).map(([key, value]) => [key, { from: value, required: true }])),
       resolvedInputs: Object.fromEntries(Object.keys(stage.inputs).map((key) => [key, key === "source_url" ? run.sourceUrl : [`raw/mock/${key}.md`]])),
       declaredOutputs: Object.fromEntries(Object.entries(stage.outputs).map(([key, value]) => [key, { path: value, type: "files" }])),
@@ -117,61 +92,75 @@ export const mockProvider: SopDataProvider = {
         mimeType: "text/markdown",
         tags: ["mock", "wiki-source"],
         resolution: "recorded",
-        preview: `# ${stage.title}\n\n这是 ${output} 的 mock Artifact 预览，用于验证节点实际产物交互。`
+        preview: `# ${stage.title}\n\n这是 ${output} 的 mock Artifact 预览。`
       })),
-      discoveredCandidates: nodeId === "notebooklm-research" ? [{
-        id: "mock-historical-report",
-        producer: nodeId,
-        output: "reports",
-        type: "research.report",
-        format: "markdown",
-        path: "raw/notebooklm-analysis/historical-report.md",
-        title: "historical-report.md",
-        size: 1536,
-        mimeType: "text/markdown",
-        tags: ["historical"],
-        resolution: "pattern",
-        ownership: "unconfirmed",
-        preview: "# 历史报告\n\n该文件由共享目录扫描发现，无法确认属于当前 Run。"
-      }] : [],
       validation: { status: "passed", missingOutputs: [], unexpectedOutputs: [] },
+      infra: { tgNotify: true, logRecord: true },
       updatedAt: run.updatedAt,
-      error: run.nodes[nodeId] === "failed" ? "Mock NotebookLM bridge error" : ""
+      error: run.nodes[nodeId] === "failed" ? "Mock bridge error: connection timeout" : ""
     };
   },
-  async getNodeLog(target, instanceId, pipelineId, nodeId) {
+
+  async getNodeLog(target, instanceId, pipelineId, nodeId): Promise<NodeLog> {
     const detail = await this.getNode(target, instanceId, pipelineId, nodeId);
-    return { pipelineId, nodeId, log: nodeLog(nodeId, detail.status === "skipped" ? "waiting" : detail.status) };
+    const st = detail.status === "skipped" ? "waiting" : detail.status;
+    const now = new Date().toISOString();
+    const events = st === "done" || st === "failed" ? [
+      { ts: now, event: "stage_start", stage: nodeId, trigger: undefined, ok: undefined },
+      { ts: now, event: "tg_notify_sent", stage: nodeId, trigger: "start", ok: true },
+      { ts: now, event: st === "done" ? "stage_done" : "stage_failed", stage: nodeId, duration_s: 42 },
+      { ts: now, event: "tg_notify_sent", stage: nodeId, trigger: st === "done" ? "done" : "failed", ok: true },
+    ] : [];
+    return { pipelineId, nodeId, log: nodeLog(nodeId, st), events };
   },
+
+  async getNodeConfig(_target, _instanceId, nodeId): Promise<NodeConfig> {
+    await delay();
+    const stage = stages.find((item) => item.id === nodeId) || stages[0];
+    return {
+      nodeId,
+      title: stage.title,
+      mode: stage.mode,
+      needs: nodeId === "notebooklm-research" ? ["youtube-fetch"] : nodeId === "wiki-build" ? ["notebooklm-research"] : nodeId === "tg-notify" ? ["wiki-build"] : [],
+      executor: { type: "skill", skill: `sop-${nodeId}`, webhook_route: `sop-${nodeId}` },
+      inputs: Object.fromEntries(Object.entries(stage.inputs).map(([k, v]) => [k, { from: v, required: true }])),
+      outputs: Object.fromEntries(Object.entries(stage.outputs).map(([k, v]) => [k, { path: v, type: "files" }])),
+      optionalInputs: {},
+      infra: { tgNotify: true, logRecord: true },
+      params: {},
+      skillScript: `youtube-wiki/skills/sop-${nodeId}/scripts/run_${nodeId.replace(/-/g, "_")}.sh`,
+      skillReadme: `# ${stage.title}\n\nMock skill README — 描述该节点的 Skill 用途、输入格式和输出产物。`,
+    };
+  },
+
   async triggerRun(target, _instanceId, input: TriggerInput) {
     const now = new Date();
     const pipelineId = `mock-${now.toISOString().replace(/[-:.]/g, "").slice(0, 15)}`;
-    const run: RunMock = {
-      pipelineId,
-      status: "running",
-      sourceUrl: input.url,
-      startedAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      profile: "initial"
-    };
+    const run: RunMock = { pipelineId, status: "running", sourceUrl: input.url, startedAt: now.toISOString(), updatedAt: now.toISOString(), profile: "initial" };
     const items = runsByRuntime.get(target.id) || [];
     runsByRuntime.set(target.id, [run, ...items]);
     window.setTimeout(() => mutateRun(target.id, pipelineId, "running", "wiki-running"), 1600);
     window.setTimeout(() => mutateRun(target.id, pipelineId, "done", "done"), 3600);
     return { status: "triggered", pipelineId };
   },
+
   async retryNode(target, _instanceId, pipelineId) {
     mutateRun(target.id, pipelineId, "running", "wiki-running");
     window.setTimeout(() => mutateRun(target.id, pipelineId, "done", "done"), 1800);
-  }
+  },
+
+  async cancelRun(target, _instanceId, pipelineId) {
+    mutateRun(target.id, pipelineId, "cancelled", "initial");
+  },
+
+  async cancelNode(_target, _instanceId, _pipelineId, _nodeId) {
+    // mock: no-op
+  },
 };
 
 function mutateRun(runtimeId: string, pipelineId: string, status: RunMock["status"], profile: RunMock["profile"]) {
   const items = runsByRuntime.get(runtimeId) || [];
-  runsByRuntime.set(
-    runtimeId,
-    items.map((run) => (run.pipelineId === pipelineId ? { ...run, status, profile, updatedAt: new Date().toISOString() } : run))
-  );
+  runsByRuntime.set(runtimeId, items.map((run) => (run.pipelineId === pipelineId ? { ...run, status, profile, updatedAt: new Date().toISOString() } : run)));
 }
 
 async function delay() {

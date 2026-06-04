@@ -1,5 +1,5 @@
 export type DataMode = "real" | "mock";
-export type StageStatus = "done" | "running" | "waiting" | "failed" | "skipped";
+export type StageStatus = "done" | "running" | "waiting" | "failed" | "skipped" | "cancelled";
 
 export interface Runtime {
   id: string;
@@ -71,8 +71,8 @@ export interface NodeDetail {
   declaredOutputs: Record<string, unknown>;
   actualOutputs: Record<string, unknown>;
   artifacts: Artifact[];
-  discoveredCandidates: Artifact[];
   validation: NodeValidation;
+  infra?: { tgNotify?: boolean; logRecord?: boolean };
 }
 
 export interface Artifact {
@@ -98,10 +98,37 @@ export interface NodeValidation {
   unexpectedOutputs: string[];
 }
 
+export interface NodeEvent {
+  ts: string;
+  event: string;
+  stage?: string;
+  trigger?: string;
+  ok?: boolean;
+  error?: string;
+  duration_s?: number;
+  reason?: string;
+}
+
 export interface NodeLog {
   pipelineId: string;
   nodeId: string;
   log: string;
+  events?: NodeEvent[];
+}
+
+export interface NodeConfig {
+  nodeId: string;
+  title?: string;
+  mode?: string;
+  needs?: string[];
+  executor?: Record<string, unknown>;
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  optionalInputs?: Record<string, unknown>;
+  infra?: { tgNotify?: boolean; logRecord?: boolean };
+  params?: Record<string, unknown>;
+  skillScript?: string | null;
+  skillReadme?: string | null;
 }
 
 export interface TriggerInput {
@@ -124,6 +151,9 @@ export interface SopDataProvider {
   getRun(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Run>;
   getNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeDetail>;
   getNodeLog(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeLog>;
+  getNodeConfig(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeConfig>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;
-  retryNode?(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
+  retryNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
+  cancelRun(runtime: Runtime, instanceId: string, pipelineId: string, reason?: string): Promise<void>;
+  cancelNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string, reason?: string): Promise<void>;
 }

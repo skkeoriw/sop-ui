@@ -1017,3 +1017,203 @@ pre {
     height: 520px;
   }
 }
+
+/* ── Node ⓘ config button ────────────────────────────────────────────────── */
+
+.flow-node-wrap {
+  position: relative;
+}
+
+.flow-node-wrap.selected > .flow-node {
+  outline: 2px solid var(--blue, #2563eb);
+  outline-offset: 2px;
+}
+
+.node-info-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong, #b7c1d2);
+  background: var(--panel, #fff);
+  color: var(--blue, #2563eb);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 10;
+  padding: 0;
+}
+
+.flow-node-wrap:hover .node-info-btn {
+  opacity: 1;
+}
+
+/* ── Capabilities ────────────────────────────────────────────────────────── */
+
+.capabilities-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.capability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+/* ── Depends On chips ────────────────────────────────────────────────────── */
+
+.needs-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.needs-chip {
+  background: #e8f0ff;
+  color: #2563eb;
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── Event list (logs tab) ───────────────────────────────────────────────── */
+
+.event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--bg, #f5f7fa);
+}
+
+.event-row.event-error {
+  background: #fff0ef;
+}
+
+.event-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.event-time {
+  font-family: monospace;
+  color: var(--muted, #637083);
+  flex-shrink: 0;
+  font-size: 11px;
+  min-width: 60px;
+}
+
+.event-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+.event-detail {
+  color: var(--muted, #637083);
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Icon-only button ────────────────────────────────────────────────────── */
+
+.icon-btn {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--muted, #637083);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color .12s, background .12s;
+}
+
+.icon-btn:hover {
+  color: var(--blue, #2563eb);
+  background: #e8f0ff;
+}
+
+/* ── Cancel / Danger buttons ─────────────────────────────────────────────── */
+
+.btn-danger-sm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid #dc2626;
+  background: #fff0ef;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s;
+}
+
+.btn-danger-sm:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+
+.cancel-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid #dc2626;
+  background: #fff0ef;
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cancel-button:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+
+/* ── Log toggle button ───────────────────────────────────────────────────── */
+
+.log-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+  padding: 0;
+}
+
+/* ── Error log ───────────────────────────────────────────────────────────── */
+
+.error-log {
+  background: #fff0ef;
+  color: #dc2626;
+  border-color: #dc2626;
+}

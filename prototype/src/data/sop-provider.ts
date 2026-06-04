@@ -2,6 +2,7 @@ import { normalizeEndpoint } from "./provider";
 import type {
   Dag,
   Instance,
+  NodeConfig,
   NodeDetail,
   NodeLog,
   Run,
@@ -15,7 +16,8 @@ import type {
 const TUNNEL_API = "https://tunnel-api.chxyka.ccwu.cc";
 
 function status(value?: string): StageStatus {
-  return value === "done" || value === "running" || value === "failed" || value === "skipped" ? value : "waiting";
+  const v = value ?? "";
+  return (["done", "running", "failed", "skipped", "cancelled"].includes(v) ? v : "waiting") as StageStatus;
 }
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -26,6 +28,18 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     return JSON.parse(text) as T;
   } catch {
     throw new Error(`接口没有返回 JSON：${url}`);
+  }
+}
+
+async function postJson(url: string, body: unknown): Promise<void> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`${response.status}: ${text.slice(0, 200)}`);
   }
 }
 
@@ -148,6 +162,7 @@ export const sopProvider: SopDataProvider = {
     const raw = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}`
     );
+    const infraRaw = raw.infra as Record<string, unknown> | undefined;
     return {
       pipelineId: String(raw.pipeline_id || pipelineId),
       nodeId: String(raw.node_id || nodeId),
@@ -167,12 +182,15 @@ export const sopProvider: SopDataProvider = {
       declaredOutputs: (raw.declared_outputs as Record<string, unknown>) || {},
       actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
       artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
-      discoveredCandidates: ((raw.discovered_candidates as Array<Record<string, unknown>>) || []).map(mapArtifact),
       validation: {
         status: String((raw.validation as Record<string, unknown>)?.status || "unknown"),
         missingOutputs: ((raw.validation as Record<string, unknown>)?.missing_outputs as string[]) || [],
         unexpectedOutputs: ((raw.validation as Record<string, unknown>)?.unexpected_outputs as string[]) || []
-      }
+      },
+      infra: infraRaw ? {
+        tgNotify: infraRaw.tg_notify !== false,
+        logRecord: infraRaw.log_record !== false,
+      } : undefined,
     };
   },
 
@@ -180,11 +198,46 @@ export const sopProvider: SopDataProvider = {
     const raw = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/logs/${encodeURIComponent(nodeId)}`
     );
+    const rawEvents = (raw.events as Array<Record<string, unknown>>) || [];
     return {
       pipelineId: String(raw.pipeline_id || pipelineId),
       nodeId: String(raw.node_id || nodeId),
-      log: String(raw.log || "")
-    } satisfies NodeLog;
+      log: String(raw.log || ""),
+      events: rawEvents.map((ev) => ({
+        ts: String(ev.ts || ""),
+        event: String(ev.event || ""),
+        stage: ev.stage ? String(ev.stage) : undefined,
+        trigger: ev.trigger ? String(ev.trigger) : undefined,
+        ok: typeof ev.ok === "boolean" ? ev.ok : undefined,
+        error: ev.error ? String(ev.error) : undefined,
+        duration_s: typeof ev.duration_s === "number" ? ev.duration_s : undefined,
+        reason: ev.reason ? String(ev.reason) : undefined,
+      })),
+    };
+  },
+
+  async getNodeConfig(runtime, instanceId, nodeId) {
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}`
+    );
+    const infraRaw = raw.infra as Record<string, unknown> | undefined;
+    return {
+      nodeId: String(raw.node_id || nodeId),
+      title: raw.title ? String(raw.title) : undefined,
+      mode: raw.mode ? String(raw.mode) : undefined,
+      needs: (raw.needs as string[]) || [],
+      executor: (raw.executor as Record<string, unknown>) || {},
+      inputs: (raw.inputs as Record<string, unknown>) || {},
+      outputs: (raw.outputs as Record<string, unknown>) || {},
+      optionalInputs: (raw.optional_inputs as Record<string, unknown>) || {},
+      infra: infraRaw ? {
+        tgNotify: infraRaw.tg_notify !== false,
+        logRecord: infraRaw.log_record !== false,
+      } : undefined,
+      params: (raw.params as Record<string, unknown>) || {},
+      skillScript: raw.skill_script ? String(raw.skill_script) : null,
+      skillReadme: raw.skill_readme ? String(raw.skill_readme) : null,
+    } satisfies NodeConfig;
   },
 
   async triggerRun(runtime, instanceId, input: TriggerInput): Promise<TriggerResult> {
@@ -201,5 +254,26 @@ export const sopProvider: SopDataProvider = {
       pipelineId: data.pipeline_id ? String(data.pipeline_id) : undefined,
       message: data.message ? String(data.message) : undefined
     };
-  }
+  },
+
+  async retryNode(runtime, instanceId, pipelineId, nodeId) {
+    await postJson(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/retry`,
+      {}
+    );
+  },
+
+  async cancelRun(runtime, instanceId, pipelineId, reason = "用户取消") {
+    await postJson(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/cancel`,
+      { reason }
+    );
+  },
+
+  async cancelNode(runtime, instanceId, pipelineId, nodeId, reason = "用户取消节点") {
+    await postJson(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/cancel`,
+      { reason }
+    );
+  },
 };
