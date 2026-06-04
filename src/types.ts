@@ -135,3 +135,12 @@ export interface TriggerResponse {
   status_url?: string;
   message?: string;
 }
+
+export interface OperationResponse {
+  status: string;
+  pipeline_id?: string;
+  node_id?: string;
+  run_id?: string;
+  reason?: string;
+  message?: string;
+}

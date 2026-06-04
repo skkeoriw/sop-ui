@@ -1,5 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  cancelNode,
+  cancelRun,
   DEFAULT_ENDPOINT,
   getDag,
   getManifest,
@@ -10,6 +12,7 @@ import {
   getRuns,
   nodeTitle,
   normalizeEndpoint,
+  retryNode,
   triggerRun
 } from "./api";
 import type { DagEdge, DagNode, NodeDetail, NodeLog, RuntimeChannel, SopDag, SopRun, SopSummary } from "./types";
@@ -22,6 +25,7 @@ function statusClass(status = "waiting") {
   if (status === "running") return "running";
   if (status === "failed") return "failed";
   if (status === "skipped") return "skipped";
+  if (status === "cancelled") return "failed";
   return "waiting";
 }
 
@@ -178,6 +182,8 @@ export default function App() {
   const [repo, setRepo] = useState("skkeoriw/wiki-sop-dag-smoke");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [opBusy, setOpBusy] = useState(false);
+  const [opMsg, setOpMsg] = useState("");
 
   const selectedSopSummary = sops.find((sop) => sop.id === selectedSop);
   const selectedRuntime = runtimeChannels.find((runtime) => normalizeEndpoint(runtime.channel_url) === endpoint);
@@ -348,6 +354,58 @@ export default function App() {
     }
   }
 
+  async function handleCancelRun() {
+    if (!selectedSop || !selectedRunId) return;
+    if (!window.confirm(`确认取消 Run: ${selectedRunId}？\n当前阶段完成后不会触发下一阶段。`)) return;
+    try {
+      setOpBusy(true);
+      setOpMsg("");
+      await cancelRun(endpoint, selectedSop, selectedRunId);
+      setOpMsg("Run 已取消");
+      await loadRunData(selectedRunId);
+    } catch (err) {
+      setOpMsg(`取消失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setOpBusy(false);
+    }
+  }
+
+  async function handleRetryNode() {
+    if (!selectedSop || !selectedRunId || !selectedNode) return;
+    if (!window.confirm(`确认重试节点: ${selectedNode}？\n将重新启动该阶段的执行脚本。`)) return;
+    try {
+      setOpBusy(true);
+      setOpMsg("");
+      await retryNode(endpoint, selectedSop, selectedRunId, selectedNode);
+      setOpMsg(`节点 ${selectedNode} 重试中`);
+      setTimeout(() => {
+        loadRunData(selectedRunId).catch(() => {});
+        loadNode(selectedNode).catch(() => {});
+      }, 1500);
+    } catch (err) {
+      setOpMsg(`重试失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setOpBusy(false);
+    }
+  }
+
+  async function handleCancelNode() {
+    if (!selectedSop || !selectedRunId || !selectedNode) return;
+    if (!window.confirm(`确认取消节点: ${selectedNode}？\n节点状态将标记为 cancelled。`)) return;
+    try {
+      setOpBusy(true);
+      setOpMsg("");
+      await cancelNode(endpoint, selectedSop, selectedRunId, selectedNode);
+      setOpMsg(`节点 ${selectedNode} 已取消`);
+      await loadRunData(selectedRunId);
+      await loadNode(selectedNode);
+    } catch (err) {
+      setOpMsg(`取消节点失败: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setOpBusy(false);
+    }
+  }
+
   const sortedRuns = useMemo(() => {
     return [...runs].sort((a, b) => {
       const statusDiff = STATUS_ORDER.indexOf(statusClass(a.status)) - STATUS_ORDER.indexOf(statusClass(b.status));
@@ -463,7 +521,18 @@ export default function App() {
             <button type="submit" disabled={busy || !selectedSop}>
               Trigger
             </button>
+            {running && (
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={opBusy}
+                onClick={handleCancelRun}
+              >
+                Cancel Run
+              </button>
+            )}
           </form>
+          {opMsg && <div className={`op-msg ${opMsg.includes("失败") ? "op-error" : "op-ok"}`}>{opMsg}</div>}
         </div>
         <DagView dag={dag} run={run} selectedNode={selectedNode} onSelectNode={setSelectedNode} />
       </main>
@@ -474,6 +543,32 @@ export default function App() {
           <span className={`pill ${statusClass(nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting")}`}>
             {nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting"}
           </span>
+          {selectedNode && selectedRunId && (
+            <div className="node-ops">
+              {(nodeDetail?.status === "failed" || nodeDetail?.status === "cancelled" || nodeDetail?.status === "done") && (
+                <button
+                  type="button"
+                  className="btn-op btn-retry"
+                  disabled={opBusy}
+                  onClick={handleRetryNode}
+                  title="重新执行该节点"
+                >
+                  Retry
+                </button>
+              )}
+              {nodeDetail?.status === "running" && (
+                <button
+                  type="button"
+                  className="btn-op btn-danger"
+                  disabled={opBusy}
+                  onClick={handleCancelNode}
+                  title="取消该节点"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          )}
         </div>
         <section>
           <div className="section-title">Runtime</div>

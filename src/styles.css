@@ -571,3 +571,71 @@ pre {
     height: 520px;
   }
 }
+
+/* ── Node operations ─────────────────────────────────────────────────────── */
+
+.node-ops {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-op {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+.btn-op:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.btn-retry {
+  background: var(--blue-soft);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.btn-retry:hover:not(:disabled) {
+  background: var(--blue);
+  color: #fff;
+}
+
+.btn-danger {
+  background: var(--red-soft);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--red);
+  color: #fff;
+}
+
+/* op feedback banner inside main-head */
+.op-msg {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.op-ok {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.op-error {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+/* trigger-form: allow cancel button column */
+.trigger-form {
+  grid-template-columns: minmax(170px, .9fr) minmax(240px, 1.3fr) auto auto;
+}

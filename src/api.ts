@@ -2,6 +2,7 @@ import type {
   DagNode,
   NodeDetail,
   NodeLog,
+  OperationResponse,
   RuntimeChannel,
   RunsResponse,
   SopDag,
@@ -137,6 +138,58 @@ export async function triggerRun(
       input: { url }
     })
   });
+}
+
+export async function cancelRun(
+  endpoint: string,
+  sopId: string,
+  pipelineId: string,
+  reason = "用户取消"
+): Promise<OperationResponse> {
+  return requestJson<OperationResponse>(
+    endpoint,
+    `/api/sop/${encodeURIComponent(sopId)}/runs/${encodeURIComponent(pipelineId)}/cancel`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }
+  );
+}
+
+export async function retryNode(
+  endpoint: string,
+  sopId: string,
+  pipelineId: string,
+  nodeId: string
+): Promise<OperationResponse> {
+  return requestJson<OperationResponse>(
+    endpoint,
+    `/api/sop/${encodeURIComponent(sopId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/retry`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }
+  );
+}
+
+export async function cancelNode(
+  endpoint: string,
+  sopId: string,
+  pipelineId: string,
+  nodeId: string,
+  reason = "用户取消节点"
+): Promise<OperationResponse> {
+  return requestJson<OperationResponse>(
+    endpoint,
+    `/api/sop/${encodeURIComponent(sopId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/cancel`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }
+  );
 }
 
 export function nodeTitle(node: DagNode): string {
