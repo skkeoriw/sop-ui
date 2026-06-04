@@ -357,18 +357,77 @@ pre {
 }
 
 .detail-head {
-  min-height: 76px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px;
+  flex-direction: column;
+  gap: 0;
   border-bottom: 1px solid var(--line);
 }
 
+.detail-head-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 16px 10px;
+}
+
+.detail-head-top h2 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+.detail-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.node-mode {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.inspector-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 16px;
+  border-top: 1px solid var(--line);
+}
+
+.inspector-tab {
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color .12s, border-color .12s;
+}
+
+.inspector-tab:hover {
+  color: var(--text);
+}
+
+.inspector-tab.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+}
+
+.inspector-body {
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* keep old detail-head h2 alias for non-breaking */
 .detail-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   overflow-wrap: anywhere;
 }
 
@@ -638,4 +697,133 @@ pre {
 /* trigger-form: allow cancel button column */
 .trigger-form {
   grid-template-columns: minmax(170px, .9fr) minmax(240px, 1.3fr) auto auto;
+}
+
+/* ── Inspector: Validation ───────────────────────────────────────────────── */
+
+.validation-summary {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  margin: 4px 0 8px;
+}
+
+.validation-summary.passed {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.validation-summary.warn {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.val-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.val-row strong {
+  font-size: 13px;
+}
+
+.validation-summary p {
+  margin: 4px 0 0;
+}
+
+/* ── Inspector: Artifacts ────────────────────────────────────────────────── */
+
+.artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.artifact-item {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.artifact-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: none;
+  background: var(--gray-soft);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  border-radius: 6px;
+  transition: background .12s;
+}
+
+.artifact-row:hover {
+  background: var(--blue-soft);
+}
+
+.artifact-type {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 80px;
+}
+
+.artifact-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.artifact-meta {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.artifact-preview {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 11px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  overflow-x: auto;
+  max-height: 280px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Inspector: Candidate warning ───────────────────────────────────────── */
+
+.candidate-warning {
+  font-size: 11px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0 8px;
+  line-height: 1.5;
+}
+
+/* ── Error log ───────────────────────────────────────────────────────────── */
+
+.error-log {
+  background: var(--red-soft);
+  color: var(--red);
+  border-color: var(--red);
+}
+
+/* detail panel: allow inspector-body to scroll */
+.detail {
+  display: flex;
+  flex-direction: column;
 }

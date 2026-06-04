@@ -103,6 +103,37 @@ export interface RunsResponse {
   runs: SopRun[];
 }
 
+export interface NodeExecutor {
+  type?: string;
+  skill?: string;
+  webhook_route?: string;
+  agent?: string;
+  command?: string;
+}
+
+export interface NodeValidation {
+  status: "passed" | "warning" | "failed" | string;
+  missing_outputs: string[];
+  unexpected_outputs: string[];
+}
+
+export interface Artifact {
+  id: string;
+  producer?: string;
+  output?: string;
+  type?: string;
+  format?: string;
+  path: string;
+  title?: string;
+  size?: number;
+  mime_type?: string;
+  resolution?: string;
+  ownership?: string;
+  preview?: string;
+  preview_truncated?: boolean;
+  tags?: string[];
+}
+
 export interface NodeDetail {
   pipeline_id: string;
   node_id: string;
@@ -112,11 +143,19 @@ export interface NodeDetail {
   needs?: string[];
   started_at?: string;
   finished_at?: string;
-  inputs?: Record<string, string>;
-  outputs?: Record<string, string>;
-  optional_inputs?: Record<string, string>;
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  optional_inputs?: Record<string, unknown>;
   error?: string;
   updated_at?: string;
+  executor?: NodeExecutor;
+  declared_inputs?: Record<string, unknown>;
+  resolved_inputs?: Record<string, unknown>;
+  declared_outputs?: Record<string, unknown>;
+  actual_outputs?: Record<string, unknown>;
+  artifacts?: Artifact[];
+  discovered_candidates?: Artifact[];
+  validation?: NodeValidation;
 }
 
 export interface NodeLog {

@@ -15,7 +15,9 @@ import {
   retryNode,
   triggerRun
 } from "./api";
-import type { DagEdge, DagNode, NodeDetail, NodeLog, RuntimeChannel, SopDag, SopRun, SopSummary } from "./types";
+import type { Artifact, DagEdge, DagNode, NodeDetail, NodeLog, NodeValidation, RuntimeChannel, SopDag, SopRun, SopSummary } from "./types";
+
+type InspectorTab = "overview" | "inputs" | "outputs" | "logs";
 
 const STATUS_ORDER = ["failed", "running", "waiting", "skipped", "done"];
 const PREFERRED_INSTANCE_ID = "wiki-sop-dag-smoke";
@@ -34,25 +36,7 @@ function getInitialEndpoint() {
   return normalizeEndpoint(url.searchParams.get("endpoint") || DEFAULT_ENDPOINT);
 }
 
-function compact(value?: string) {
-  if (!value) return "-";
-  return value.length > 90 ? `${value.slice(0, 88)}...` : value;
-}
 
-function KeyValues({ data }: { data?: Record<string, string> }) {
-  const entries = Object.entries(data || {});
-  if (!entries.length) return <div className="empty">No data</div>;
-  return (
-    <div className="kv">
-      {entries.map(([key, value]) => (
-        <div className="kv-row" key={key}>
-          <span>{key}</span>
-          <code title={value}>{compact(value)}</code>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function layoutDag(nodes: DagNode[], edges: DagEdge[]) {
   const incoming = new Map<string, string[]>();
@@ -85,6 +69,89 @@ function layoutDag(nodes: DagNode[], edges: DagEdge[]) {
     });
   });
   return positions;
+}
+
+function KeyValueBlock({ title, data }: { title: string; data?: Record<string, unknown> }) {
+  const entries = Object.entries(data || {});
+  return (
+    <section>
+      <div className="section-title">{title}</div>
+      {entries.length === 0 ? (
+        <div className="empty">No data</div>
+      ) : (
+        <div className="kv">
+          {entries.map(([key, value]) => {
+            const display =
+              value === null || value === undefined
+                ? "-"
+                : typeof value === "object"
+                ? JSON.stringify(value)
+                : String(value);
+            const short = display.length > 90 ? `${display.slice(0, 88)}…` : display;
+            return (
+              <div className="kv-row" key={key}>
+                <span>{key}</span>
+                <code title={display}>{short}</code>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ValidationBlock({ validation }: { validation: NodeValidation }) {
+  const ok = validation.status === "passed";
+  return (
+    <section>
+      <div className="section-title">Output Validation</div>
+      <div className={`validation-summary ${ok ? "passed" : "warn"}`}>
+        <div className="val-row">
+          <strong>{ok ? "Contract passed" : "Contract warning"}</strong>
+          <span className={`pill ${ok ? "done" : "waiting"}`}>{validation.status}</span>
+        </div>
+        {validation.missing_outputs.length > 0 && (
+          <p>缺失输出：{validation.missing_outputs.join(", ")}</p>
+        )}
+        {!validation.missing_outputs.length && !validation.unexpected_outputs.length && (
+          <p>声明输出均已解析到实际产物。</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ArtifactList({ artifacts, unconfirmed }: { artifacts: Artifact[]; unconfirmed?: boolean }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  if (!artifacts.length)
+    return <div className="empty">{unconfirmed ? "无候选文件" : "暂无 Artifact"}</div>;
+  return (
+    <div className="artifact-list">
+      {artifacts.map((artifact) => (
+        <div key={artifact.id} className="artifact-item">
+          <button
+            type="button"
+            className="artifact-row"
+            onClick={() => setOpenId(openId === artifact.id ? null : artifact.id)}
+          >
+            <span className="artifact-type">{artifact.type || artifact.format || "file"}</span>
+            <span className="artifact-title">{artifact.title || artifact.path}</span>
+            <span className="artifact-meta">{artifact.size ? `${(artifact.size / 1024).toFixed(1)} KB` : ""}</span>
+            {artifact.resolution && (
+              <span className="pill waiting" style={{ fontSize: 10 }}>{artifact.resolution}</span>
+            )}
+          </button>
+          {openId === artifact.id && (
+            <pre className="artifact-preview">
+              {artifact.preview || "该 Artifact 暂不支持内联预览。"}
+              {artifact.preview_truncated && "\n\n[内容已截断]"}
+            </pre>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function DagView({
@@ -184,6 +251,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [opBusy, setOpBusy] = useState(false);
   const [opMsg, setOpMsg] = useState("");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview");
 
   const selectedSopSummary = sops.find((sop) => sop.id === selectedSop);
   const selectedRuntime = runtimeChannels.find((runtime) => normalizeEndpoint(runtime.channel_url) === endpoint);
@@ -304,6 +372,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedNode) return;
+    setInspectorTab("overview");
     loadNode(selectedNode).catch((err) => setError(err.message));
   }, [loadNode, selectedNode]);
 
@@ -539,72 +608,140 @@ export default function App() {
 
       <aside className="detail">
         <div className="detail-head">
-          <h2>{nodeDetail?.node_id || selectedNode || "Node detail"}</h2>
-          <span className={`pill ${statusClass(nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting")}`}>
-            {nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting"}
-          </span>
-          {selectedNode && selectedRunId && (
-            <div className="node-ops">
-              {(nodeDetail?.status === "failed" || nodeDetail?.status === "cancelled" || nodeDetail?.status === "done") && (
-                <button
-                  type="button"
-                  className="btn-op btn-retry"
-                  disabled={opBusy}
-                  onClick={handleRetryNode}
-                  title="重新执行该节点"
-                >
-                  Retry
-                </button>
-              )}
-              {nodeDetail?.status === "running" && (
-                <button
-                  type="button"
-                  className="btn-op btn-danger"
-                  disabled={opBusy}
-                  onClick={handleCancelNode}
-                  title="取消该节点"
-                >
-                  Cancel
-                </button>
+          <div className="detail-head-top">
+            <div>
+              <h2>{nodeDetail?.node_id || selectedNode || "Node Inspector"}</h2>
+              <span className="node-mode">
+                {nodeDetail?.mode || dag?.nodes.find((n) => n.id === selectedNode)?.mode || "选择节点"}
+              </span>
+            </div>
+            <div className="detail-head-right">
+              <span className={`pill ${statusClass(nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting")}`}>
+                {nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting"}
+              </span>
+              {selectedNode && selectedRunId && (
+                <div className="node-ops">
+                  {(nodeDetail?.status === "failed" || nodeDetail?.status === "cancelled" || nodeDetail?.status === "done") && (
+                    <button type="button" className="btn-op btn-retry" disabled={opBusy} onClick={handleRetryNode} title="重新执行该节点">Retry</button>
+                  )}
+                  {nodeDetail?.status === "running" && (
+                    <button type="button" className="btn-op btn-danger" disabled={opBusy} onClick={handleCancelNode} title="取消该节点">Cancel</button>
+                  )}
+                </div>
               )}
             </div>
+          </div>
+          <div className="inspector-tabs">
+            {(["overview", "inputs", "outputs", "logs"] as InspectorTab[]).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                className={`inspector-tab ${inspectorTab === tab ? "active" : ""}`}
+                onClick={() => setInspectorTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="inspector-body">
+          {inspectorTab === "overview" && (
+            <>
+              <section>
+                <div className="section-title">Runtime</div>
+                <div className="fact-grid">
+                  <span>pipeline</span><code>{run?.pipeline_id || "-"}</code>
+                  <span>instance</span><code>{selectedSopSummary?.instance_id || selectedSop || "-"}</code>
+                  <span>repo</span><code>{selectedSopSummary?.repo || run?.repo || "-"}</code>
+                  <span>run_id</span><code>{nodeDetail?.run_id || "-"}</code>
+                  <span>started</span><code>{nodeDetail?.started_at || "-"}</code>
+                  <span>finished</span><code>{nodeDetail?.finished_at || "-"}</code>
+                </div>
+              </section>
+              <section>
+                <div className="section-title">Executor</div>
+                {nodeDetail?.executor ? (
+                  <div className="kv">
+                    {Object.entries(nodeDetail.executor).filter(([, v]) => v).map(([k, v]) => (
+                      <div className="kv-row" key={k}>
+                        <span>{k}</span>
+                        <code>{String(v)}</code>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty">加载中…</div>
+                )}
+              </section>
+              {nodeDetail?.validation && (
+                <ValidationBlock validation={nodeDetail.validation} />
+              )}
+              {nodeDetail?.error && (
+                <section>
+                  <div className="section-title">Error</div>
+                  <pre className="log-box error-log">{nodeDetail.error}</pre>
+                </section>
+              )}
+            </>
+          )}
+
+          {inspectorTab === "inputs" && (
+            <>
+              <KeyValueBlock
+                title="Declared Inputs"
+                data={
+                  nodeDetail?.declared_inputs as Record<string, unknown> ||
+                  (dag?.nodes.find((n) => n.id === selectedNode)?.inputs as Record<string, unknown>)
+                }
+              />
+              <KeyValueBlock
+                title="Resolved Inputs"
+                data={nodeDetail?.resolved_inputs as Record<string, unknown>}
+              />
+            </>
+          )}
+
+          {inspectorTab === "outputs" && (
+            <>
+              <KeyValueBlock
+                title="Declared Outputs"
+                data={
+                  nodeDetail?.declared_outputs as Record<string, unknown> ||
+                  (dag?.nodes.find((n) => n.id === selectedNode)?.outputs as Record<string, unknown>)
+                }
+              />
+              <KeyValueBlock
+                title="Actual Outputs"
+                data={nodeDetail?.actual_outputs as Record<string, unknown>}
+              />
+              <section>
+                <div className="section-title">
+                  Artifacts · {nodeDetail?.artifacts?.length ?? 0}
+                </div>
+                <ArtifactList artifacts={nodeDetail?.artifacts || []} />
+              </section>
+              {(nodeDetail?.discovered_candidates?.length ?? 0) > 0 && (
+                <section>
+                  <div className="section-title">
+                    Discovered Candidates · {nodeDetail?.discovered_candidates?.length}
+                  </div>
+                  <div className="candidate-warning">
+                    这些文件来自共享路径扫描，无法确认属于当前 Run，不会作为下游节点输入。
+                  </div>
+                  <ArtifactList artifacts={nodeDetail?.discovered_candidates || []} unconfirmed />
+                </section>
+              )}
+            </>
+          )}
+
+          {inspectorTab === "logs" && (
+            <section>
+              <div className="section-title">Node Log</div>
+              <pre className="log-box">{nodeLog?.log || "No log loaded."}</pre>
+            </section>
           )}
         </div>
-        <section>
-          <div className="section-title">Runtime</div>
-          <div className="fact-grid">
-            <span>pipeline</span>
-            <code>{run?.pipeline_id || "-"}</code>
-            <span>instance</span>
-            <code>{selectedSopSummary?.instance_id || selectedSop || "-"}</code>
-            <span>repo</span>
-            <code>{selectedSopSummary?.repo || run?.repo || "-"}</code>
-            <span>run_id</span>
-            <code>{nodeDetail?.run_id || "-"}</code>
-            <span>mode</span>
-            <code>{nodeDetail?.mode || dag?.nodes.find((node) => node.id === selectedNode)?.mode || "-"}</code>
-            <span>updated</span>
-            <code>{nodeDetail?.updated_at || run?.updated_at || "-"}</code>
-          </div>
-        </section>
-        <section>
-          <div className="section-title">Inputs</div>
-          <KeyValues data={nodeDetail?.inputs || dag?.nodes.find((node) => node.id === selectedNode)?.inputs} />
-        </section>
-        <section>
-          <div className="section-title">Outputs</div>
-          <KeyValues data={nodeDetail?.outputs || dag?.nodes.find((node) => node.id === selectedNode)?.outputs} />
-        </section>
-        <section>
-          <div className="section-title">Optional Inputs</div>
-          <KeyValues
-            data={nodeDetail?.optional_inputs || dag?.nodes.find((node) => node.id === selectedNode)?.optional_inputs}
-          />
-        </section>
-        <section>
-          <div className="section-title">Node Log</div>
-          <pre className="log-box">{nodeLog?.log || "No log loaded."}</pre>
-        </section>
       </aside>
 
       <footer className="timeline">
