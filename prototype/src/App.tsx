@@ -47,6 +47,13 @@ function statusIcon(status: StageStatus) {
   return <Clock size={15} />;
 }
 
+function streamStatusHint(status: "live" | "reconnecting" | "polling fallback" | "closed") {
+  if (status === "live") return "SSE 实时更新";
+  if (status === "reconnecting") return "正在恢复 SSE";
+  if (status === "polling fallback") return "15 秒轮询降级";
+  return "当前没有运行中的 Run";
+}
+
 const EVENT_META: Record<string, { icon: string; label: string }> = {
   stage_start:        { icon: "⏳", label: "开始执行" },
   stage_done:         { icon: "✅", label: "执行完成" },
@@ -409,8 +416,8 @@ export default function App() {
             <p>{mode === "real" ? "当前页面直接读取 tunnel-admin 和 SOP SPI，不在前端保存业务数据。" : "Mock 模式用于交互开发和接口异常 fallback。"}</p>
           </div>
           <Metric label="Stages done" value={`${completedCount}/${dag?.nodes.length || 0}`} subtext="selected run" />
-          <Metric label="Active runs" value={runs.filter((run) => run.status === "running").length} subtext="自动每 3 秒刷新" />
-          <Metric label="Live events" value={streamStatus} subtext={streamStatus === "live" ? "SSE 实时更新" : "15 秒轮询降级"} />
+          <Metric label="Active runs" value={runs.filter((run) => run.status === "running").length} subtext="current runtime" />
+          <Metric label="Live events" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
         </section>
 
         <section className="flow-panel">
