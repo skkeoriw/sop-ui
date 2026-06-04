@@ -158,10 +158,23 @@ export interface NodeDetail {
   validation?: NodeValidation;
 }
 
+export interface NodeEvent {
+  ts: string;
+  event: string;
+  stage?: string;
+  trigger?: string;
+  ok?: boolean;
+  error?: string;
+  duration_s?: number;
+  reason?: string;
+  run_id?: string;
+}
+
 export interface NodeLog {
   pipeline_id: string;
   node_id: string;
   log: string;
+  events?: NodeEvent[];
 }
 
 export interface TriggerResponse {
@@ -173,6 +186,21 @@ export interface TriggerResponse {
   file_written?: string;
   status_url?: string;
   message?: string;
+}
+
+export interface NodeConfig {
+  node_id: string;
+  title?: string;
+  mode?: string;
+  needs?: string[];
+  executor?: NodeExecutor;
+  inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  optional_inputs?: Record<string, unknown>;
+  infra?: { tg_notify?: boolean; log_record?: boolean };
+  params?: Record<string, unknown>;
+  skill_script?: string | null;
+  skill_readme?: string | null;
 }
 
 export interface OperationResponse {

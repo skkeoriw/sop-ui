@@ -1,5 +1,6 @@
 import type {
   DagNode,
+  NodeConfig,
   NodeDetail,
   NodeLog,
   OperationResponse,
@@ -138,6 +139,17 @@ export async function triggerRun(
       input: { url }
     })
   });
+}
+
+export async function getNodeConfig(
+  endpoint: string,
+  sopId: string,
+  nodeId: string
+): Promise<NodeConfig> {
+  return requestJson<NodeConfig>(
+    endpoint,
+    `/api/sop/${encodeURIComponent(sopId)}/nodes/${encodeURIComponent(nodeId)}`
+  );
 }
 
 export async function cancelRun(

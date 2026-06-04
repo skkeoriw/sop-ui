@@ -699,6 +699,129 @@ pre {
   grid-template-columns: minmax(170px, .9fr) minmax(240px, 1.3fr) auto auto;
 }
 
+/* ── Node Config Panel ───────────────────────────────────────────────────── */
+
+.node-config-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.capabilities-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.capability-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.needs-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.needs-chip {
+  background: var(--blue-soft);
+  color: var(--blue);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ── DAG node wrap + config button ──────────────────────────────────────── */
+
+.dag-node-wrap {
+  position: absolute;
+}
+
+.dag-node-wrap.selected > .dag-node {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.node-config-btn {
+  position: absolute;
+  top: 4px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 10;
+}
+
+.dag-node-wrap:hover .node-config-btn {
+  opacity: 1;
+}
+
+/* ── Event list (logs tab) ───────────────────────────────────────────────── */
+
+.event-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--gray-soft);
+}
+
+.event-row.event-error {
+  background: var(--red-soft);
+}
+
+.event-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.event-time {
+  font-family: monospace;
+  color: var(--muted);
+  flex-shrink: 0;
+  font-size: 11px;
+  min-width: 60px;
+}
+
+.event-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+.event-detail {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Inspector: Validation ───────────────────────────────────────────────── */
 
 .validation-summary {

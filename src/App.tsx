@@ -5,6 +5,7 @@ import {
   DEFAULT_ENDPOINT,
   getDag,
   getManifest,
+  getNodeConfig,
   getRuntimeChannels,
   getNodeDetail,
   getNodeLog,
@@ -15,9 +16,9 @@ import {
   retryNode,
   triggerRun
 } from "./api";
-import type { Artifact, DagEdge, DagNode, NodeDetail, NodeLog, NodeValidation, RuntimeChannel, SopDag, SopRun, SopSummary } from "./types";
+import type { Artifact, DagEdge, DagNode, NodeConfig, NodeDetail, NodeEvent, NodeLog, NodeValidation, RuntimeChannel, SopDag, SopRun, SopSummary } from "./types";
 
-type InspectorTab = "overview" | "inputs" | "outputs" | "logs";
+type InspectorTab = "config" | "run" | "artifacts" | "logs";
 
 const STATUS_ORDER = ["failed", "running", "waiting", "skipped", "done"];
 const PREFERRED_INSTANCE_ID = "wiki-sop-dag-smoke";
@@ -154,16 +155,61 @@ function ArtifactList({ artifacts, unconfirmed }: { artifacts: Artifact[]; uncon
   );
 }
 
+function CapabilityRow({ label, enabled }: { label: string; enabled: boolean }) {
+  return (
+    <div className="capability-row">
+      <span>{label}</span>
+      <span className={`pill ${enabled ? "done" : "waiting"}`}>{enabled ? "enabled" : "disabled"}</span>
+    </div>
+  );
+}
+
+const EVENT_META: Record<string, { icon: string; label: string }> = {
+  stage_start:         { icon: "⏳", label: "开始执行" },
+  stage_done:          { icon: "✅", label: "执行完成" },
+  stage_failed:        { icon: "❌", label: "执行失败" },
+  stage_skipped:       { icon: "⏭️", label: "已跳过" },
+  tg_notify_sent:      { icon: "📤", label: "TG 通知" },
+  tg_notify_failed:    { icon: "📤", label: "TG 通知失败" },
+  pipeline_cancelled:  { icon: "🚫", label: "Pipeline 已取消" },
+  node_retry:          { icon: "🔄", label: "节点重试" },
+  node_cancelled:      { icon: "🚫", label: "节点已取消" },
+};
+
+function EventRow({ event }: { event: NodeEvent }) {
+  const meta = EVENT_META[event.event] || { icon: "•", label: event.event };
+  const time = event.ts ? event.ts.slice(11, 19) : "";
+  const isTg = event.event.startsWith("tg_notify");
+  const ok = event.ok !== false;
+
+  let detail = "";
+  if (event.duration_s) detail = `${event.duration_s}s`;
+  if (event.trigger) detail = `(${event.trigger})`;
+  if (event.error) detail = event.error.slice(0, 60);
+
+  return (
+    <div className={`event-row ${isTg && !ok ? "event-error" : ""}`}>
+      <span className="event-icon">{meta.icon}</span>
+      <span className="event-time">{time}</span>
+      <span className="event-label">{meta.label}</span>
+      {detail && <span className="event-detail">{detail}</span>}
+      {isTg && <span className={`pill ${ok ? "done" : "failed"}`}>{ok ? "✅" : "❌"}</span>}
+    </div>
+  );
+}
+
 function DagView({
   dag,
   run,
   selectedNode,
-  onSelectNode
+  onSelectNode,
+  onOpenConfig
 }: {
   dag?: SopDag;
   run?: SopRun;
   selectedNode?: string;
   onSelectNode: (id: string) => void;
+  onOpenConfig?: (id: string) => void;
 }) {
   const positions = useMemo(() => layoutDag(dag?.nodes || [], dag?.edges || []), [dag]);
   const positionList: Array<{ x: number; y: number }> = Array.from(positions.values());
@@ -206,21 +252,33 @@ function DagView({
           const pos = positions.get(node.id) || { x: 0, y: 0 };
           const state = run?.nodes?.[node.id] || "waiting";
           return (
-            <button
+            <div
               key={node.id}
-              type="button"
-              className={`dag-node ${statusClass(state)} ${selectedNode === node.id ? "selected" : ""}`}
-              style={{ left: pos.x, top: pos.y }}
-              onClick={() => onSelectNode(node.id)}
+              className={`dag-node-wrap ${selectedNode === node.id ? "selected" : ""}`}
+              style={{ left: pos.x, top: pos.y, position: "absolute" }}
             >
-              <div className="node-head">
-                <strong>{nodeTitle(node)}</strong>
-                <span className={`pill ${statusClass(state)}`}>{state}</span>
-              </div>
-              <div className="node-meta">{node.id}</div>
-              <div className="node-meta">{node.mode || "blocking"}</div>
-              {node.mode === "sidecar" && <span className="pill sidecar">sidecar</span>}
-            </button>
+              <button
+                type="button"
+                className={`dag-node ${statusClass(state)}`}
+                onClick={() => onSelectNode(node.id)}
+              >
+                <div className="node-head">
+                  <strong>{nodeTitle(node)}</strong>
+                  <span className={`pill ${statusClass(state)}`}>{state}</span>
+                </div>
+                <div className="node-meta">{node.id}</div>
+                <div className="node-meta">{node.mode || "blocking"}</div>
+                {node.mode === "sidecar" && <span className="pill sidecar">sidecar</span>}
+              </button>
+              {onOpenConfig && (
+                <button
+                  type="button"
+                  className="node-config-btn"
+                  title="查看节点配置"
+                  onClick={(e) => { e.stopPropagation(); onOpenConfig(node.id); }}
+                >ⓘ</button>
+              )}
+            </div>
           );
         })}
       </div>
@@ -251,7 +309,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [opBusy, setOpBusy] = useState(false);
   const [opMsg, setOpMsg] = useState("");
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
+  const [nodeConfig, setNodeConfig] = useState<NodeConfig | null>(null);
+  const [showNodeConfig, setShowNodeConfig] = useState(false);
 
   const selectedSopSummary = sops.find((sop) => sop.id === selectedSop);
   const selectedRuntime = runtimeChannels.find((runtime) => normalizeEndpoint(runtime.channel_url) === endpoint);
@@ -372,7 +432,7 @@ export default function App() {
 
   useEffect(() => {
     if (!selectedNode) return;
-    setInspectorTab("overview");
+    setInspectorTab("config");
     loadNode(selectedNode).catch((err) => setError(err.message));
   }, [loadNode, selectedNode]);
 
@@ -420,6 +480,18 @@ export default function App() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function openNodeConfig(nodeId: string) {
+    if (!selectedSop) return;
+    setNodeConfig(null);
+    setShowNodeConfig(true);
+    try {
+      const cfg = await getNodeConfig(endpoint, selectedSop, nodeId);
+      setNodeConfig(cfg);
+    } catch {
+      setShowNodeConfig(false);
     }
   }
 
@@ -603,145 +675,202 @@ export default function App() {
           </form>
           {opMsg && <div className={`op-msg ${opMsg.includes("失败") ? "op-error" : "op-ok"}`}>{opMsg}</div>}
         </div>
-        <DagView dag={dag} run={run} selectedNode={selectedNode} onSelectNode={setSelectedNode} />
+        <DagView dag={dag} run={run} selectedNode={selectedNode} onSelectNode={setSelectedNode} onOpenConfig={openNodeConfig} />
       </main>
 
       <aside className="detail">
-        <div className="detail-head">
-          <div className="detail-head-top">
-            <div>
-              <h2>{nodeDetail?.node_id || selectedNode || "Node Inspector"}</h2>
-              <span className="node-mode">
-                {nodeDetail?.mode || dag?.nodes.find((n) => n.id === selectedNode)?.mode || "选择节点"}
-              </span>
-            </div>
-            <div className="detail-head-right">
-              <span className={`pill ${statusClass(nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting")}`}>
-                {nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting"}
-              </span>
-              {selectedNode && selectedRunId && (
-                <div className="node-ops">
-                  {(nodeDetail?.status === "failed" || nodeDetail?.status === "cancelled" || nodeDetail?.status === "done") && (
-                    <button type="button" className="btn-op btn-retry" disabled={opBusy} onClick={handleRetryNode} title="重新执行该节点">Retry</button>
-                  )}
-                  {nodeDetail?.status === "running" && (
-                    <button type="button" className="btn-op btn-danger" disabled={opBusy} onClick={handleCancelNode} title="取消该节点">Cancel</button>
-                  )}
+        {showNodeConfig ? (
+          /* ── Node Config Panel (static, run-independent) ── */
+          <div className="node-config-panel">
+            <div className="detail-head">
+              <div className="detail-head-top">
+                <div>
+                  <h2>{nodeConfig?.title || nodeConfig?.node_id || "节点配置"}</h2>
+                  <span className="node-mode">{nodeConfig?.mode || "loading…"}</span>
                 </div>
-              )}
+                <button type="button" className="btn-op" style={{ fontSize: 12 }} onClick={() => setShowNodeConfig(false)}>
+                  ← 返回 Inspector
+                </button>
+              </div>
             </div>
-          </div>
-          <div className="inspector-tabs">
-            {(["overview", "inputs", "outputs", "logs"] as InspectorTab[]).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                className={`inspector-tab ${inspectorTab === tab ? "active" : ""}`}
-                onClick={() => setInspectorTab(tab)}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="inspector-body">
-          {inspectorTab === "overview" && (
-            <>
-              <section>
-                <div className="section-title">Runtime</div>
-                <div className="fact-grid">
-                  <span>pipeline</span><code>{run?.pipeline_id || "-"}</code>
-                  <span>instance</span><code>{selectedSopSummary?.instance_id || selectedSop || "-"}</code>
-                  <span>repo</span><code>{selectedSopSummary?.repo || run?.repo || "-"}</code>
-                  <span>run_id</span><code>{nodeDetail?.run_id || "-"}</code>
-                  <span>started</span><code>{nodeDetail?.started_at || "-"}</code>
-                  <span>finished</span><code>{nodeDetail?.finished_at || "-"}</code>
-                </div>
-              </section>
-              <section>
-                <div className="section-title">Executor</div>
-                {nodeDetail?.executor ? (
-                  <div className="kv">
-                    {Object.entries(nodeDetail.executor).filter(([, v]) => v).map(([k, v]) => (
-                      <div className="kv-row" key={k}>
-                        <span>{k}</span>
-                        <code>{String(v)}</code>
+            <div className="inspector-body">
+              {!nodeConfig ? (
+                <div className="empty">加载节点配置…</div>
+              ) : (
+                <>
+                  <section>
+                    <div className="section-title">Executor</div>
+                    <div className="kv">
+                      {Object.entries(nodeConfig.executor || {}).filter(([, v]) => v).map(([k, v]) => (
+                        <div className="kv-row" key={k}><span>{k}</span><code>{String(v)}</code></div>
+                      ))}
+                      {nodeConfig.skill_script && (
+                        <div className="kv-row"><span>script</span><code title={nodeConfig.skill_script}>{nodeConfig.skill_script}</code></div>
+                      )}
+                    </div>
+                  </section>
+                  {(nodeConfig.needs?.length ?? 0) > 0 && (
+                    <section>
+                      <div className="section-title">Depends On</div>
+                      <div className="needs-list">
+                        {nodeConfig.needs!.map((n) => <span key={n} className="needs-chip">{n}</span>)}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="empty">加载中…</div>
-                )}
-              </section>
-              {nodeDetail?.validation && (
-                <ValidationBlock validation={nodeDetail.validation} />
+                    </section>
+                  )}
+                  <KeyValueBlock title="Input Contract" data={nodeConfig.inputs as Record<string, unknown>} />
+                  <KeyValueBlock title="Output Contract" data={nodeConfig.outputs as Record<string, unknown>} />
+                  {nodeConfig.optional_inputs && Object.keys(nodeConfig.optional_inputs).length > 0 && (
+                    <KeyValueBlock title="Optional Inputs" data={nodeConfig.optional_inputs as Record<string, unknown>} />
+                  )}
+                  <section>
+                    <div className="section-title">Capabilities</div>
+                    <div className="capabilities-grid">
+                      <CapabilityRow label="TG Notify" enabled={nodeConfig.infra?.tg_notify !== false} />
+                      <CapabilityRow label="Log Record" enabled={nodeConfig.infra?.log_record !== false} />
+                    </div>
+                  </section>
+                  {nodeConfig.params && Object.keys(nodeConfig.params).length > 0 && (
+                    <KeyValueBlock title="Params" data={nodeConfig.params as Record<string, unknown>} />
+                  )}
+                  {nodeConfig.skill_readme && (
+                    <section>
+                      <div className="section-title">Skill README</div>
+                      <pre className="log-box" style={{ fontSize: 11, maxHeight: 300 }}>{nodeConfig.skill_readme}</pre>
+                    </section>
+                  )}
+                </>
               )}
-              {nodeDetail?.error && (
-                <section>
-                  <div className="section-title">Error</div>
-                  <pre className="log-box error-log">{nodeDetail.error}</pre>
-                </section>
-              )}
-            </>
-          )}
-
-          {inspectorTab === "inputs" && (
-            <>
-              <KeyValueBlock
-                title="Declared Inputs"
-                data={
-                  nodeDetail?.declared_inputs as Record<string, unknown> ||
-                  (dag?.nodes.find((n) => n.id === selectedNode)?.inputs as Record<string, unknown>)
-                }
-              />
-              <KeyValueBlock
-                title="Resolved Inputs"
-                data={nodeDetail?.resolved_inputs as Record<string, unknown>}
-              />
-            </>
-          )}
-
-          {inspectorTab === "outputs" && (
-            <>
-              <KeyValueBlock
-                title="Declared Outputs"
-                data={
-                  nodeDetail?.declared_outputs as Record<string, unknown> ||
-                  (dag?.nodes.find((n) => n.id === selectedNode)?.outputs as Record<string, unknown>)
-                }
-              />
-              <KeyValueBlock
-                title="Actual Outputs"
-                data={nodeDetail?.actual_outputs as Record<string, unknown>}
-              />
-              <section>
-                <div className="section-title">
-                  Artifacts · {nodeDetail?.artifacts?.length ?? 0}
+            </div>
+          </div>
+        ) : (
+          /* ── Run Inspector (runtime, shown when Node Config Panel is hidden) ── */
+          <>
+            <div className="detail-head">
+              <div className="detail-head-top">
+                <div>
+                  <h2>{nodeDetail?.node_id || selectedNode || "Node Inspector"}</h2>
+                  <span className="node-mode">
+                    {nodeDetail?.mode || dag?.nodes.find((n) => n.id === selectedNode)?.mode || "选择节点"}
+                  </span>
                 </div>
-                <ArtifactList artifacts={nodeDetail?.artifacts || []} />
-              </section>
-              {(nodeDetail?.discovered_candidates?.length ?? 0) > 0 && (
+                <div className="detail-head-right">
+                  <span className={`pill ${statusClass(nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting")}`}>
+                    {nodeDetail?.status || run?.nodes?.[selectedNode] || "waiting"}
+                  </span>
+                  {selectedNode && selectedRunId && (
+                    <div className="node-ops">
+                      {(nodeDetail?.status === "failed" || nodeDetail?.status === "cancelled" || nodeDetail?.status === "done") && (
+                        <button type="button" className="btn-op btn-retry" disabled={opBusy} onClick={handleRetryNode} title="重新执行该节点">Retry</button>
+                      )}
+                      {nodeDetail?.status === "running" && (
+                        <button type="button" className="btn-op btn-danger" disabled={opBusy} onClick={handleCancelNode} title="取消该节点">Cancel</button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="inspector-tabs">
+                {(["config", "run", "artifacts", "logs"] as InspectorTab[]).map((tab) => (
+                  <button key={tab} type="button" className={`inspector-tab ${inspectorTab === tab ? "active" : ""}`} onClick={() => setInspectorTab(tab)}>
+                    {tab}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="inspector-body">
+              {inspectorTab === "config" && (() => {
+                const dagNode = dag?.nodes.find((n) => n.id === selectedNode);
+                const executor = nodeDetail?.executor;
+                const needs = dagNode ? (dagNode as DagNode & { needs?: string[] }).needs : undefined;
+                const infra = (nodeDetail as NodeDetail & { infra?: Record<string, unknown> })?.infra;
+                return (
+                  <>
+                    <section>
+                      <div className="section-title">Executor</div>
+                      {executor ? (
+                        <div className="kv">
+                          {Object.entries(executor).filter(([, v]) => v).map(([k, v]) => (
+                            <div className="kv-row" key={k}><span>{k}</span><code>{String(v)}</code></div>
+                          ))}
+                        </div>
+                      ) : <div className="empty">选择节点后加载</div>}
+                    </section>
+                    {needs && needs.length > 0 && (
+                      <section>
+                        <div className="section-title">Depends On</div>
+                        <div className="needs-list">
+                          {needs.map((n) => <span key={n} className="needs-chip">{n}</span>)}
+                        </div>
+                      </section>
+                    )}
+                    <KeyValueBlock title="Input Contract" data={nodeDetail?.declared_inputs as Record<string, unknown> || dagNode?.inputs as Record<string, unknown>} />
+                    <KeyValueBlock title="Output Contract" data={nodeDetail?.declared_outputs as Record<string, unknown> || dagNode?.outputs as Record<string, unknown>} />
+                    {dagNode?.optional_inputs && Object.keys(dagNode.optional_inputs).length > 0 && (
+                      <KeyValueBlock title="Optional Inputs" data={nodeDetail?.declared_inputs as Record<string, unknown> || dagNode.optional_inputs as Record<string, unknown>} />
+                    )}
+                    <section>
+                      <div className="section-title">Capabilities</div>
+                      <div className="capabilities-grid">
+                        <CapabilityRow label="TG Notify" enabled={infra ? Boolean(infra["tg_notify"] ?? true) : true} />
+                        <CapabilityRow label="Log Record" enabled={infra ? Boolean(infra["log_record"] ?? true) : true} />
+                      </div>
+                    </section>
+                  </>
+                );
+              })()}
+
+              {inspectorTab === "run" && (
+                <>
+                  <section>
+                    <div className="section-title">Execution</div>
+                    <div className="fact-grid">
+                      <span>pipeline</span><code>{run?.pipeline_id || "-"}</code>
+                      <span>run_id</span><code>{nodeDetail?.run_id || "-"}</code>
+                      <span>started</span><code>{nodeDetail?.started_at || "-"}</code>
+                      <span>finished</span><code>{nodeDetail?.finished_at || "-"}</code>
+                      <span>instance</span><code>{selectedSopSummary?.instance_id || selectedSop || "-"}</code>
+                      <span>repo</span><code>{selectedSopSummary?.repo || run?.repo || "-"}</code>
+                    </div>
+                  </section>
+                  {nodeDetail?.validation && <ValidationBlock validation={nodeDetail.validation} />}
+                  <KeyValueBlock title="Resolved Inputs" data={nodeDetail?.resolved_inputs as Record<string, unknown>} />
+                  <KeyValueBlock title="Actual Outputs" data={nodeDetail?.actual_outputs as Record<string, unknown>} />
+                  {nodeDetail?.error && (
+                    <section>
+                      <div className="section-title">Error</div>
+                      <pre className="log-box error-log">{nodeDetail.error}</pre>
+                    </section>
+                  )}
+                </>
+              )}
+
+              {inspectorTab === "artifacts" && (
                 <section>
-                  <div className="section-title">
-                    Discovered Candidates · {nodeDetail?.discovered_candidates?.length}
-                  </div>
-                  <div className="candidate-warning">
-                    这些文件来自共享路径扫描，无法确认属于当前 Run，不会作为下游节点输入。
-                  </div>
-                  <ArtifactList artifacts={nodeDetail?.discovered_candidates || []} unconfirmed />
+                  <div className="section-title">Artifacts · {nodeDetail?.artifacts?.length ?? 0}</div>
+                  <ArtifactList artifacts={nodeDetail?.artifacts || []} />
                 </section>
               )}
-            </>
-          )}
 
-          {inspectorTab === "logs" && (
-            <section>
-              <div className="section-title">Node Log</div>
-              <pre className="log-box">{nodeLog?.log || "No log loaded."}</pre>
-            </section>
-          )}
-        </div>
+              {inspectorTab === "logs" && (
+                <>
+                  {(nodeLog?.events ?? []).length > 0 && (
+                    <section>
+                      <div className="section-title">Events</div>
+                      <div className="event-list">
+                        {(nodeLog?.events ?? []).map((ev, i) => <EventRow key={i} event={ev} />)}
+                      </div>
+                    </section>
+                  )}
+                  <section>
+                    <div className="section-title">Raw Log</div>
+                    <pre className="log-box">{nodeLog?.log || "No log loaded."}</pre>
+                  </section>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </aside>
 
       <footer className="timeline">
