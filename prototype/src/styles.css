@@ -299,6 +299,16 @@ pre {
   background: var(--amber-soft);
 }
 
+.candidate-warning {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-left: 3px solid #d49a25;
+  background: #fff8e8;
+  color: #684b12;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .validation-summary p {
   margin: 0;
   color: var(--muted);

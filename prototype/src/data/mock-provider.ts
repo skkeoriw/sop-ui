@@ -119,6 +119,21 @@ export const mockProvider: SopDataProvider = {
         resolution: "recorded",
         preview: `# ${stage.title}\n\n这是 ${output} 的 mock Artifact 预览，用于验证节点实际产物交互。`
       })),
+      discoveredCandidates: nodeId === "notebooklm-research" ? [{
+        id: "mock-historical-report",
+        producer: nodeId,
+        output: "reports",
+        type: "research.report",
+        format: "markdown",
+        path: "raw/notebooklm-analysis/historical-report.md",
+        title: "historical-report.md",
+        size: 1536,
+        mimeType: "text/markdown",
+        tags: ["historical"],
+        resolution: "pattern",
+        ownership: "unconfirmed",
+        preview: "# 历史报告\n\n该文件由共享目录扫描发现，无法确认属于当前 Run。"
+      }] : [],
       validation: { status: "passed", missingOutputs: [], unexpectedOutputs: [] },
       updatedAt: run.updatedAt,
       error: run.nodes[nodeId] === "failed" ? "Mock NotebookLM bridge error" : ""

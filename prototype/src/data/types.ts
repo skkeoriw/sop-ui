@@ -71,6 +71,7 @@ export interface NodeDetail {
   declaredOutputs: Record<string, unknown>;
   actualOutputs: Record<string, unknown>;
   artifacts: Artifact[];
+  discoveredCandidates: Artifact[];
   validation: NodeValidation;
 }
 
@@ -86,6 +87,7 @@ export interface Artifact {
   mimeType: string;
   tags: string[];
   resolution: string;
+  ownership?: string;
   preview?: string;
   previewTruncated?: boolean;
 }

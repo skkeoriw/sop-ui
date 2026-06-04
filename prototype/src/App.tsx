@@ -390,6 +390,10 @@ export default function App() {
                   <DetailBlock title={`Artifacts · ${nodeQuery.data?.artifacts.length || 0}`}>
                     <ArtifactList artifacts={nodeQuery.data?.artifacts || []} />
                   </DetailBlock>
+                  <DetailBlock title={`Discovered Candidates · ${nodeQuery.data?.discoveredCandidates.length || 0}`}>
+                    <p className="candidate-warning">这些文件来自共享路径扫描，无法确认属于当前 Run，不会作为下游节点输入。</p>
+                    <ArtifactList artifacts={nodeQuery.data?.discoveredCandidates || []} />
+                  </DetailBlock>
                 </>
               )}
               {inspectorTab === "logs" && <DetailBlock title="Logs">{logQuery.isLoading ? <Skeleton /> : <pre className="log-box">{logQuery.data?.log || "没有日志"}</pre>}</DetailBlock>}

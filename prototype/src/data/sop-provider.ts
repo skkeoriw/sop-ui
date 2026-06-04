@@ -54,6 +54,25 @@ function mapRun(raw: Record<string, unknown>): Run {
   };
 }
 
+function mapArtifact(artifact: Record<string, unknown>) {
+  return {
+    id: String(artifact.id || ""),
+    producer: String(artifact.producer || ""),
+    output: String(artifact.output || ""),
+    type: String(artifact.type || "file"),
+    format: String(artifact.format || "binary"),
+    path: String(artifact.path || ""),
+    title: String(artifact.title || artifact.path || ""),
+    size: Number(artifact.size || 0),
+    mimeType: String(artifact.mime_type || "application/octet-stream"),
+    tags: (artifact.tags as string[]) || [],
+    resolution: String(artifact.resolution || ""),
+    ownership: artifact.ownership ? String(artifact.ownership) : undefined,
+    preview: artifact.preview ? String(artifact.preview) : undefined,
+    previewTruncated: Boolean(artifact.preview_truncated)
+  };
+}
+
 export const sopProvider: SopDataProvider = {
   mode: "real",
 
@@ -147,21 +166,8 @@ export const sopProvider: SopDataProvider = {
       resolvedInputs: (raw.resolved_inputs as Record<string, unknown>) || {},
       declaredOutputs: (raw.declared_outputs as Record<string, unknown>) || {},
       actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
-      artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map((artifact) => ({
-        id: String(artifact.id || ""),
-        producer: String(artifact.producer || ""),
-        output: String(artifact.output || ""),
-        type: String(artifact.type || "file"),
-        format: String(artifact.format || "binary"),
-        path: String(artifact.path || ""),
-        title: String(artifact.title || artifact.path || ""),
-        size: Number(artifact.size || 0),
-        mimeType: String(artifact.mime_type || "application/octet-stream"),
-        tags: (artifact.tags as string[]) || [],
-        resolution: String(artifact.resolution || ""),
-        preview: artifact.preview ? String(artifact.preview) : undefined,
-        previewTruncated: Boolean(artifact.preview_truncated)
-      })),
+      artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+      discoveredCandidates: ((raw.discovered_candidates as Array<Record<string, unknown>>) || []).map(mapArtifact),
       validation: {
         status: String((raw.validation as Record<string, unknown>)?.status || "unknown"),
         missingOutputs: ((raw.validation as Record<string, unknown>)?.missing_outputs as string[]) || [],
