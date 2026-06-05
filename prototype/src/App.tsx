@@ -37,6 +37,7 @@ import type {
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
 type AppView = "workflow" | "nodes";
+type AppRoute = { view: AppView; nodeId: string };
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -46,6 +47,17 @@ interface StageNodeData extends Record<string, unknown> {
 }
 
 const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "done"];
+
+function readRoute(): AppRoute {
+  const parts = window.location.pathname.split("/").filter(Boolean);
+  if (parts[0] === "nodes") return { view: "nodes", nodeId: decodeURIComponent(parts[1] || "") };
+  return { view: "workflow", nodeId: "" };
+}
+
+function routePath(view: AppView, nodeId = "") {
+  if (view === "nodes") return nodeId ? `/nodes/${encodeURIComponent(nodeId)}` : "/nodes";
+  return "/workflow";
+}
 
 function inspectorTabLabel(tab: InspectorTab) {
   if (tab === "config") return "Definition";
@@ -158,6 +170,8 @@ export default function App() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<DataMode>(getMode);
   const provider = useMemo(() => getProvider(mode), [mode]);
+  const [route, setRoute] = useState<AppRoute>(readRoute);
+  const viewMode = route.view;
   const initialEndpoint = useMemo(() => normalizeEndpoint(new URL(window.location.href).searchParams.get("endpoint") || ""), []);
   const initialManualRuntime = useMemo<Runtime | undefined>(() => initialEndpoint ? ({
     id: `manual:${initialEndpoint}`, name: initialEndpoint.replace(/^https?:\/\//, ""), endpoint: initialEndpoint,
@@ -178,9 +192,10 @@ export default function App() {
   const [nodeConfigId, setNodeConfigId] = useState("");
   const [rawLogOpen, setRawLogOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<"live" | "reconnecting" | "polling fallback" | "closed">("closed");
-  const [viewMode, setViewMode] = useState<AppView>("workflow");
   const [executionSearch, setExecutionSearch] = useState("");
   const [executionFilter, setExecutionFilter] = useState<"all" | StageStatus>("all");
+  const [nodeSearch, setNodeSearch] = useState("");
+  const [nodeFilter, setNodeFilter] = useState("all");
   const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
   const [draftOpen, setDraftOpen] = useState(false);
   const [confirmRealDraft, setConfirmRealDraft] = useState(false);
@@ -257,6 +272,19 @@ export default function App() {
   });
   const managedNodes = nodesQuery.data || [];
   const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
+  const nodeFilters = useMemo(() => {
+    const values = new Set<string>();
+    managedNodes.forEach((node) => values.add(String(node.case || node.executor?.type || node.mode || "node")));
+    return ["all", ...Array.from(values).sort()];
+  }, [managedNodes]);
+  const visibleManagedNodes = useMemo(() => {
+    const query = nodeSearch.trim().toLowerCase();
+    return managedNodes.filter((node) => {
+      const type = String(node.case || node.executor?.type || node.mode || "node");
+      const searchable = [node.nodeId, node.title, node.description, type].filter(Boolean).join(" ").toLowerCase();
+      return (nodeFilter === "all" || nodeFilter === type) && (!query || searchable.includes(query));
+    });
+  }, [managedNodes, nodeFilter, nodeSearch]);
 
   const triggerMutation = useMutation({
     mutationFn: () => provider.triggerRun(runtime, instance.instanceId, { repo: instance.repo, url: triggerUrl }),
@@ -305,6 +333,15 @@ export default function App() {
     }
   });
 
+  useEffect(() => {
+    if (window.location.pathname === "/" || !["/workflow", "/nodes"].some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
+      window.history.replaceState(null, "", `${routePath("workflow")}${window.location.search}`);
+      setRoute(readRoute());
+    }
+    const onPopState = () => setRoute(readRoute());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
   useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
   useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
   useEffect(() => { if (runs.length && !runs.some((run) => run.pipelineId === selectedRunId)) setSelectedRunId(runs[0].pipelineId); }, [runs, selectedRunId]);
@@ -312,7 +349,14 @@ export default function App() {
   useEffect(() => { setInstanceId(""); setSelectedRunId(""); setSelectedStageId(""); }, [runtimeId]);
   useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); }, [instanceId]);
   useEffect(() => { setSelectedManagedNodeId(""); }, [runtimeId, instanceId]);
-  useEffect(() => { if (managedNodes.length && !managedNodes.some((node) => node.nodeId === selectedManagedNodeId)) setSelectedManagedNodeId(managedNodes[0].nodeId); }, [managedNodes, selectedManagedNodeId]);
+  useEffect(() => {
+    if (!managedNodes.length) return;
+    if (route.view === "nodes" && route.nodeId && managedNodes.some((node) => node.nodeId === route.nodeId)) {
+      setSelectedManagedNodeId(route.nodeId);
+      return;
+    }
+    if (!managedNodes.some((node) => node.nodeId === selectedManagedNodeId)) setSelectedManagedNodeId(managedNodes[0].nodeId);
+  }, [managedNodes, route.nodeId, route.view, selectedManagedNodeId]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 3000); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => { setInspectorTab("config"); setShowNodeConfig(false); }, [selectedStageId]);
   useEffect(() => {
@@ -380,6 +424,18 @@ export default function App() {
     setRuntimeId(""); setInstanceId(""); setSelectedRunId(""); setSelectedStageId("");
   }
 
+  function navigateTo(view: AppView, nodeId = "") {
+    const nextPath = routePath(view, nodeId);
+    const nextUrl = `${nextPath}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view, nodeId });
+  }
+
+  function selectManagedNode(nodeId: string) {
+    setSelectedManagedNodeId(nodeId);
+    navigateTo("nodes", nodeId);
+  }
+
   function addManualEndpoint(event: FormEvent) {
     event.preventDefault();
     const endpoint = normalizeEndpoint(manualEndpoint);
@@ -420,7 +476,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${viewMode === "nodes" ? "nodes-shell" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">S</div>
@@ -438,8 +494,8 @@ export default function App() {
         </div>
         <div className="top-actions">
           <div className="view-switch" aria-label="主视图">
-            <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => setViewMode("workflow")}>Workflow</button>
-            <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => setViewMode("nodes")}>Nodes</button>
+            <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>Workflow</button>
+            <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>Nodes</button>
           </div>
           <div className="mode-switch" aria-label="数据模式">
             <button type="button" className={mode === "real" ? "active" : ""} onClick={() => changeMode("real")}>Real</button>
@@ -452,7 +508,7 @@ export default function App() {
 
       {queryError && <div className="error-banner">数据请求失败：{String((queryError as Error).message || queryError)}</div>}
 
-      <aside className="sidebar">
+      {viewMode === "workflow" && <aside className="sidebar">
         <section>
           <div className="section-title"><span>Runtime</span><span>{mode}</span></div>
           {runtime ? (
@@ -501,7 +557,7 @@ export default function App() {
           ))}
           {!visibleExecutions.length && <LoadingOrEmpty loading={runsQuery.isLoading} text={runs.length ? "没有匹配的 Execution" : "当前 Workspace 还没有 Execution"} />}
         </section>
-      </aside>
+      </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
         {viewMode === "workflow" ? (
@@ -568,17 +624,22 @@ export default function App() {
             drafts={nodeDraftsQuery.data || []}
             loading={nodesQuery.isLoading}
             selectedNodeId={selectedManagedNode?.nodeId || ""}
-            onSelectNode={setSelectedManagedNodeId}
+            selectedNode={selectedManagedNode}
+            visibleNodes={visibleManagedNodes}
+            nodeSearch={nodeSearch}
+            nodeFilter={nodeFilter}
+            nodeFilters={nodeFilters}
+            onNodeSearch={setNodeSearch}
+            onNodeFilter={setNodeFilter}
+            onSelectNode={selectManagedNode}
             onOpenDraft={() => setDraftOpen(true)}
           />
         )}
       </main>
 
       {/* ── Inspector panel ── */}
-      <aside className="inspector">
-        {viewMode === "nodes" ? (
-          <NodeManagerInspector node={selectedManagedNode} drafts={nodeDraftsQuery.data || []} loading={nodesQuery.isLoading} />
-        ) : showNodeConfig ? (
+      {viewMode === "workflow" && <aside className="inspector">
+        {showNodeConfig ? (
           /* Node Config Panel — static, run-independent */
           <>
             <div className="inspector-head">
@@ -809,7 +870,7 @@ export default function App() {
             </div>
           </>
         )}
-      </aside>
+      </aside>}
 
       {triggerOpen && runtime && instance && (
         <div className="modal-backdrop" role="presentation">
@@ -855,18 +916,32 @@ function NodesWorkspace({
   instance,
   runtime,
   nodes,
+  visibleNodes,
+  selectedNode,
   drafts,
   loading,
   selectedNodeId,
+  nodeSearch,
+  nodeFilter,
+  nodeFilters,
+  onNodeSearch,
+  onNodeFilter,
   onSelectNode,
   onOpenDraft,
 }: {
   instance: Instance | undefined;
   runtime: Runtime | undefined;
   nodes: NodeRegistryItem[];
+  visibleNodes: NodeRegistryItem[];
+  selectedNode: NodeRegistryItem | undefined;
   drafts: NodeDraft[];
   loading: boolean;
   selectedNodeId: string;
+  nodeSearch: string;
+  nodeFilter: string;
+  nodeFilters: string[];
+  onNodeSearch: (value: string) => void;
+  onNodeFilter: (value: string) => void;
   onSelectNode: (nodeId: string) => void;
   onOpenDraft: () => void;
 }) {
@@ -882,59 +957,167 @@ function NodesWorkspace({
         <Metric label="Nodes" value={nodes.length} subtext="registered in SOP" />
         <Metric label="Complete" value={`${completeNodes}/${nodes.length || 0}`} subtext="metadata ready" />
         <Metric label="Drafts" value={drafts.length} subtext="not published" />
+        <Metric label="Publish" value="disabled" subtext="draft only" />
       </section>
 
-      <section className="nodes-board">
-        <div className="panel-head">
-          <div>
-            <strong>Node Registry</strong>
-            <span>节点能力、Skill、输入输出和附属能力</span>
+      <section className="node-workbench">
+        <aside className="node-list-panel">
+          <div className="panel-head compact">
+            <div>
+              <strong>Node Registry</strong>
+              <span>节点选择器</span>
+            </div>
+            <span className="status-pill waiting">{visibleNodes.length}/{nodes.length}</span>
           </div>
-          <span className="status-pill waiting">Publish disabled</span>
-        </div>
-        {loading ? <Skeleton /> : nodes.length ? (
-          <div className="node-registry-list">
-            {nodes.map((node) => (
-              <button key={node.nodeId} type="button" className={`node-registry-row ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
-                <div>
-                  <strong>{node.title || node.nodeId}</strong>
-                  <span>{node.description || node.mode || "SOP node"}</span>
-                </div>
-                <span className="status-pill running">{String(node.case || node.executor?.type || "node")}</span>
-                <CapabilityMini node={node} />
-                <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>
-                  {(node.missingFields || []).length ? `${node.missingFields?.length} missing` : "ready"}
-                </span>
-              </button>
-            ))}
+          <div className="node-list-tools">
+            <label className="search-box">
+              <Search size={14} />
+              <input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node" />
+            </label>
+            <label className="filter-box">
+              <SlidersHorizontal size={14} />
+              <select value={nodeFilter} onChange={(event) => onNodeFilter(event.target.value)}>
+                {nodeFilters.map((filter) => <option key={filter} value={filter}>{filter === "all" ? "All types" : filter}</option>)}
+              </select>
+            </label>
           </div>
-        ) : <Empty text="当前 Instance 没有返回 Node Registry" />}
-      </section>
+          {loading ? <Skeleton /> : visibleNodes.length ? (
+            <div className="node-picker-list">
+              {visibleNodes.map((node) => (
+                <button key={node.nodeId} type="button" className={`node-picker-row ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
+                  <div>
+                    <strong>{node.title || node.nodeId}</strong>
+                    <span>{node.nodeId}</span>
+                  </div>
+                  <span className="node-type">{String(node.case || node.executor?.type || node.mode || "node")}</span>
+                  <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>
+                    {(node.missingFields || []).length ? `${node.missingFields?.length} missing` : "ready"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : <Empty text={nodes.length ? "没有匹配的 Node" : "当前 Workspace 没有返回 Node Registry"} />}
+        </aside>
 
-      <section className="node-draft-panel">
-        <div className="panel-head compact">
-          <div>
-            <strong>Create Node Draft</strong>
-            <span>草稿创建改为抽屉承载，避免节点列表被表单挤压。</span>
-          </div>
-          <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}>
-            <CheckCircle2 size={16} />Open Draft
-          </button>
-        </div>
-        <div className="compact-draft">
-          <p>Draft 只写入 `raw/node-drafts` 并返回校验结果；Apply / Publish 第一版保持禁用。</p>
-          <div className="draft-list">
-            {drafts.slice(0, 3).map((draft) => (
-              <article key={draft.draftId} className="draft-item">
-                <strong>{draft.draftId}</strong>
-                <code>{formatValue(draft.validation)}</code>
-              </article>
-            ))}
-            {!drafts.length && <Empty text="还没有节点草稿" />}
-          </div>
-        </div>
+        <NodeDetailPanel node={selectedNode} loading={loading} />
+        <NodeAssistPanel node={selectedNode} drafts={drafts} runtime={runtime} instance={instance} onOpenDraft={onOpenDraft} />
       </section>
     </>
+  );
+}
+
+function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined; loading: boolean }) {
+  if (loading) return <section className="node-detail-panel"><Skeleton /></section>;
+  if (!node) return <section className="node-detail-panel"><Empty text="选择一个 Node 查看完整定义" /></section>;
+  return (
+    <section className="node-detail-panel">
+      <div className="node-detail-hero">
+        <div>
+          <span className="status-pill running">{String(node.case || node.executor?.type || node.mode || "node")}</span>
+          <h2>{node.title || node.nodeId}</h2>
+          <p>{node.description || "该节点暂未提供描述。"}</p>
+        </div>
+        <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>
+          {(node.missingFields || []).length ? `${node.missingFields?.length} missing` : "ready"}
+        </span>
+      </div>
+
+      <div className="node-detail-grid">
+        <DetailBlock title="Node Definition">
+          <KeyValues data={{
+            node_id: node.nodeId,
+            type: node.case || node.executor?.type || "-",
+            mode: node.mode || "-",
+            editable: node.editable ? "yes" : "no",
+            publish_enabled: node.publishEnabled ? "yes" : "no",
+          }} />
+        </DetailBlock>
+        <DetailBlock title="Skill / Executor">
+          <KeyValues data={node.skill && Object.keys(node.skill).length ? node.skill : {
+            executor_skill: node.executor?.skill || "-",
+            install_command: node.executor?.install_command || "-",
+          }} />
+        </DetailBlock>
+        <DetailBlock title="Input Contract">
+          <KeyValues data={(node.inputs as Record<string, unknown>) || {}} />
+        </DetailBlock>
+        <DetailBlock title="Output Contract">
+          <KeyValues data={(node.outputs as Record<string, unknown>) || {}} />
+        </DetailBlock>
+        <DetailBlock title="Attached Capabilities">
+          <div className="capability-stack">
+            <CapabilityRow label="GitHub Persist" enabled={capabilityEnabled((node.capabilities || {}).github ?? true)} />
+            <CapabilityRow label="Telegram Notify" enabled={capabilityEnabled((node.capabilities || {}).telegram ?? (node.infra?.tgNotify !== false))} />
+            <CapabilityRow label="SSE Events" enabled={capabilityEnabled((node.capabilities || {}).sse ?? true)} />
+          </div>
+        </DetailBlock>
+        <DetailBlock title="Actions">
+          <KeyValues data={node.actions || {}} />
+        </DetailBlock>
+      </div>
+
+      <DetailBlock title="CLI Examples">
+        <details className="cli-fold">
+          <summary><span>查看远程调用示例</span><ChevronDown size={15} /></summary>
+          <div className="cli-list">
+            {Object.entries(node.cli || {}).length ? Object.entries(node.cli || {}).map(([key, value]) => (
+              <div key={key} className="cli-item">
+                <span>{key}</span>
+                <code>{value}</code>
+              </div>
+            )) : <Empty text="该节点暂未返回 CLI 示例" />}
+          </div>
+        </details>
+      </DetailBlock>
+    </section>
+  );
+}
+
+function NodeAssistPanel({
+  node,
+  drafts,
+  runtime,
+  instance,
+  onOpenDraft,
+}: {
+  node: NodeRegistryItem | undefined;
+  drafts: NodeDraft[];
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  onOpenDraft: () => void;
+}) {
+  return (
+    <aside className="node-assist-panel">
+      <section>
+        <div className="section-title"><span>Draft / Publish</span><span>disabled</span></div>
+        <button type="button" className="primary wide" disabled={!instance || !runtime} onClick={onOpenDraft}>
+          <CheckCircle2 size={16} />Create Node Draft
+        </button>
+        <p className="body-copy">Draft 只写入 `raw/node-drafts` 并返回校验结果；Apply / Publish 第一版保持禁用。</p>
+      </section>
+      <section>
+        <div className="section-title"><span>Validation</span><span>{(node?.missingFields || []).length ? "warning" : "ready"}</span></div>
+        {(node?.missingFields || []).length ? (
+          <div className="needs-list">{node!.missingFields!.map((field) => <span key={field} className="needs-chip">{field}</span>)}</div>
+        ) : <div className="validation-summary"><div className="row"><strong>Metadata ready</strong><span className="status-pill done">ready</span></div><p>当前节点没有缺失必填字段。</p></div>}
+      </section>
+      <section>
+        <div className="section-title"><span>Capabilities</span><span>{node ? "node" : "-"}</span></div>
+        {node ? <CapabilityMini node={node} /> : <Empty text="选择节点后查看附属能力" />}
+      </section>
+      <section>
+        <div className="section-title"><span>Draft History</span><span>{drafts.length}</span></div>
+        <div className="draft-list">
+          {drafts.slice(0, 5).map((draft) => (
+            <article key={draft.draftId} className="draft-item">
+              <strong>{draft.draftId}</strong>
+              <code>{formatValue(draft.validation)}</code>
+            </article>
+          ))}
+          {!drafts.length && <Empty text="还没有节点草稿" />}
+        </div>
+      </section>
+    </aside>
   );
 }
 
