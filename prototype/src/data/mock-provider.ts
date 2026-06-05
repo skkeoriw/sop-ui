@@ -1,8 +1,21 @@
 import { baseRuns, nodeLog, runtimes as mockRuntimes, stages, stageState } from "../mock";
 import type { RunMock } from "../mock";
-import type { Dag, Instance, NodeConfig, NodeLog, Run, Runtime, SopDataProvider, TriggerInput } from "./types";
+import type {
+  Dag,
+  Instance,
+  NodeConfig,
+  NodeDraft,
+  NodeDraftInput,
+  NodeLog,
+  NodeRegistryItem,
+  Run,
+  Runtime,
+  SopDataProvider,
+  TriggerInput
+} from "./types";
 
 const runsByRuntime = new Map<string, RunMock[]>(mockRuntimes.map((runtime) => [runtime.id, baseRuns.map((run) => ({ ...run }))]));
+const draftByRuntime = new Map<string, NodeDraft[]>();
 
 function runtime(id: string): Runtime {
   const item = mockRuntimes.find((candidate) => candidate.id === id) || mockRuntimes[0];
@@ -29,6 +42,59 @@ function mockDag(runtimeId: string): Dag {
       { source: "notebooklm-research", target: "wiki-build" },
       { source: "wiki-build", target: "tg-notify" }
     ]
+  };
+}
+
+function nodeConfigFromStage(nodeId: string): NodeConfig {
+  const stage = stages.find((item) => item.id === nodeId) || stages[0];
+  return {
+    nodeId,
+    title: stage.title,
+    mode: stage.mode,
+    needs: nodeId === "notebooklm-research" ? ["youtube-fetch"] : nodeId === "wiki-build" ? ["notebooklm-research"] : nodeId === "tg-notify" ? ["wiki-build"] : [],
+    executor: { type: "agent-skill", skill: `sop-${nodeId}`, webhook_route: `sop-${nodeId}`, hermes_agent: "youtube-wiki" },
+    inputs: Object.fromEntries(Object.entries(stage.inputs).map(([k, v]) => [k, { from: v, required: true }])),
+    outputs: Object.fromEntries(Object.entries(stage.outputs).map(([k, v]) => [k, { path: v, type: "files" }])),
+    optionalInputs: {},
+    infra: { tgNotify: true, logRecord: true },
+    params: {},
+    skillScript: `youtube-wiki/skills/sop-${nodeId}/scripts/run_${nodeId.replace(/-/g, "_")}.sh`,
+    skillReadme: `# ${stage.title}\n\nMock skill README：描述该节点的 Skill 用途、输入格式和输出产物。`,
+  };
+}
+
+function registryItem(nodeId: string, target: Runtime): NodeRegistryItem {
+  const cfg = nodeConfigFromStage(nodeId);
+  return {
+    ...cfg,
+    description: String(stages.find((stage) => stage.id === nodeId)?.summary || ""),
+    case: "agent-skill",
+    skill: {
+      id: String(cfg.executor?.skill || `sop-${nodeId}`),
+      install_command: `bash <(curl -fsSL https://skill.vyibc.com/install-${nodeId}.sh)`,
+      retry_cli: `bash <(curl -fsSL https://skill.vyibc.com/sop-node.sh) --endpoint=${target.endpoint} --instance=${instance(target.id).instanceId} --node=${nodeId} --action=retry --pipeline-id=<pipeline_id> --confirm`,
+    },
+    capabilities: {
+      github: { enabled: true, role: "artifact_persistence" },
+      telegram: { enabled: cfg.infra?.tgNotify !== false, role: "node_notification" },
+      sse: { enabled: true, role: "runtime_events" },
+      http_action: { enabled: true, role: "remote_node_operation" },
+    },
+    actions: {
+      inspect: { method: "GET", path: `/api/sop/{instance}/nodes/${nodeId}`, destructive: false, enabled: true },
+      status: { method: "GET", path: `/api/sop/{instance}/runs/{pipeline_id}/nodes/${nodeId}`, destructive: false, enabled: true },
+      retry: { method: "POST", path: `/api/sop/{instance}/runs/{pipeline_id}/nodes/${nodeId}/actions/retry`, destructive: true, enabled: true },
+      cancel: { method: "POST", path: `/api/sop/{instance}/runs/{pipeline_id}/nodes/${nodeId}/actions/cancel`, destructive: true, enabled: true },
+      trigger: { method: "POST", path: `/api/sop/{instance}/nodes/${nodeId}/actions/trigger`, destructive: true, enabled: false },
+    },
+    cli: {
+      inspect: `bash <(curl -fsSL https://skill.vyibc.com/sop-node.sh) --endpoint=${target.endpoint} --instance=${instance(target.id).instanceId} --node=${nodeId} --action=inspect`,
+      actions: `bash <(curl -fsSL https://skill.vyibc.com/sop-node.sh) --endpoint=${target.endpoint} --instance=${instance(target.id).instanceId} --node=${nodeId} --action=actions`,
+      retry_dry_run: `bash <(curl -fsSL https://skill.vyibc.com/sop-node.sh) --endpoint=${target.endpoint} --instance=${instance(target.id).instanceId} --node=${nodeId} --pipeline-id=<pipeline_id> --action=retry --dry-run`,
+    },
+    editable: true,
+    publishEnabled: false,
+    missingFields: [],
   };
 }
 
@@ -116,21 +182,42 @@ export const mockProvider: SopDataProvider = {
 
   async getNodeConfig(_target, _instanceId, nodeId): Promise<NodeConfig> {
     await delay();
-    const stage = stages.find((item) => item.id === nodeId) || stages[0];
-    return {
-      nodeId,
-      title: stage.title,
-      mode: stage.mode,
-      needs: nodeId === "notebooklm-research" ? ["youtube-fetch"] : nodeId === "wiki-build" ? ["notebooklm-research"] : nodeId === "tg-notify" ? ["wiki-build"] : [],
-      executor: { type: "skill", skill: `sop-${nodeId}`, webhook_route: `sop-${nodeId}` },
-      inputs: Object.fromEntries(Object.entries(stage.inputs).map(([k, v]) => [k, { from: v, required: true }])),
-      outputs: Object.fromEntries(Object.entries(stage.outputs).map(([k, v]) => [k, { path: v, type: "files" }])),
-      optionalInputs: {},
-      infra: { tgNotify: true, logRecord: true },
-      params: {},
-      skillScript: `youtube-wiki/skills/sop-${nodeId}/scripts/run_${nodeId.replace(/-/g, "_")}.sh`,
-      skillReadme: `# ${stage.title}\n\nMock skill README — 描述该节点的 Skill 用途、输入格式和输出产物。`,
+    return nodeConfigFromStage(nodeId);
+  },
+
+  async listNodes(target): Promise<NodeRegistryItem[]> {
+    await delay();
+    return stages.map((stage) => registryItem(stage.id, target));
+  },
+
+  async listNodeDrafts(target): Promise<NodeDraft[]> {
+    await delay();
+    return draftByRuntime.get(target.id) || [];
+  },
+
+  async createNodeDraft(target, _instanceId, input: NodeDraftInput): Promise<NodeDraft> {
+    await delay();
+    const draftId = `${input.node_id || "node"}-${Date.now()}`;
+    const draft: NodeDraft = {
+      draftId,
+      node: {
+        id: input.node_id,
+        title: input.title,
+        description: input.description,
+        needs: input.upstream ? [input.upstream] : [],
+        executor: { type: "agent-skill", skill: input.skill_id, install_command: input.skill_install_command },
+        inputs: { [input.input_name || "input"]: { from: `${input.upstream || "upstream"}.outputs.${input.upstream_output || "output"}` } },
+        outputs: { [input.output_name || "output"]: { path: input.output_path || `raw/${input.node_id}/output.md` } },
+      },
+      validation: {
+        status: "draft",
+        production_dag_changed: false,
+        publish_enabled: false,
+        warnings: ["Mock draft only. 正式 DAG 未改变。"],
+      },
     };
+    draftByRuntime.set(target.id, [draft, ...(draftByRuntime.get(target.id) || [])]);
+    return draft;
   },
 
   async triggerRun(target, _instanceId, input: TriggerInput) {

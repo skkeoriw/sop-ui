@@ -4,7 +4,10 @@ import type {
   Instance,
   NodeConfig,
   NodeDetail,
+  NodeDraft,
+  NodeDraftInput,
   NodeLog,
+  NodeRegistryItem,
   Run,
   Runtime,
   SopDataProvider,
@@ -40,6 +43,21 @@ async function postJson(url: string, body: unknown): Promise<void> {
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`${response.status}: ${text.slice(0, 200)}`);
+  }
+}
+
+async function postJsonResult<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 300)}`);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`接口没有返回 JSON：${url}`);
   }
 }
 
@@ -84,6 +102,53 @@ function mapArtifact(artifact: Record<string, unknown>) {
     ownership: artifact.ownership ? String(artifact.ownership) : undefined,
     preview: artifact.preview ? String(artifact.preview) : undefined,
     previewTruncated: Boolean(artifact.preview_truncated)
+  };
+}
+
+function mapNodeConfig(raw: Record<string, unknown>, nodeId: string): NodeConfig {
+  const infraRaw = raw.infra as Record<string, unknown> | undefined;
+  return {
+    nodeId: String(raw.node_id || raw.nodeId || nodeId),
+    title: raw.title ? String(raw.title) : undefined,
+    mode: raw.mode ? String(raw.mode) : undefined,
+    needs: (raw.needs as string[]) || [],
+    executor: (raw.executor as Record<string, unknown>) || {},
+    inputs: (raw.inputs as Record<string, unknown>) || {},
+    outputs: (raw.outputs as Record<string, unknown>) || {},
+    optionalInputs: ((raw.optional_inputs || raw.optionalInputs) as Record<string, unknown>) || {},
+    infra: infraRaw ? {
+      tgNotify: infraRaw.tg_notify !== false && infraRaw.tgNotify !== false,
+      logRecord: infraRaw.log_record !== false && infraRaw.logRecord !== false,
+    } : undefined,
+    params: (raw.params as Record<string, unknown>) || {},
+    skillScript: raw.skill_script ? String(raw.skill_script) : raw.skillScript ? String(raw.skillScript) : null,
+    skillReadme: raw.skill_readme ? String(raw.skill_readme) : raw.skillReadme ? String(raw.skillReadme) : null,
+    manifest: (raw.manifest as Record<string, unknown>) || {},
+  };
+}
+
+function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
+  const nodeId = String(raw.node_id || raw.nodeId || "");
+  const base = mapNodeConfig(raw, nodeId);
+  return {
+    ...base,
+    description: raw.description ? String(raw.description) : undefined,
+    case: raw.case ? String(raw.case) : undefined,
+    skill: (raw.skill as Record<string, unknown>) || {},
+    capabilities: (raw.capabilities as Record<string, unknown>) || {},
+    actions: (raw.actions as Record<string, unknown>) || {},
+    cli: (raw.cli as Record<string, string>) || {},
+    editable: Boolean(raw.editable),
+    publishEnabled: Boolean(raw.publish_enabled ?? raw.publishEnabled),
+    missingFields: ((raw.missing_fields || raw.missingFields) as string[]) || [],
+  };
+}
+
+function mapNodeDraft(raw: Record<string, unknown>): NodeDraft {
+  return {
+    draftId: String(raw.draft_id || raw.draftId || ""),
+    node: (raw.node as Record<string, unknown>) || {},
+    validation: (raw.validation as Record<string, unknown>) || {},
   };
 }
 
@@ -223,25 +288,29 @@ export const sopProvider: SopDataProvider = {
     const raw = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}`
     );
-    const infraRaw = raw.infra as Record<string, unknown> | undefined;
-    return {
-      nodeId: String(raw.node_id || nodeId),
-      title: raw.title ? String(raw.title) : undefined,
-      mode: raw.mode ? String(raw.mode) : undefined,
-      needs: (raw.needs as string[]) || [],
-      executor: (raw.executor as Record<string, unknown>) || {},
-      inputs: (raw.inputs as Record<string, unknown>) || {},
-      outputs: (raw.outputs as Record<string, unknown>) || {},
-      optionalInputs: (raw.optional_inputs as Record<string, unknown>) || {},
-      infra: infraRaw ? {
-        tgNotify: infraRaw.tg_notify !== false,
-        logRecord: infraRaw.log_record !== false,
-      } : undefined,
-      params: (raw.params as Record<string, unknown>) || {},
-      skillScript: raw.skill_script ? String(raw.skill_script) : null,
-      skillReadme: raw.skill_readme ? String(raw.skill_readme) : null,
-      manifest: (raw.manifest as Record<string, unknown>) || {},
-    } satisfies NodeConfig;
+    return mapNodeConfig(raw, nodeId);
+  },
+
+  async listNodes(runtime, instanceId) {
+    const raw = await requestJson<{ nodes?: Array<Record<string, unknown>> }>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes`
+    );
+    return (raw.nodes || []).map(mapNodeRegistryItem);
+  },
+
+  async listNodeDrafts(runtime, instanceId) {
+    const raw = await requestJson<{ drafts?: Array<Record<string, unknown>> }>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts`
+    );
+    return (raw.drafts || []).map(mapNodeDraft);
+  },
+
+  async createNodeDraft(runtime, instanceId, input: NodeDraftInput) {
+    const raw = await postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts`,
+      input
+    );
+    return mapNodeDraft(raw);
   },
 
   async triggerRun(runtime, instanceId, input: TriggerInput): Promise<TriggerResult> {
@@ -262,8 +331,8 @@ export const sopProvider: SopDataProvider = {
 
   async retryNode(runtime, instanceId, pipelineId, nodeId) {
     await postJson(
-      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/retry`,
-      {}
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/actions/retry`,
+      { confirm: true }
     );
   },
 
@@ -276,7 +345,7 @@ export const sopProvider: SopDataProvider = {
 
   async cancelNode(runtime, instanceId, pipelineId, nodeId, reason = "用户取消节点") {
     await postJson(
-      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/cancel`,
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/actions/cancel`,
       { reason }
     );
   },

@@ -18,9 +18,23 @@ import {
 } from "lucide-react";
 import { getMode, getProvider, normalizeEndpoint, setMode as writeMode } from "./data/provider";
 import { queryKeys } from "./data/query-keys";
-import type { Artifact, Dag, DagNode, DataMode, Instance, NodeEvent, Run, Runtime, StageStatus } from "./data/types";
+import type {
+  Artifact,
+  Dag,
+  DagNode,
+  DataMode,
+  Instance,
+  NodeDraft,
+  NodeDraftInput,
+  NodeEvent,
+  NodeRegistryItem,
+  Run,
+  Runtime,
+  StageStatus
+} from "./data/types";
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
+type AppView = "workflow" | "nodes";
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -150,6 +164,20 @@ export default function App() {
   const [nodeConfigId, setNodeConfigId] = useState("");
   const [rawLogOpen, setRawLogOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<"live" | "reconnecting" | "polling fallback" | "closed">("closed");
+  const [viewMode, setViewMode] = useState<AppView>("workflow");
+  const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
+  const [draftInput, setDraftInput] = useState<NodeDraftInput>({
+    skill_install_command: "bash <(curl -fsSL https://skill.vyibc.com/install-vyibc-face-consistent-album.sh)",
+    skill_id: "vyibc-face-consistent-album",
+    node_id: "youtube-cover-image",
+    title: "YouTube Cover Image",
+    description: "基于上游研究结果生成 YouTube 封面图候选。",
+    upstream: "youtube-deep-research",
+    upstream_output: "analysis_file",
+    input_name: "research_report",
+    output_name: "cover_images",
+    output_path: "raw/generated-images/{pipeline_id}/cover-images.json"
+  });
 
   const runtimesQuery = useQuery({ queryKey: queryKeys.runtimes(mode), queryFn: () => provider.listRuntimes(), retry: 1 });
   const runtimes = useMemo(() => {
@@ -199,6 +227,18 @@ export default function App() {
     queryFn: () => provider.getNodeConfig(runtime, instance.instanceId, nodeConfigId),
     enabled: Boolean(runtime && instance && showNodeConfig && nodeConfigId)
   });
+  const nodesQuery = useQuery({
+    queryKey: queryKeys.nodes(mode, runtime, instance?.instanceId || ""),
+    queryFn: () => provider.listNodes(runtime, instance.instanceId),
+    enabled: Boolean(runtime && instance && viewMode === "nodes")
+  });
+  const nodeDraftsQuery = useQuery({
+    queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
+    queryFn: () => provider.listNodeDrafts(runtime, instance.instanceId),
+    enabled: Boolean(runtime && instance && viewMode === "nodes")
+  });
+  const managedNodes = nodesQuery.data || [];
+  const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
 
   const triggerMutation = useMutation({
     mutationFn: () => provider.triggerRun(runtime, instance.instanceId, { repo: instance.repo, url: triggerUrl }),
@@ -237,6 +277,13 @@ export default function App() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.node(mode, runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey) });
     }
   });
+  const createDraftMutation = useMutation({
+    mutationFn: () => provider.createNodeDraft(runtime, instance.instanceId, draftInput),
+    onSuccess: async (draft) => {
+      setToast(`节点草稿已创建：${draft.draftId}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+    }
+  });
 
   useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
   useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
@@ -244,6 +291,8 @@ export default function App() {
   useEffect(() => { if (dag?.nodes.length && !dag.nodes.some((stage) => stage.id === selectedStageId)) setSelectedStageId(dag.nodes[0].id); }, [dag, selectedStageId]);
   useEffect(() => { setInstanceId(""); setSelectedRunId(""); setSelectedStageId(""); }, [runtimeId]);
   useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); }, [instanceId]);
+  useEffect(() => { setSelectedManagedNodeId(""); }, [runtimeId, instanceId]);
+  useEffect(() => { if (managedNodes.length && !managedNodes.some((node) => node.nodeId === selectedManagedNodeId)) setSelectedManagedNodeId(managedNodes[0].nodeId); }, [managedNodes, selectedManagedNodeId]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 3000); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => { setInspectorTab("config"); setShowNodeConfig(false); }, [selectedStageId]);
   useEffect(() => {
@@ -293,7 +342,7 @@ export default function App() {
     const delta = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
     return delta || b.updatedAt.localeCompare(a.updatedAt);
   });
-  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error].find(Boolean);
+  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error, nodesQuery.error, nodeDraftsQuery.error].find(Boolean);
   const completedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "done").length : 0;
   const failedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "failed").length : 0;
 
@@ -356,6 +405,10 @@ export default function App() {
           ))}
         </div>
         <div className="top-actions">
+          <div className="view-switch" aria-label="主视图">
+            <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => setViewMode("workflow")}>Workflow</button>
+            <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => setViewMode("nodes")}>Nodes</button>
+          </div>
           <div className="mode-switch" aria-label="数据模式">
             <button type="button" className={mode === "real" ? "active" : ""} onClick={() => changeMode("real")}>Real</button>
             <button type="button" className={mode === "mock" ? "active" : ""} onClick={() => changeMode("mock")}>Mock</button>
@@ -405,64 +458,85 @@ export default function App() {
         </section>
       </aside>
 
-      <main className="main">
-        <section className="summary-grid">
-          <div className="overview-panel">
-            <div className="row">
-              <span className={`status-pill ${runtime?.localStatus === "ok" ? "done" : "waiting"}`}><Activity size={14} />{mode === "real" ? "真实数据" : "Mock 数据"}</span>
-              <span>{runtime?.endpoint || "-"}</span>
-            </div>
-            <h1>{instance?.title || "SOP Workflow"}</h1>
-            <p>{mode === "real" ? "当前页面直接读取 tunnel-admin 和 SOP SPI，不在前端保存业务数据。" : "Mock 模式用于交互开发和接口异常 fallback。"}</p>
-          </div>
-          <Metric label="Stages done" value={`${completedCount}/${dag?.nodes.length || 0}`} subtext="selected run" />
-          <Metric label="Active runs" value={runs.filter((run) => run.status === "running").length} subtext="current runtime" />
-          <Metric label="Live events" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
-        </section>
+      <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
+        {viewMode === "workflow" ? (
+          <>
+            <section className="summary-grid">
+              <div className="overview-panel">
+                <div className="row">
+                  <span className={`status-pill ${runtime?.localStatus === "ok" ? "done" : "waiting"}`}><Activity size={14} />{mode === "real" ? "真实数据" : "Mock 数据"}</span>
+                  <span>{runtime?.endpoint || "-"}</span>
+                </div>
+                <h1>{instance?.title || "SOP Workflow"}</h1>
+                <p>{mode === "real" ? "当前页面直接读取 tunnel-admin 和 SOP SPI，不在前端保存业务数据。" : "Mock 模式用于交互开发和接口异常 fallback。"}</p>
+              </div>
+              <Metric label="Stages done" value={`${completedCount}/${dag?.nodes.length || 0}`} subtext="selected run" />
+              <Metric label="Active runs" value={runs.filter((run) => run.status === "running").length} subtext="current runtime" />
+              <Metric label="Live events" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
+            </section>
 
-        <section className="flow-panel">
-          <div className="panel-head">
-            <div>
-              <strong>DAG Canvas</strong>
-              <span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
-            </div>
-            <div className="head-actions">
-              {selectedRun?.status === "running" && (
-                <button type="button" className="btn-danger-sm" disabled={cancelRunMutation.isPending} onClick={handleCancelRun}>
-                  <X size={14} />Cancel Run
-                </button>
-              )}
-              {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
-              <button type="button" onClick={() => dag?.nodes[0] && setSelectedStageId(dag.nodes[0].id)}><Search size={15} />Focus</button>
-            </div>
-          </div>
-          <div className="flow-wrap">
-            {dagQuery.isLoading ? <Skeleton /> : dag?.nodes.length ? (
-              <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: .18 }} minZoom={.35} maxZoom={1.7} nodesDraggable onNodeClick={(_, node) => setSelectedStageId(node.id)} defaultEdgeOptions={{ className: "flow-edge" }}>
-                <Background color="#dfe4ec" gap={24} /><Controls showInteractive={false} /><MiniMap nodeStrokeWidth={3} zoomable pannable />
-              </ReactFlow>
-            ) : <Empty text="选择 Runtime 和 Instance 后加载 DAG" />}
-          </div>
-        </section>
+            <section className="flow-panel">
+              <div className="panel-head">
+                <div>
+                  <strong>DAG Canvas</strong>
+                  <span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
+                </div>
+                <div className="head-actions">
+                  {selectedRun?.status === "running" && (
+                    <button type="button" className="btn-danger-sm" disabled={cancelRunMutation.isPending} onClick={handleCancelRun}>
+                      <X size={14} />Cancel Run
+                    </button>
+                  )}
+                  {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
+                  <button type="button" onClick={() => dag?.nodes[0] && setSelectedStageId(dag.nodes[0].id)}><Search size={15} />Focus</button>
+                </div>
+              </div>
+              <div className="flow-wrap">
+                {dagQuery.isLoading ? <Skeleton /> : dag?.nodes.length ? (
+                  <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: .18 }} minZoom={.35} maxZoom={1.7} nodesDraggable onNodeClick={(_, node) => setSelectedStageId(node.id)} defaultEdgeOptions={{ className: "flow-edge" }}>
+                    <Background color="#dfe4ec" gap={24} /><Controls showInteractive={false} /><MiniMap nodeStrokeWidth={3} zoomable pannable />
+                  </ReactFlow>
+                ) : <Empty text="选择 Runtime 和 Instance 后加载 DAG" />}
+              </div>
+            </section>
 
-        <section className="timeline-panel">
-          <div className="panel-head compact"><strong>Run Timeline</strong><span>点击 Stage 查看详情 · ⓘ 查看节点配置</span></div>
-          <div className="timeline">
-            {(dag?.nodes || []).map((stage) => {
-              const state = selectedRun?.nodes[stage.id] || "waiting";
-              return (
-                <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => setSelectedStageId(stage.id)}>
-                  <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
+            <section className="timeline-panel">
+              <div className="panel-head compact"><strong>Run Timeline</strong><span>点击 Stage 查看详情 · ⓘ 查看节点配置</span></div>
+              <div className="timeline">
+                {(dag?.nodes || []).map((stage) => {
+                  const state = selectedRun?.nodes[stage.id] || "waiting";
+                  return (
+                    <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => setSelectedStageId(stage.id)}>
+                      <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          </>
+        ) : (
+          <NodesWorkspace
+            instance={instance}
+            runtime={runtime}
+            nodes={managedNodes}
+            drafts={nodeDraftsQuery.data || []}
+            loading={nodesQuery.isLoading}
+            selectedNodeId={selectedManagedNode?.nodeId || ""}
+            onSelectNode={setSelectedManagedNodeId}
+            draftInput={draftInput}
+            setDraftInput={setDraftInput}
+            onCreateDraft={(event) => { event.preventDefault(); createDraftMutation.mutate(); }}
+            creatingDraft={createDraftMutation.isPending}
+            createError={createDraftMutation.error ? String(createDraftMutation.error.message) : ""}
+          />
+        )}
       </main>
 
       {/* ── Inspector panel ── */}
       <aside className="inspector">
-        {showNodeConfig ? (
+        {viewMode === "nodes" ? (
+          <NodeManagerInspector node={selectedManagedNode} drafts={nodeDraftsQuery.data || []} loading={nodesQuery.isLoading} />
+        ) : showNodeConfig ? (
           /* Node Config Panel — static, run-independent */
           <>
             <div className="inspector-head">
@@ -709,6 +783,215 @@ export default function App() {
       {toast && <div className="toast"><CircleDot size={15} />{toast}</div>}
     </div>
   );
+}
+
+function NodesWorkspace({
+  instance,
+  runtime,
+  nodes,
+  drafts,
+  loading,
+  selectedNodeId,
+  onSelectNode,
+  draftInput,
+  setDraftInput,
+  onCreateDraft,
+  creatingDraft,
+  createError,
+}: {
+  instance: Instance | undefined;
+  runtime: Runtime | undefined;
+  nodes: NodeRegistryItem[];
+  drafts: NodeDraft[];
+  loading: boolean;
+  selectedNodeId: string;
+  onSelectNode: (nodeId: string) => void;
+  draftInput: NodeDraftInput;
+  setDraftInput: (input: NodeDraftInput) => void;
+  onCreateDraft: (event: FormEvent) => void;
+  creatingDraft: boolean;
+  createError: string;
+}) {
+  const completeNodes = nodes.filter((node) => (node.missingFields || []).length === 0).length;
+  return (
+    <>
+      <section className="node-summary">
+        <div>
+          <span className="status-pill running"><Activity size={14} />Node Manager v1</span>
+          <h1>{instance?.title || "SOP Nodes"}</h1>
+          <p>{runtime?.endpoint || "选择 Runtime 后加载节点注册表"}</p>
+        </div>
+        <Metric label="Nodes" value={nodes.length} subtext="registered in SOP" />
+        <Metric label="Complete" value={`${completeNodes}/${nodes.length || 0}`} subtext="metadata ready" />
+        <Metric label="Drafts" value={drafts.length} subtext="not published" />
+      </section>
+
+      <section className="nodes-board">
+        <div className="panel-head">
+          <div>
+            <strong>Node Registry</strong>
+            <span>节点能力、Skill、输入输出和附属能力</span>
+          </div>
+          <span className="status-pill waiting">Publish disabled</span>
+        </div>
+        {loading ? <Skeleton /> : nodes.length ? (
+          <div className="node-registry-list">
+            {nodes.map((node) => (
+              <button key={node.nodeId} type="button" className={`node-registry-row ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
+                <div>
+                  <strong>{node.title || node.nodeId}</strong>
+                  <span>{node.description || node.mode || "SOP node"}</span>
+                </div>
+                <span className="status-pill running">{String(node.case || node.executor?.type || "node")}</span>
+                <CapabilityMini node={node} />
+                <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>
+                  {(node.missingFields || []).length ? `${node.missingFields?.length} missing` : "ready"}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : <Empty text="当前 Instance 没有返回 Node Registry" />}
+      </section>
+
+      <section className="node-draft-panel">
+        <div className="panel-head compact">
+          <div>
+            <strong>Create Node Draft</strong>
+            <span>只生成草稿和校验结果，不修改正式 sop.yaml</span>
+          </div>
+        </div>
+        <form className="node-draft-form" onSubmit={onCreateDraft}>
+          <label>Skill install command<input value={draftInput.skill_install_command} onChange={(event) => setDraftInput({ ...draftInput, skill_install_command: event.target.value })} /></label>
+          <div className="draft-grid">
+            <label>Skill ID<input value={draftInput.skill_id} onChange={(event) => setDraftInput({ ...draftInput, skill_id: event.target.value })} /></label>
+            <label>Node ID<input value={draftInput.node_id} onChange={(event) => setDraftInput({ ...draftInput, node_id: event.target.value })} /></label>
+            <label>Title<input value={draftInput.title} onChange={(event) => setDraftInput({ ...draftInput, title: event.target.value })} /></label>
+            <label>Upstream<input value={draftInput.upstream || ""} onChange={(event) => setDraftInput({ ...draftInput, upstream: event.target.value })} /></label>
+            <label>Upstream output<input value={draftInput.upstream_output || ""} onChange={(event) => setDraftInput({ ...draftInput, upstream_output: event.target.value })} /></label>
+            <label>Input name<input value={draftInput.input_name || ""} onChange={(event) => setDraftInput({ ...draftInput, input_name: event.target.value })} /></label>
+            <label>Output name<input value={draftInput.output_name || ""} onChange={(event) => setDraftInput({ ...draftInput, output_name: event.target.value })} /></label>
+            <label>Output path<input value={draftInput.output_path || ""} onChange={(event) => setDraftInput({ ...draftInput, output_path: event.target.value })} /></label>
+          </div>
+          <label>Description<textarea value={draftInput.description || ""} onChange={(event) => setDraftInput({ ...draftInput, description: event.target.value })} /></label>
+          {createError && <div className="inline-error">{createError}</div>}
+          <div className="draft-actions">
+            <span className="body-copy">Draft 写入 raw/node-drafts，Apply / Publish 第一版保持禁用。</span>
+            <button type="submit" className="primary" disabled={creatingDraft || !instance || !runtime}>
+              {creatingDraft ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+              {creatingDraft ? "Creating" : "Create draft"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </>
+  );
+}
+
+function NodeManagerInspector({ node, drafts, loading }: { node: NodeRegistryItem | undefined; drafts: NodeDraft[]; loading: boolean }) {
+  return (
+    <>
+      <div className="inspector-head">
+        <div className="row">
+          <div>
+            <h2>{node?.title || "Node Manager"}</h2>
+            <span>{node?.nodeId || "选择一个节点查看完整能力"}</span>
+          </div>
+          {node && <span className={`status-pill ${node.publishEnabled ? "done" : "waiting"}`}>{node.publishEnabled ? "publishable" : "draft only"}</span>}
+        </div>
+      </div>
+      <div className="inspector-body">
+        {loading ? <Skeleton /> : !node ? <Empty text="没有选中的节点" /> : (
+          <>
+            <DetailBlock title="Node Model">
+              <KeyValues data={{
+                node_id: node.nodeId,
+                type: node.case || node.executor?.type || "-",
+                mode: node.mode || "-",
+                editable: node.editable ? "yes" : "no",
+                publish_enabled: node.publishEnabled ? "yes" : "no",
+              }} />
+            </DetailBlock>
+
+            <DetailBlock title="Skill">
+              <KeyValues data={node.skill && Object.keys(node.skill).length ? node.skill : {
+                executor_skill: node.executor?.skill || "-",
+                install_command: node.executor?.install_command || "-",
+              }} />
+            </DetailBlock>
+
+            <DetailBlock title="Input Contract">
+              <KeyValues data={(node.inputs as Record<string, unknown>) || {}} />
+            </DetailBlock>
+            <DetailBlock title="Output Contract">
+              <KeyValues data={(node.outputs as Record<string, unknown>) || {}} />
+            </DetailBlock>
+
+            <DetailBlock title="Attached Capabilities">
+              <KeyValues data={node.capabilities || {
+                github: { enabled: true },
+                telegram: { enabled: node.infra?.tgNotify !== false },
+                sse: { enabled: true },
+              }} />
+            </DetailBlock>
+
+            <DetailBlock title="Actions">
+              <KeyValues data={node.actions || {}} />
+            </DetailBlock>
+
+            <DetailBlock title="CLI Examples">
+              <div className="cli-list">
+                {Object.entries(node.cli || {}).length ? Object.entries(node.cli || {}).map(([key, value]) => (
+                  <div key={key} className="cli-item">
+                    <span>{key}</span>
+                    <code>{value}</code>
+                  </div>
+                )) : <Empty text="该节点暂未返回 CLI 示例" />}
+              </div>
+            </DetailBlock>
+
+            {(node.missingFields || []).length > 0 && (
+              <DetailBlock title="Missing Fields">
+                <div className="needs-list">{node.missingFields!.map((field) => <span key={field} className="needs-chip">{field}</span>)}</div>
+              </DetailBlock>
+            )}
+
+            <DetailBlock title={`Drafts · ${drafts.length}`}>
+              {drafts.length ? (
+                <div className="draft-list">
+                  {drafts.slice(0, 5).map((draft) => (
+                    <article key={draft.draftId} className="draft-item">
+                      <strong>{draft.draftId}</strong>
+                      <code>{formatValue(draft.validation)}</code>
+                    </article>
+                  ))}
+                </div>
+              ) : <Empty text="还没有节点草稿" />}
+            </DetailBlock>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function CapabilityMini({ node }: { node: NodeRegistryItem }) {
+  const caps = node.capabilities || {};
+  const github = caps.github === undefined ? true : capabilityEnabled(caps.github);
+  const telegram = caps.telegram === undefined ? node.infra?.tgNotify !== false : capabilityEnabled(caps.telegram);
+  const sse = caps.sse === undefined ? true : capabilityEnabled(caps.sse);
+  return (
+    <div className="cap-mini" aria-label="node capabilities">
+      <span className={github ? "on" : ""}>GitHub</span>
+      <span className={telegram ? "on" : ""}>TG</span>
+      <span className={sse ? "on" : ""}>SSE</span>
+    </div>
+  );
+}
+
+function capabilityEnabled(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "object" && value) return (value as Record<string, unknown>).enabled !== false;
+  return false;
 }
 
 function buildFlowNodes(dag: Dag | undefined, run: Run | undefined, selectedStageId: string, onInfo: (id: string) => void): Node<StageNodeData>[] {

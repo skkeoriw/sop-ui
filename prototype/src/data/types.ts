@@ -135,6 +135,37 @@ export interface NodeConfig {
   manifest?: Record<string, unknown>;
 }
 
+export interface NodeRegistryItem extends NodeConfig {
+  description?: string;
+  case?: string;
+  skill?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
+  actions?: Record<string, unknown>;
+  cli?: Record<string, string>;
+  editable?: boolean;
+  publishEnabled?: boolean;
+  missingFields?: string[];
+}
+
+export interface NodeDraftInput {
+  skill_install_command: string;
+  skill_id: string;
+  node_id: string;
+  title: string;
+  description?: string;
+  upstream?: string;
+  upstream_output?: string;
+  input_name?: string;
+  output_name?: string;
+  output_path?: string;
+}
+
+export interface NodeDraft {
+  draftId: string;
+  node: Record<string, unknown>;
+  validation: Record<string, unknown>;
+}
+
 export interface TriggerInput {
   repo: string;
   url: string;
@@ -156,6 +187,9 @@ export interface SopDataProvider {
   getNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeDetail>;
   getNodeLog(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeLog>;
   getNodeConfig(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeConfig>;
+  listNodes(runtime: Runtime, instanceId: string): Promise<NodeRegistryItem[]>;
+  listNodeDrafts(runtime: Runtime, instanceId: string): Promise<NodeDraft[]>;
+  createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;
   retryNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
   cancelRun(runtime: Runtime, instanceId: string, pipelineId: string, reason?: string): Promise<void>;
