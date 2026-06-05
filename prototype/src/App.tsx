@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Boxes,
   CheckCircle2,
   ChevronDown,
@@ -12,12 +13,16 @@ import {
   GitBranch,
   Info,
   LayoutDashboard,
+  ListChecks,
   Loader2,
+  Network,
+  PackageSearch,
   Play,
   RefreshCw,
   RotateCcw,
   Search,
   Server,
+  Settings,
   SlidersHorizontal,
   Workflow,
   X
@@ -32,7 +37,9 @@ import type {
   Instance,
   NodeDraft,
   NodeDraftInput,
+  NodeDetail,
   NodeEvent,
+  NodeLog,
   NodeRegistryItem,
   Run,
   Runtime,
@@ -40,7 +47,7 @@ import type {
 } from "./data/types";
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
-type AppView = "workflow" | "nodes";
+type AppView = "overview" | "runs" | "workflow" | "nodes" | "artifacts" | "settings";
 type AppRoute = { view: AppView; nodeId: string };
 
 interface StageNodeData extends Record<string, unknown> {
@@ -54,13 +61,18 @@ const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "
 
 function readRoute(): AppRoute {
   const parts = window.location.pathname.split("/").filter(Boolean);
+  if (parts[0] === "overview") return { view: "overview", nodeId: "" };
+  if (parts[0] === "runs") return { view: "runs", nodeId: "" };
+  if (parts[0] === "workflow") return { view: "workflow", nodeId: "" };
   if (parts[0] === "nodes") return { view: "nodes", nodeId: decodeURIComponent(parts[1] || "") };
-  return { view: "workflow", nodeId: "" };
+  if (parts[0] === "artifacts") return { view: "artifacts", nodeId: "" };
+  if (parts[0] === "settings") return { view: "settings", nodeId: "" };
+  return { view: "overview", nodeId: "" };
 }
 
 function routePath(view: AppView, nodeId = "") {
   if (view === "nodes") return nodeId ? `/nodes/${encodeURIComponent(nodeId)}` : "/nodes";
-  return "/workflow";
+  return `/${view}`;
 }
 
 function inspectorTabLabel(tab: InspectorTab) {
@@ -267,12 +279,12 @@ export default function App() {
   const nodesQuery = useQuery({
     queryKey: queryKeys.nodes(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodes(runtime, instance.instanceId),
-    enabled: Boolean(runtime && instance && viewMode === "nodes")
+    enabled: Boolean(runtime && instance)
   });
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodeDrafts(runtime, instance.instanceId),
-    enabled: Boolean(runtime && instance && viewMode === "nodes")
+    enabled: Boolean(runtime && instance && (viewMode === "nodes" || viewMode === "settings"))
   });
   const managedNodes = nodesQuery.data || [];
   const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
@@ -338,8 +350,9 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (window.location.pathname === "/" || !["/workflow", "/nodes"].some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
-      window.history.replaceState(null, "", `${routePath("workflow")}${window.location.search}`);
+    const routePrefixes = ["/overview", "/runs", "/workflow", "/nodes", "/artifacts", "/settings"];
+    if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
+      window.history.replaceState(null, "", `${routePath("overview")}${window.location.search}`);
       setRoute(readRoute());
     }
     const onPopState = () => setRoute(readRoute());
@@ -481,7 +494,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${viewMode === "nodes" ? "nodes-shell" : ""}`}>
+    <div className={`app-shell ${viewMode === "workflow" ? "workflow-shell" : "single-shell"}`}>
       <aside className="control-rail">
         <div className="rail-brand">
           <div className="brand-mark">S</div>
@@ -491,11 +504,23 @@ export default function App() {
           </div>
         </div>
         <nav className="rail-nav" aria-label="Primary">
+          <button type="button" className={viewMode === "overview" ? "active" : ""} onClick={() => navigateTo("overview")}>
+            <LayoutDashboard size={17} /><span>Overview</span><small>{runs.filter((run) => run.status === "running").length ? "live" : "ops"}</small>
+          </button>
+          <button type="button" className={viewMode === "runs" ? "active" : ""} onClick={() => navigateTo("runs")}>
+            <ListChecks size={17} /><span>Runs</span><small>{runs.length || "-"} runs</small>
+          </button>
           <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>
-            <LayoutDashboard size={17} /><span>Workflow</span><small>{runs.filter((run) => run.status === "running").length ? "live" : "console"}</small>
+            <Network size={17} /><span>Workflow</span><small>DAG</small>
           </button>
           <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
             <Boxes size={17} /><span>Nodes</span><small>{managedNodes.length || "-"} assets</small>
+          </button>
+          <button type="button" className={viewMode === "artifacts" ? "active" : ""} onClick={() => navigateTo("artifacts")}>
+            <PackageSearch size={17} /><span>Artifacts</span><small>{artifactCount || "-"} scoped</small>
+          </button>
+          <button type="button" className={viewMode === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
+            <Settings size={17} /><span>Settings</span><small>{mode}</small>
           </button>
         </nav>
         <div className="rail-section">
@@ -583,7 +608,48 @@ export default function App() {
       </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
-        {viewMode === "workflow" ? (
+        {viewMode === "overview" ? (
+          <OverviewPage
+            runtime={runtime}
+            instance={instance}
+            mode={mode}
+            runs={runs}
+            dag={dag}
+            selectedRun={selectedRun}
+            selectedStage={selectedStage}
+            nodesReadyCount={nodesReadyCount}
+            managedNodes={managedNodes}
+            artifactCount={artifactCount}
+            streamStatus={streamStatus}
+            onOpenRun={(pipelineId) => {
+              if (pipelineId) setSelectedRunId(pipelineId);
+              navigateTo("runs");
+            }}
+            onOpenWorkflow={() => navigateTo("workflow")}
+            onOpenNode={(nodeId) => {
+              openNodeConfig(nodeId);
+              navigateTo("workflow");
+            }}
+          />
+        ) : viewMode === "runs" ? (
+          <RunsPage
+            runs={visibleExecutions}
+            selectedRun={selectedRun}
+            selectedStage={selectedStage}
+            selectedStatus={selectedStatus}
+            dag={dag}
+            nodeDetail={nodeQuery.data}
+            nodeLog={logQuery.data}
+            streamStatus={streamStatus}
+            onSelectRun={setSelectedRunId}
+            onCancelRun={handleCancelRun}
+            onRetryNode={handleRetry}
+            onCancelNode={handleCancelNode}
+            cancelRunPending={cancelRunMutation.isPending}
+            retryPending={retryMutation.isPending}
+            cancelNodePending={cancelNodeMutation.isPending}
+          />
+        ) : viewMode === "workflow" ? (
           <>
             <section className="summary-grid">
               <div className="overview-panel">
@@ -644,7 +710,7 @@ export default function App() {
               </div>
             </section>
           </>
-        ) : (
+        ) : viewMode === "nodes" ? (
           <NodesWorkspace
             instance={instance}
             runtime={runtime}
@@ -661,6 +727,22 @@ export default function App() {
             onNodeFilter={setNodeFilter}
             onSelectNode={selectManagedNode}
             onOpenDraft={() => setDraftOpen(true)}
+          />
+        ) : viewMode === "artifacts" ? (
+          <ArtifactsPage selectedRun={selectedRun} selectedStage={selectedStage} nodeDetail={nodeQuery.data} />
+        ) : (
+          <SettingsPage
+            mode={mode}
+            runtime={runtime}
+            runtimes={runtimes}
+            instance={instance}
+            instances={instances}
+            manualEndpoint={manualEndpoint}
+            setManualEndpoint={setManualEndpoint}
+            onAddManualEndpoint={addManualEndpoint}
+            streamStatus={streamStatus}
+            nodesReadyCount={nodesReadyCount}
+            nodesTotal={managedNodes.length}
           />
         )}
       </main>
@@ -940,6 +1022,373 @@ export default function App() {
   );
 }
 
+function OverviewPage({
+  runtime,
+  instance,
+  mode,
+  runs,
+  dag,
+  selectedRun,
+  selectedStage,
+  nodesReadyCount,
+  managedNodes,
+  artifactCount,
+  streamStatus,
+  onOpenRun,
+  onOpenWorkflow,
+  onOpenNode,
+}: {
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  mode: DataMode;
+  runs: Run[];
+  dag: Dag | undefined;
+  selectedRun: Run | undefined;
+  selectedStage: DagNode | undefined;
+  nodesReadyCount: number;
+  managedNodes: NodeRegistryItem[];
+  artifactCount: number;
+  streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
+  onOpenRun: (pipelineId?: string) => void;
+  onOpenWorkflow: () => void;
+  onOpenNode: (nodeId: string) => void;
+}) {
+  const activeRuns = runs.filter((run) => run.status === "running").length;
+  const failedRuns = runs.filter((run) => run.status === "failed").length;
+  const recentRuns = [...runs].sort((a, b) => {
+    const score = (run: Run) => run.status === "running" ? 0 : run.status === "failed" ? 1 : 2;
+    return score(a) - score(b) || b.updatedAt.localeCompare(a.updatedAt);
+  }).slice(0, 4);
+  return (
+    <>
+      <section className="concept-hero">
+        <div>
+          <span className="status-pill running"><Activity size={14} />Concept A · Ops Console</span>
+          <h1>用一个操作台掌控 Runtime、Run 和节点状态</h1>
+          <p>默认聚焦运行健康、失败节点、最近产物和下一步操作。适合日常看板和运维。</p>
+        </div>
+        <div className="context-card">
+          <strong>{instance?.title || "Wiki SOP Workspace"}</strong>
+          <span>{runtime?.name || "Runtime"} · {mode === "real" ? "Real data" : "Mock data"}</span>
+          <code>{runtime?.endpoint || "-"}</code>
+        </div>
+      </section>
+      <section className="console-metrics">
+        <Metric label="Active runs" value={activeRuns} subtext={`${activeRuns} running, ${runs.length - activeRuns} other`} />
+        <Metric label="Nodes ready" value={`${nodesReadyCount}/${managedNodes.length || 0}`} subtext="metadata complete" />
+        <Metric label="Artifacts" value={artifactCount || "-"} subtext="run scoped" />
+        <Metric label="Events" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
+      </section>
+      <section className="console-grid">
+        <div className="flow-panel compact-flow">
+          <div className="panel-head">
+            <div><strong>Workflow Map</strong><span>点击节点后右侧 Inspector 聚焦</span></div>
+            <button type="button" onClick={onOpenWorkflow}>Open DAG</button>
+          </div>
+          <div className="stage-map">
+            {(dag?.nodes || []).map((node) => {
+              const state = selectedRun?.nodes[node.id] || "waiting";
+              return (
+                <button key={node.id} type="button" className={`stage-map-node ${state}`} onClick={() => onOpenNode(node.id)}>
+                  <span className={`dot ${state}`} />
+                  <strong>{node.title}</strong>
+                  <small>{node.mode}</small>
+                </button>
+              );
+            })}
+            {!dag?.nodes.length && <Empty text="选择 Runtime 和 Workspace 后加载 Workflow Map" />}
+          </div>
+        </div>
+        <div className="runs-table-panel">
+          <div className="panel-head">
+            <div><strong>Recent Runs</strong><span>优先显示 running / failed / latest</span></div>
+            <button type="button" onClick={() => onOpenRun()}>View all</button>
+          </div>
+          <RunTable runs={recentRuns} selectedRunId={selectedRun?.pipelineId || ""} onSelect={onOpenRun} />
+        </div>
+        <aside className="decision-panel">
+          <div className="panel-head compact"><div><strong>{selectedStage?.title || "Wiki Build"}</strong><span>{selectedStage?.id || "wiki-build"} · hermes-agent-skill</span></div></div>
+          <DetailBlock title="Decision summary">
+            <KeyValues data={{
+              health: failedRuns ? `${failedRuns} failed run signals` : "ready, no missing contract fields",
+              input: selectedStage ? Object.values(selectedStage.inputs || {}).join(", ") || "-" : "notebooklm-research.outputs.reports",
+              output: selectedStage ? Object.values(selectedStage.outputs || {}).join(", ") || "-" : "index.md, wiki/**",
+            }} />
+          </DetailBlock>
+          <DetailBlock title="Attached capabilities">
+            <div className="cap-mini"><span className="on">GitHub persisted</span><span> TG</span><span className="on">SSE</span></div>
+          </DetailBlock>
+          <DetailBlock title="Actions">
+            <div className="action-row"><button type="button" onClick={onOpenWorkflow}>Inspect</button><button type="button" onClick={() => onOpenRun()}>Runs</button></div>
+          </DetailBlock>
+        </aside>
+      </section>
+    </>
+  );
+}
+
+function RunsPage({
+  runs,
+  selectedRun,
+  selectedStage,
+  selectedStatus,
+  dag,
+  nodeDetail,
+  nodeLog,
+  streamStatus,
+  onSelectRun,
+  onCancelRun,
+  onRetryNode,
+  onCancelNode,
+  cancelRunPending,
+  retryPending,
+  cancelNodePending,
+}: {
+  runs: Run[];
+  selectedRun: Run | undefined;
+  selectedStage: DagNode | undefined;
+  selectedStatus: StageStatus;
+  dag: Dag | undefined;
+  nodeDetail: NodeDetail | undefined;
+  nodeLog: NodeLog | undefined;
+  streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
+  onSelectRun: (pipelineId: string) => void;
+  onCancelRun: () => void;
+  onRetryNode: () => void;
+  onCancelNode: () => void;
+  cancelRunPending: boolean;
+  retryPending: boolean;
+  cancelNodePending: boolean;
+}) {
+  const doneCount = selectedRun ? Object.values(selectedRun.nodes).filter((state) => state === "done").length : 0;
+  const totalCount = dag?.nodes.length || 0;
+  const progress = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+  const gitEvents = (nodeLog?.events || []).filter((event) => event.event.includes("git"));
+  const tgEvents = (nodeLog?.events || []).filter((event) => event.event.startsWith("tg_notify") || event.event.includes("telegram"));
+  return (
+    <>
+      <section className="concept-hero">
+        <div>
+          <span className="status-pill running"><ListChecks size={14} />Concept C · Run Observatory</span>
+          <h1>围绕单个 Run 做全链路观察</h1>
+          <p>适合排查一次任务：左边看 timeline，右边看节点产物、日志、Git 和 TG 结果。</p>
+        </div>
+        <div className="context-card">
+          <strong>{selectedRun?.pipelineId || "No selected run"}</strong>
+          <span>{selectedRun?.status || "waiting"} · SSE {streamStatus}</span>
+          <code>{selectedRun?.repo || "-"}</code>
+        </div>
+      </section>
+      <section className="console-metrics">
+        <Metric label="Pipeline" value={`${progress}%`} subtext={`${doneCount}/${totalCount} stages done`} />
+        <Metric label="Git commits" value={gitEvents.length} subtext="run scoped" />
+        <Metric label="TG events" value={tgEvents.length} subtext="sent / skipped / failed" />
+        <Metric label="Artifacts" value={nodeDetail?.artifacts.length || 0} subtext="recorded node output" />
+      </section>
+      <section className="run-observatory">
+        <aside className="runs-table-panel">
+          <div className="panel-head compact"><div><strong>Runs</strong><span>选择一个 pipeline</span></div></div>
+          <RunTable runs={runs} selectedRunId={selectedRun?.pipelineId || ""} onSelect={onSelectRun} />
+        </aside>
+        <section className="timeline-panel run-timeline-panel">
+          <div className="panel-head"><div><strong>Run timeline</strong><span>节点级耗时、事件和产物</span></div><span className="status-pill running">SSE {streamStatus}</span></div>
+          <div className="run-stage-list">
+            {(dag?.nodes || []).map((stage) => {
+              const state = selectedRun?.nodes[stage.id] || "waiting";
+              return <div key={stage.id} className={`run-stage-row ${state}`}><span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span></div>;
+            })}
+            {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
+          </div>
+          <DetailBlock title="Artifacts">
+            <ArtifactList artifacts={nodeDetail?.artifacts || []} />
+          </DetailBlock>
+        </section>
+        <aside className="run-command-panel">
+          <div className="panel-head compact"><div><strong>Run command center</strong><span>{selectedRun?.pipelineId || "-"}</span></div><span className={`status-pill ${selectedStatus}`}>{statusLabel(selectedStatus)}</span></div>
+          <DetailBlock title="Current node">
+            <KeyValues data={{
+              node: selectedStage?.id || "-",
+              executor: nodeDetail?.executor?.type || nodeDetail?.mode || "-",
+              page_target: nodeDetail?.plan ? formatValue(nodeDetail.plan) : "30-40 pages",
+            }} />
+          </DetailBlock>
+          <DetailBlock title="Operations">
+            <div className="action-row">
+              <button type="button" disabled>Pause</button>
+              <button type="button" className="cancel-button" disabled={!selectedRun || cancelRunPending} onClick={onCancelRun}>Cancel Run</button>
+              <button type="button" className="retry-button" disabled={!selectedRun || retryPending} onClick={onRetryNode}>Retry Node</button>
+              <button type="button" disabled={selectedStatus !== "running" || cancelNodePending} onClick={onCancelNode}>Cancel Node</button>
+            </div>
+          </DetailBlock>
+          <DetailBlock title="Git / TG">
+            <div className="event-list">
+              {(nodeLog?.events || []).slice(0, 6).map((event, index) => <EventRow key={index} event={event} />)}
+              {!(nodeLog?.events || []).length && <Empty text="该节点暂无事件记录" />}
+            </div>
+          </DetailBlock>
+          <DetailBlock title="Node output">
+            <KeyValues data={nodeDetail?.actualOutputs || {}} />
+          </DetailBlock>
+        </aside>
+      </section>
+    </>
+  );
+}
+
+function RunTable({ runs, selectedRunId, onSelect }: { runs: Run[]; selectedRunId: string; onSelect: (pipelineId: string) => void }) {
+  if (!runs.length) return <Empty text="当前 Workspace 还没有 Run" />;
+  return (
+    <div className="run-table">
+      <div className="run-table-head"><span>Run</span><span>Status</span><span>Updated</span><span>Source</span><span>Action</span></div>
+      {runs.map((run) => (
+        <button key={run.pipelineId} type="button" className={`run-table-row ${selectedRunId === run.pipelineId ? "active" : ""}`} onClick={() => onSelect(run.pipelineId)}>
+          <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
+          <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
+          <span>{run.updatedAt || run.startedAt}</span>
+          <span>{run.sourceType || "youtube"}</span>
+          <span>{run.status === "failed" ? "Retry" : "Open"}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ArtifactsPage({
+  selectedRun,
+  selectedStage,
+  nodeDetail,
+}: {
+  selectedRun: Run | undefined;
+  selectedStage: DagNode | undefined;
+  nodeDetail: NodeDetail | undefined;
+}) {
+  const recorded = nodeDetail?.artifacts || [];
+  const candidates = nodeDetail?.discoveredCandidates || [];
+  return (
+    <>
+      <section className="concept-hero">
+        <div>
+          <span className="status-pill running"><PackageSearch size={14} />Run-scoped Artifacts</span>
+          <h1>只展示当前 Run 的实际产物</h1>
+          <p>Recorded artifacts 用作下游输入；Unverified candidates 来自共享路径扫描，必须单独隔离。</p>
+        </div>
+        <div className="context-card">
+          <strong>{selectedRun?.pipelineId || "No selected run"}</strong>
+          <span>{selectedStage?.title || "Selected node"} · {recorded.length} recorded</span>
+          <code>{selectedRun?.repo || "-"}</code>
+        </div>
+      </section>
+      <section className="console-metrics">
+        <Metric label="Recorded" value={recorded.length} subtext="current run only" />
+        <Metric label="Unverified" value={candidates.length} subtext="not downstream input" />
+        <Metric label="Producer" value={selectedStage?.id || "-"} subtext="selected node" />
+        <Metric label="Resolution" value={recorded[0]?.resolution || "-"} subtext="artifact ownership" />
+      </section>
+      <section className="artifacts-layout">
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Recorded Artifacts</strong><span>作为当前 Run 的实际产物展示</span></div></div>
+          <div className="panel-body"><ArtifactList artifacts={recorded} /></div>
+        </div>
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Unverified Candidates</strong><span>不会作为下游输入</span></div></div>
+          <div className="panel-body">
+            <p className="candidate-warning">这些文件来自共享路径扫描，无法确认属于当前 Run。页面需要显示，但下游节点不能依赖它们。</p>
+            <ArtifactList artifacts={candidates} />
+          </div>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function SettingsPage({
+  mode,
+  runtime,
+  runtimes,
+  instance,
+  instances,
+  manualEndpoint,
+  setManualEndpoint,
+  onAddManualEndpoint,
+  streamStatus,
+  nodesReadyCount,
+  nodesTotal,
+}: {
+  mode: DataMode;
+  runtime: Runtime | undefined;
+  runtimes: Runtime[];
+  instance: Instance | undefined;
+  instances: Instance[];
+  manualEndpoint: string;
+  setManualEndpoint: (value: string) => void;
+  onAddManualEndpoint: (event: FormEvent) => void;
+  streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
+  nodesReadyCount: number;
+  nodesTotal: number;
+}) {
+  return (
+    <>
+      <section className="concept-hero">
+        <div>
+          <span className="status-pill waiting"><Settings size={14} />Runtime Settings</span>
+          <h1>Runtime / Endpoint / Registry config</h1>
+          <p>当前页面只读为主，用于确认 SPI、Registry、Mode 和 SSE/CORS 相关状态。</p>
+        </div>
+        <div className="context-card">
+          <strong>{runtime?.name || "Runtime"}</strong>
+          <span>{mode} · {runtime?.localStatus || "unknown"}</span>
+          <code>{runtime?.endpoint || "-"}</code>
+        </div>
+      </section>
+      <section className="settings-grid">
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Runtime endpoint</strong><span>SPI consumer context</span></div></div>
+          <div className="settings-block">
+            <KeyValues data={{
+              mode,
+              endpoint: runtime?.endpoint || "-",
+              runtime_id: runtime?.id || "-",
+              local_status: runtime?.localStatus || "-",
+              machine: runtime?.machine || "-",
+              available_runtimes: runtimes.length,
+            }} />
+          </div>
+        </div>
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Registry instance</strong><span>Enabled workspace</span></div></div>
+          <div className="settings-block">
+            <KeyValues data={{
+              instance: instance?.instanceId || "-",
+              title: instance?.title || "-",
+              repo: instance?.repo || "-",
+              enabled_workspaces: instances.length,
+              nodes_ready: `${nodesReadyCount}/${nodesTotal || 0}`,
+            }} />
+          </div>
+        </div>
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>SSE / CORS / Health</strong><span>Read-only checks</span></div></div>
+          <div className="settings-block">
+            <KeyValues data={{
+              sse_status: streamStatus,
+              cors_options: "public endpoint expected",
+              post_trigger_auth: "not configured in UI",
+              data_source: "SOP SPI",
+            }} />
+          </div>
+        </div>
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Manual endpoint</strong><span>Real mode helper</span></div></div>
+          <form className="settings-block manual-endpoint" onSubmit={onAddManualEndpoint}>
+            <label htmlFor="settings-manual-endpoint">Endpoint</label>
+            <div><input id="settings-manual-endpoint" value={manualEndpoint} onChange={(event) => setManualEndpoint(event.target.value)} placeholder="https://..." /><button>Apply</button></div>
+          </form>
+        </div>
+      </section>
+    </>
+  );
+}
+
 function NodesWorkspace({
   instance,
   runtime,
@@ -991,7 +1440,7 @@ function NodesWorkspace({
         <Metric label="Nodes" value={nodes.length} subtext="registered in SOP" />
         <Metric label="Complete" value={`${completeNodes}/${nodes.length || 0}`} subtext="metadata ready" />
         <Metric label="Drafts" value={drafts.length} subtext="not published" />
-        <Metric label="Publish" value="disabled" subtext="draft only" />
+        <Metric label="Publish" value="off" subtext="draft only" />
       </section>
 
       <section className="node-workbench">
@@ -1091,7 +1540,7 @@ function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined
           </div>
         </DetailBlock>
         <DetailBlock title="Actions">
-          <KeyValues data={node.actions || {}} />
+          <ActionList actions={(node.actions as Record<string, unknown>) || {}} />
         </DetailBlock>
       </div>
 
@@ -1386,6 +1835,33 @@ function KeyValues({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data || {});
   if (!entries.length) return <Empty text="没有数据" />;
   return <div className="kv">{entries.map(([key, value]) => <div key={key} className="kv-row"><span>{key}</span><code>{formatValue(value)}</code></div>)}</div>;
+}
+
+function ActionList({ actions }: { actions: Record<string, unknown> }) {
+  const entries = Object.entries(actions || {});
+  if (!entries.length) return <Empty text="没有操作定义" />;
+  return (
+    <div className="action-list">
+      {entries.map(([name, value]) => {
+        const action = typeof value === "object" && value ? value as Record<string, unknown> : {};
+        const enabled = action.enabled !== false;
+        const destructive = action.destructive === true;
+        return (
+          <div key={name} className="action-item">
+            <div>
+              <strong>{name}</strong>
+              <code>{String(action.path || "-")}</code>
+            </div>
+            <span className="action-meta">
+              <span>{String(action.method || "-")}</span>
+              <span className={`status-pill ${enabled ? "done" : "waiting"}`}>{enabled ? "enabled" : "disabled"}</span>
+              {destructive && <span className="status-pill failed">confirm</span>}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function formatValue(value: unknown) {
