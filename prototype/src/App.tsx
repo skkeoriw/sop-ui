@@ -4,11 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  Boxes,
   CheckCircle2,
   ChevronDown,
   CircleDot,
   Clock,
+  GitBranch,
   Info,
+  LayoutDashboard,
   Loader2,
   Play,
   RefreshCw,
@@ -16,6 +19,7 @@ import {
   Search,
   Server,
   SlidersHorizontal,
+  Workflow,
   X
 } from "lucide-react";
 import { getMode, getProvider, normalizeEndpoint, setMode as writeMode } from "./data/provider";
@@ -416,6 +420,7 @@ export default function App() {
   const completedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "done").length : 0;
   const failedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "failed").length : 0;
   const artifactCount = (nodeQuery.data?.artifacts || []).length;
+  const nodesReadyCount = managedNodes.filter((node) => (node.missingFields || []).length === 0).length;
 
   function changeMode(nextMode: DataMode) {
     writeMode(nextMode);
@@ -477,26 +482,44 @@ export default function App() {
 
   return (
     <div className={`app-shell ${viewMode === "nodes" ? "nodes-shell" : ""}`}>
-      <header className="topbar">
-        <div className="brand">
+      <aside className="control-rail">
+        <div className="rail-brand">
           <div className="brand-mark">S</div>
           <div>
-            <strong>SOP Prototype</strong>
-            <span>{mode === "real" ? "Execution console · Real SPI" : "Execution console · Mock data"}</span>
+            <strong>SOP Control</strong>
+            <span>Runtime orchestration</span>
           </div>
         </div>
-        <div className="runtime-switch" role="tablist" aria-label="Runtime selector">
-          {runtimes.map((item) => (
-            <button key={item.id} type="button" className={`runtime-tab ${runtime?.id === item.id ? "active" : ""}`} role="tab" aria-selected={runtime?.id === item.id} onClick={() => setRuntimeId(item.id)}>
-              <Server size={16} /><span>{item.name}</span><small>{item.machine || item.localStatus}</small>
+        <nav className="rail-nav" aria-label="Primary">
+          <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>
+            <LayoutDashboard size={17} /><span>Workflow</span><small>{runs.filter((run) => run.status === "running").length ? "live" : "console"}</small>
+          </button>
+          <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
+            <Boxes size={17} /><span>Nodes</span><small>{managedNodes.length || "-"} assets</small>
+          </button>
+        </nav>
+        <div className="rail-section">
+          <div className="section-title"><span>Runtime</span><span>{mode}</span></div>
+          {runtimes.slice(0, 2).map((item) => (
+            <button key={item.id} type="button" className={`rail-runtime ${runtime?.id === item.id ? "active" : ""}`} onClick={() => setRuntimeId(item.id)}>
+              <Server size={14} />
+              <span>{item.name}</span>
+              <small>{item.machine || item.localStatus}</small>
             </button>
           ))}
+          {!runtimes.length && <div className="rail-empty">No runtime</div>}
+        </div>
+      </aside>
+      <header className="topbar">
+        <div className="active-context">
+          <div>
+            <span>Active context</span>
+            <strong>{instance?.title || "Workspace"}</strong>
+          </div>
+          <code>{runtime?.endpoint || "No endpoint"}</code>
+          <span className={`status-pill ${runtime?.localStatus === "ok" ? "done" : "waiting"}`}>{runtime?.name || "runtime"} · {runtime?.localStatus || "unknown"}</span>
         </div>
         <div className="top-actions">
-          <div className="view-switch" aria-label="主视图">
-            <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>Workflow</button>
-            <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>Nodes</button>
-          </div>
           <div className="mode-switch" aria-label="数据模式">
             <button type="button" className={mode === "real" ? "active" : ""} onClick={() => changeMode("real")}>Real</button>
             <button type="button" className={mode === "mock" ? "active" : ""} onClick={() => changeMode("mock")}>Mock</button>
@@ -565,16 +588,21 @@ export default function App() {
             <section className="summary-grid">
               <div className="overview-panel">
                 <div className="row">
-                  <span className={`status-pill ${runtime?.localStatus === "ok" ? "done" : "waiting"}`}><Activity size={14} />{mode === "real" ? "真实数据" : "Mock 数据"}</span>
-                  <span>{runtime?.endpoint || "-"}</span>
+                  <span className={`status-pill ${runtime?.localStatus === "ok" ? "done" : "waiting"}`}><Activity size={14} />Ops Console</span>
+                  <span>{mode === "real" ? "Real data" : "Mock data"}</span>
                 </div>
-                <h1>{instance?.title || "SOP Workflow"}</h1>
-                <p>{mode === "real" ? "当前页面直接读取 tunnel-admin 和 SOP SPI，不在前端保存业务数据。" : "Mock 模式用于交互开发和接口异常 fallback。"}</p>
+                <h1>用一个操作台掌控 Runtime、Execution 和节点状态</h1>
+                <p>{instance?.title || "SOP Workflow"} · 默认聚焦运行健康、失败节点、最近产物和下一步操作。</p>
+                <div className="overview-tags">
+                  <span><Workflow size={13} />Workflow Map</span>
+                  <span><GitBranch size={13} />Git / TG / SSE</span>
+                  <span><Boxes size={13} />{nodesReadyCount}/{managedNodes.length || 0} nodes ready</span>
+                </div>
               </div>
-              <Metric label="Stages done" value={`${completedCount}/${dag?.nodes.length || 0}`} subtext="selected execution" />
-              <Metric label="Active executions" value={runs.filter((run) => run.status === "running").length} subtext="current runtime" />
+              <Metric label="Active executions" value={runs.filter((run) => run.status === "running").length} subtext={`${failedCount} failed node signals`} />
+              <Metric label="Nodes ready" value={`${nodesReadyCount}/${managedNodes.length || 0}`} subtext="metadata complete" />
               <Metric label="Artifacts" value={artifactCount} subtext="selected node" />
-              <Metric label="Live events" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
+              <Metric label="Events" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
             </section>
 
             <section className="flow-panel">
@@ -950,9 +978,15 @@ function NodesWorkspace({
     <>
       <section className="node-summary">
         <div>
-          <span className="status-pill running"><Activity size={14} />Node Manager v1</span>
-          <h1>{instance?.title || "SOP Nodes"}</h1>
-          <p>{runtime?.endpoint || "选择 Runtime 后加载节点注册表"}</p>
+          <span className="status-pill running"><Boxes size={14} />Node Studio</span>
+          <h1>节点资产中心</h1>
+          <p>{instance?.title || "SOP Nodes"} · 按输入、执行、产物和附属能力组织节点。</p>
+          <div className="overview-tags">
+            <span>Input</span>
+            <span>Research</span>
+            <span>Build</span>
+            <span>Notify</span>
+          </div>
         </div>
         <Metric label="Nodes" value={nodes.length} subtext="registered in SOP" />
         <Metric label="Complete" value={`${completeNodes}/${nodes.length || 0}`} subtext="metadata ready" />
@@ -965,7 +999,7 @@ function NodesWorkspace({
           <div className="panel-head compact">
             <div>
               <strong>Node Registry</strong>
-              <span>节点选择器</span>
+              <span>资产选择器 · {runtime?.name || "runtime"}</span>
             </div>
             <span className="status-pill waiting">{visibleNodes.length}/{nodes.length}</span>
           </div>
@@ -1016,6 +1050,11 @@ function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined
           <span className="status-pill running">{String(node.case || node.executor?.type || node.mode || "node")}</span>
           <h2>{node.title || node.nodeId}</h2>
           <p>{node.description || "该节点暂未提供描述。"}</p>
+          <div className="overview-tags">
+            <span>Skill command</span>
+            <span>Input mapping</span>
+            <span>Output declaration</span>
+          </div>
         </div>
         <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>
           {(node.missingFields || []).length ? `${node.missingFields?.length} missing` : "ready"}
@@ -1038,10 +1077,10 @@ function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined
             install_command: node.executor?.install_command || "-",
           }} />
         </DetailBlock>
-        <DetailBlock title="Input Contract">
+        <DetailBlock title="Input Mapping">
           <KeyValues data={(node.inputs as Record<string, unknown>) || {}} />
         </DetailBlock>
-        <DetailBlock title="Output Contract">
+        <DetailBlock title="Output Declaration">
           <KeyValues data={(node.outputs as Record<string, unknown>) || {}} />
         </DetailBlock>
         <DetailBlock title="Attached Capabilities">
