@@ -552,12 +552,12 @@ export default function App() {
     eventTypes.forEach((eventType) => stream.addEventListener(eventType, refreshFromEvent));
     stream.onopen = () => {
       window.clearTimeout(fallbackTimer);
+      fallbackTimer = 0;
       setStreamStatus("live");
     };
     stream.onerror = () => {
       setStreamStatus("reconnecting");
-      window.clearTimeout(fallbackTimer);
-      fallbackTimer = window.setTimeout(() => setStreamStatus("polling fallback"), 5000);
+      if (!fallbackTimer) fallbackTimer = window.setTimeout(() => setStreamStatus("polling fallback"), 5000);
     };
     return () => {
       window.clearTimeout(fallbackTimer);
