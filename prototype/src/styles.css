@@ -1189,8 +1189,7 @@ pre {
   min-width: 240px;
   max-width: 430px;
   display: grid;
-  grid-template-rows: auto minmax(220px, auto) minmax(0, 1fr);
-  gap: 12px;
+  grid-template-rows: minmax(0, 1fr);
   overflow: auto;
   resize: horizontal;
 }
@@ -1237,7 +1236,7 @@ pre {
   display: grid;
   gap: 8px;
   padding: 12px;
-  max-height: 300px;
+  max-height: calc(100dvh - 220px);
   overflow: auto;
 }
 
@@ -1273,6 +1272,10 @@ pre {
 
 .node-config-drawer {
   width: min(620px, 100%);
+}
+
+.execution-start-drawer {
+  width: min(560px, 100%);
 }
 
 .workflow-runtime-observatory {

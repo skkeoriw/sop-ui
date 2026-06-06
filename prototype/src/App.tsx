@@ -47,6 +47,7 @@ import type {
   NodeModuleDetail,
   NodeRegistryItem,
   Run,
+  RunNodeState,
   Runtime,
   StageStatus
 } from "./data/types";
@@ -54,6 +55,12 @@ import type {
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
 type AppView = "workflow" | "nodes" | "settings";
 type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string };
+type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
+type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
+  pipelineId: string;
+  nodes?: Record<string, StageStatus>;
+  nodeStates?: Record<string, RunNodeState>;
+};
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -244,12 +251,13 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [triggerUrl, setTriggerUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
-  const [confirmRealTrigger, setConfirmRealTrigger] = useState(false);
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
   const [rawLogOpen, setRawLogOpen] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<"live" | "reconnecting" | "polling fallback" | "closed">("closed");
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>("closed");
+  const [optimisticRuns, setOptimisticRuns] = useState<Run[]>([]);
+  const [runOverlays, setRunOverlays] = useState<Record<string, RunOverlay>>({});
   const [executionSearch, setExecutionSearch] = useState("");
   const [executionFilter, setExecutionFilter] = useState<"all" | StageStatus>("all");
   const [nodeSearch, setNodeSearch] = useState("");
@@ -289,7 +297,8 @@ export default function App() {
     enabled: Boolean(runtime && instance),
     refetchInterval: (query) => (query.state.data?.some((run) => run.status === "running") && streamStatus !== "live" ? 15000 : false)
   });
-  const runs = runsQuery.data || [];
+  const serverRuns = runsQuery.data || [];
+  const runs = useMemo(() => mergeRuns(serverRuns, optimisticRuns, runOverlays), [serverRuns, optimisticRuns, runOverlays]);
   const routeRunMissing = Boolean(selectedRunId && runs.length && !runs.some((run) => run.pipelineId === selectedRunId));
   const selectedRunSummary = selectedRunId ? runs.find((run) => run.pipelineId === selectedRunId) : runs[0];
 
@@ -385,13 +394,47 @@ export default function App() {
   }, [managedNodes, nodeFilter, nodeSearch]);
 
   const triggerMutation = useMutation({
-    mutationFn: () => provider.triggerRun(runtime, instance.instanceId, { repo: instance.repo, url: triggerUrl }),
-    onSuccess: async (result) => {
+    mutationFn: async () => {
+      const [result] = await Promise.all([
+        provider.triggerRun(runtime, instance.instanceId, { repo: instance.repo, url: triggerUrl }),
+        minimumDelay(450),
+      ]);
+      return result;
+    },
+    onMutate: async () => {
+      const tempId = `starting-${Date.now()}`;
+      const run = createOptimisticRun(tempId, triggerUrl, instance?.repo || "", dag);
+      setOptimisticRuns((items) => [run, ...items]);
+      setSelectedRunId(tempId);
+      navigateTo("workflow", tempId, dag?.nodes[0]?.id || "");
+      setToast("Execution starting...");
+      return { tempId };
+    },
+    onSuccess: async (result, _variables, context) => {
+      const realId = result.pipelineId;
+      if (realId) {
+        setOptimisticRuns((items) => items.map((run) => run.pipelineId === context?.tempId
+          ? { ...run, pipelineId: realId, status: "running", updatedAt: new Date().toISOString() }
+          : run
+        ));
+        setRunOverlays((items) => ({ ...items, [realId]: { pipelineId: realId, status: "running", updatedAt: new Date().toISOString() } }));
+        setSelectedRunId(realId);
+        navigateTo("workflow", realId, dag?.nodes[0]?.id || "");
+      }
       setTriggerOpen(false);
-      setConfirmRealTrigger(false);
-      setToast(result.pipelineId ? `已触发 ${result.pipelineId}` : "触发请求已提交");
+      setToast(realId ? `Execution started: ${shortId(realId)}` : "Execution started");
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, instance.instanceId) });
-      if (result.pipelineId) setSelectedRunId(result.pipelineId);
+      if (realId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.run(mode, runtime, instance.instanceId, realId) });
+        await queryClient.invalidateQueries({ queryKey: queryKeys.runDag(mode, runtime, instance.instanceId, realId) });
+      }
+    },
+    onError: (error, _variables, context) => {
+      setOptimisticRuns((items) => items.map((run) => run.pipelineId === context?.tempId
+        ? { ...run, status: "failed", updatedAt: new Date().toISOString() }
+        : run
+      ));
+      setToast(`Execution failed: ${String((error as Error).message || error)}`);
     }
   });
 
@@ -462,6 +505,11 @@ export default function App() {
   }, [dag, route.nodeId, selectedStageId]);
   useEffect(() => { setInstanceId(""); setSelectedRunId(""); setSelectedStageId(""); }, [runtimeId]);
   useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); }, [instanceId]);
+  useEffect(() => {
+    if (!serverRuns.length) return;
+    const serverIds = new Set(serverRuns.map((run) => run.pipelineId));
+    setOptimisticRuns((items) => items.filter((run) => run.pipelineId.startsWith("starting-") || !serverIds.has(run.pipelineId)));
+  }, [serverRuns]);
   useEffect(() => { setSelectedManagedNodeId(""); }, [runtimeId, instanceId]);
   useEffect(() => {
     if (!managedNodes.length) return;
@@ -490,9 +538,10 @@ export default function App() {
     const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instance.instanceId)}/runs/${encodeURIComponent(selectedRun.pipelineId)}/events/stream`;
     const stream = new EventSource(url);
     let fallbackTimer = 0;
-    const refreshFromEvent = () => {
+    const refreshFromEvent = (event: MessageEvent) => {
       setStreamStatus("live");
-      queryClient.invalidateQueries({ queryKey: ["sop", mode] });
+      setRunOverlays((items) => applyStreamEvent(items, selectedRun.pipelineId, event.type, event.data, dag));
+      queryClient.invalidateQueries({ queryKey: queryKeys.run(mode, runtime, instance.instanceId, selectedRun.pipelineId) });
     };
     const eventTypes = [
       "node.started", "node.progress", "artifact.created",
@@ -516,7 +565,7 @@ export default function App() {
       stream.close();
       setStreamStatus("closed");
     };
-  }, [mode, runtime?.id, instance?.instanceId, selectedRun?.pipelineId, selectedRun?.status, queryClient]);
+  }, [mode, runtime?.id, instance?.instanceId, selectedRun?.pipelineId, selectedRun?.status, dag, queryClient]);
   useEffect(() => {
     if (!initialEndpoint || !runtimes.length) return;
     const matched = runtimes.find((item) => normalizeEndpoint(item.endpoint) === initialEndpoint);
@@ -803,24 +852,17 @@ export default function App() {
       </main>
 
       {triggerOpen && runtime && instance && (
-        <div className="modal-backdrop" role="presentation">
-          <form className="trigger-modal" onSubmit={(event) => { event.preventDefault(); triggerMutation.mutate(); }}>
-            <div className="modal-head">
-              <div><h2>{mode === "real" ? "创建真实 Execution" : "Create mock execution"}</h2><span>{mode === "real" ? "此操作会在服务机器上启动真实流程。" : "创建模拟 pipeline 并观察状态推进。"}</span></div>
-              <button type="button" onClick={() => setTriggerOpen(false)}>Close</button>
-            </div>
-            <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />
-            <label>YouTube URL<input value={triggerUrl} onChange={(event) => setTriggerUrl(event.target.value)} /></label>
-            {mode === "real" && <label className="confirm-row"><input type="checkbox" checked={confirmRealTrigger} onChange={(event) => setConfirmRealTrigger(event.target.checked)} />我确认要创建真实 Execution</label>}
-            {triggerMutation.error && <div className="inline-error">{String(triggerMutation.error.message)}</div>}
-            <div className="modal-actions">
-              <button type="button" onClick={() => setTriggerOpen(false)}>Cancel</button>
-              <button type="submit" className="primary" disabled={triggerMutation.isPending || (mode === "real" && !confirmRealTrigger)}>
-                <Play size={16} />{triggerMutation.isPending ? "Submitting" : mode === "real" ? "Create real execution" : "Start mock execution"}
-              </button>
-            </div>
-          </form>
-        </div>
+        <ExecutionStartDrawer
+          mode={mode}
+          runtime={runtime}
+          instance={instance}
+          triggerUrl={triggerUrl}
+          setTriggerUrl={setTriggerUrl}
+          pending={triggerMutation.isPending}
+          error={triggerMutation.error ? String(triggerMutation.error.message) : ""}
+          onClose={() => setTriggerOpen(false)}
+          onStart={(event) => { event.preventDefault(); triggerMutation.mutate(); }}
+        />
       )}
       {draftOpen && runtime && instance && (
         <NodeDraftDrawer
@@ -1063,34 +1105,15 @@ function WorkflowWorkspace({
 
       <div className="workflow-primary-grid">
         <aside className="workflow-run-panel">
-          <label className="run-select">
-            <span>Current Run</span>
-            <select value={selectedRun?.pipelineId || ""} onChange={(event) => onSelectRun(event.target.value)} disabled={!runs.length}>
-              {runs.map((run) => <option key={run.pipelineId} value={run.pipelineId}>{run.pipelineId} · {statusLabel(run.status)}</option>)}
-            </select>
-          </label>
-          <section className="timeline-panel workflow-timeline-panel">
-            <div className="panel-head compact"><strong>Execution Timeline</strong><span>点击 Stage 查看详情</span></div>
-            <div className="timeline workflow-side-timeline">
-              {(dag?.nodes || []).map((stage) => {
-                const state = selectedRun?.nodes[stage.id] || "waiting";
-                return (
-                  <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => onSelectNode(stage.id)}>
-                    <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
-                  </button>
-                );
-              })}
-              {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
-            </div>
-          </section>
           <section className="workflow-execution-list">
-            <div className="panel-head compact"><strong>Executions</strong><span>{runs.length}</span></div>
+            <div className="panel-head compact"><div><strong>Executions</strong><span>选择一个 run 查看 DAG</span></div><span>{runs.length}</span></div>
             <div className="workflow-run-list">
               {runs.slice(0, 8).map((run) => (
                 <button key={run.pipelineId} type="button" className={`workflow-run-row ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`} onClick={() => onSelectRun(run.pipelineId)}>
                   <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
                   <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
-                  <small>{run.updatedAt || run.startedAt}</small>
+                  <small>{run.progress ?? 0}% · {run.updatedAt || run.startedAt}</small>
+                  <small>{run.sourceUrl || run.repo}</small>
                 </button>
               ))}
               {!runs.length && <Empty text="当前 Workspace 还没有 Execution" />}
@@ -1110,6 +1133,8 @@ function WorkflowWorkspace({
                   <X size={14} />Cancel Run
                 </button>
               )}
+              {selectedRun && <span className="status-pill running">{selectedRun.progress ?? 0}%</span>}
+              <span className={`status-pill ${streamStatus === "live" ? "done" : streamStatus === "closed" ? "waiting" : "running"}`}>SSE {streamStatus}</span>
               {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
             </div>
           </div>
@@ -1940,6 +1965,58 @@ function NodeDraftDrawer({
   );
 }
 
+function ExecutionStartDrawer({
+  mode,
+  runtime,
+  instance,
+  triggerUrl,
+  setTriggerUrl,
+  pending,
+  error,
+  onClose,
+  onStart,
+}: {
+  mode: DataMode;
+  runtime: Runtime;
+  instance: Instance;
+  triggerUrl: string;
+  setTriggerUrl: (value: string) => void;
+  pending: boolean;
+  error: string;
+  onClose: () => void;
+  onStart: (event: FormEvent) => void;
+}) {
+  return (
+    <div className="drawer-backdrop" role="presentation">
+      <form className="side-drawer execution-start-drawer" onSubmit={onStart}>
+        <div className="drawer-head">
+          <div>
+            <h2>Start Execution</h2>
+            <span>{mode === "real" ? "Real SOP Runtime" : "Mock Runtime"} · {instance.instanceId}</span>
+          </div>
+          <button type="button" className="icon-btn" title="关闭创建面板" onClick={onClose} disabled={pending}><X size={16} /></button>
+        </div>
+        <div className="drawer-body">
+          <div className="drawer-note">
+            <strong>连续运行体验</strong>
+            <span>点击后会立即在 Executions 中插入 Starting 状态，并自动聚焦到新 Run。</span>
+          </div>
+          <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />
+          <label>YouTube URL<input value={triggerUrl} onChange={(event) => setTriggerUrl(event.target.value)} disabled={pending} /></label>
+          {error && <div className="inline-error">{error}</div>}
+        </div>
+        <div className="drawer-actions">
+          <button type="button" onClick={onClose} disabled={pending}>Cancel</button>
+          <button type="submit" className="primary" disabled={pending || !triggerUrl.trim()}>
+            {pending ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
+            {pending ? "Starting..." : "Start Execution"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function NodeConfigDrawer({
   nodeId,
   node,
@@ -2136,6 +2213,116 @@ function capabilityEnabled(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "object" && value) return (value as Record<string, unknown>).enabled !== false;
   return false;
+}
+
+function mergeRuns(serverRuns: Run[], optimisticRuns: Run[], overlays: Record<string, RunOverlay>): Run[] {
+  const ids = new Set<string>();
+  const ordered = [...optimisticRuns, ...serverRuns].filter((run) => {
+    if (ids.has(run.pipelineId)) return false;
+    ids.add(run.pipelineId);
+    return true;
+  });
+  return ordered.map((run) => applyRunOverlay(run, overlays[run.pipelineId]));
+}
+
+function applyRunOverlay(run: Run, overlay: RunOverlay | undefined): Run {
+  if (!overlay) return run;
+  return {
+    ...run,
+    ...overlay,
+    nodes: { ...run.nodes, ...(overlay.nodes || {}) },
+    nodeStates: { ...(run.nodeStates || {}), ...(overlay.nodeStates || {}) },
+  };
+}
+
+function createOptimisticRun(pipelineId: string, url: string, repo: string, dag: Dag | undefined): Run {
+  const now = new Date().toISOString();
+  const firstNode = dag?.nodes[0]?.id || "";
+  const nodes = Object.fromEntries((dag?.nodes || []).map((node, index) => [node.id, index === 0 ? "running" : "waiting"])) as Record<string, StageStatus>;
+  const nodeStates = firstNode ? { [firstNode]: { status: "running", startedAt: now, progress: 5 } as RunNodeState } : {};
+  return {
+    pipelineId,
+    status: "running",
+    sourceUrl: url,
+    sourceType: "youtube",
+    repo,
+    nodes,
+    nodeStates,
+    startedAt: now,
+    updatedAt: now,
+    nodeCount: dag?.nodes.length || 0,
+    doneCount: 0,
+    failedCount: 0,
+    runningNode: firstNode,
+    progress: 1,
+    artifactCount: 0,
+    gitEventCount: 0,
+    telegramEventCount: 0,
+  };
+}
+
+function applyStreamEvent(overlays: Record<string, RunOverlay>, pipelineId: string, eventType: string, rawData: string, dag: Dag | undefined): Record<string, RunOverlay> {
+  const data = parseEventData(rawData);
+  const current = overlays[pipelineId] || { pipelineId };
+  const nodes = { ...(current.nodes || {}) };
+  const nodeStates = { ...(current.nodeStates || {}) };
+  const nodeId = eventNodeId(data);
+  const now = new Date().toISOString();
+  let next: RunOverlay = { ...current, nodes, nodeStates, updatedAt: now };
+
+  const setNode = (status: StageStatus, progress?: number) => {
+    if (!nodeId) return;
+    nodes[nodeId] = status;
+    nodeStates[nodeId] = { ...(nodeStates[nodeId] || { status }), status, progress: progress ?? nodeStates[nodeId]?.progress };
+    next.runningNode = status === "running" ? nodeId : next.runningNode;
+  };
+
+  if (eventType === "node.started") setNode("running", 5);
+  if (eventType === "node.progress") setNode("running", eventProgress(data));
+  if (eventType === "node.completed") setNode("done", 100);
+  if (eventType === "node.failed") setNode("failed", 100);
+  if (eventType === "node.skipped") setNode("skipped", 100);
+  if (eventType === "node.cancelled") setNode("cancelled", 100);
+  if (eventType === "artifact.created") next.artifactCount = Number(current.artifactCount || 0) + 1;
+  if (eventType === "git.committed" || eventType === "git.failed") next.gitEventCount = Number(current.gitEventCount || 0) + 1;
+  if (eventType === "telegram.sent" || eventType === "telegram.failed") next.telegramEventCount = Number(current.telegramEventCount || 0) + 1;
+  if (eventType === "run.completed") next = { ...next, status: "done", progress: 100 };
+  if (eventType === "run.failed") next = { ...next, status: "failed" };
+  if (eventType === "run.cancelled") next = { ...next, status: "cancelled" };
+
+  const total = dag?.nodes.length || Object.keys(nodes).length;
+  const done = Object.values(nodes).filter((status) => status === "done").length;
+  const failed = Object.values(nodes).filter((status) => status === "failed").length;
+  if (total) {
+    next.nodeCount = total;
+    next.doneCount = done;
+    next.failedCount = failed;
+    next.progress = Math.max(Number(next.progress || 0), Math.round((done / total) * 100));
+  }
+  if (!next.status && Object.values(nodes).includes("running")) next.status = "running";
+  return { ...overlays, [pipelineId]: next };
+}
+
+function parseEventData(rawData: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(rawData || "{}");
+    return typeof parsed === "object" && parsed ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function eventNodeId(data: Record<string, unknown>) {
+  return String(data.node_id || data.nodeId || data.stage || data.stage_id || data.node || "");
+}
+
+function eventProgress(data: Record<string, unknown>) {
+  const value = Number(data.progress ?? data.percent ?? data.progress_pct ?? 20);
+  return Number.isFinite(value) ? value : 20;
+}
+
+function minimumDelay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function buildFlowNodes(
