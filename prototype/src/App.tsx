@@ -17,6 +17,8 @@ import {
   Loader2,
   Network,
   PackageSearch,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   RefreshCw,
   RotateCcw,
@@ -38,6 +40,7 @@ import type {
   NodeDraft,
   NodeDraftInput,
   NodeDetail,
+  NodeConfig,
   NodeEvent,
   NodeLog,
   NodeModule,
@@ -225,6 +228,7 @@ export default function App() {
   const [mode, setMode] = useState<DataMode>(getMode);
   const provider = useMemo(() => getProvider(mode), [mode]);
   const [route, setRoute] = useState<AppRoute>(readRoute);
+  const [railCollapsed, setRailCollapsed] = useState(false);
   const viewMode = route.view;
   const initialEndpoint = useMemo(() => normalizeEndpoint(new URL(window.location.href).searchParams.get("endpoint") || ""), []);
   const initialManualRuntime = useMemo<Runtime | undefined>(() => initialEndpoint ? ({
@@ -612,7 +616,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell single-shell">
+    <div className={`app-shell single-shell ${railCollapsed ? "rail-collapsed" : ""}`}>
       <aside className="control-rail">
         <div className="rail-brand">
           <div className="brand-mark">S</div>
@@ -620,6 +624,9 @@ export default function App() {
             <strong>SOP Control</strong>
             <span>Runtime orchestration</span>
           </div>
+          <button type="button" className="rail-collapse-btn" title={railCollapsed ? "展开菜单" : "折叠菜单"} onClick={() => setRailCollapsed((value) => !value)}>
+            {railCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
         </div>
         <nav className="rail-nav" aria-label="Primary">
           <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow", selectedRun?.pipelineId || "", selectedStage?.id || "")}>
@@ -830,6 +837,15 @@ export default function App() {
           onCreateDraft={submitDraft}
         />
       )}
+      {showNodeConfig && (
+        <NodeConfigDrawer
+          nodeId={nodeConfigId}
+          node={nodeConfigQuery.data}
+          loading={nodeConfigQuery.isLoading}
+          error={nodeConfigQuery.error ? String((nodeConfigQuery.error as Error).message || nodeConfigQuery.error) : ""}
+          onClose={() => setShowNodeConfig(false)}
+        />
+      )}
       {toast && <div className="toast"><CircleDot size={15} />{toast}</div>}
     </div>
   );
@@ -1031,12 +1047,6 @@ function WorkflowWorkspace({
             <p>{instance?.title || "SOP Workflow"} · {runtime?.endpoint || "No endpoint"} · {mode}</p>
           </div>
         </div>
-        <label className="run-select">
-          <span>Current Run</span>
-          <select value={selectedRun?.pipelineId || ""} onChange={(event) => onSelectRun(event.target.value)} disabled={!runs.length}>
-            {runs.map((run) => <option key={run.pipelineId} value={run.pipelineId}>{run.pipelineId} · {statusLabel(run.status)}</option>)}
-          </select>
-        </label>
         <div className="workflow-metrics">
           <Metric label="Progress" value={`${selectedRun?.progress ?? 0}%`} subtext={`${selectedRun?.doneCount ?? 0}/${selectedRun?.nodeCount ?? dag?.nodes.length ?? 0} nodes`} />
           <Metric label="Artifacts" value={selectedRun?.artifactCount ?? runArtifacts.length} subtext="run scoped" />
@@ -1052,6 +1062,42 @@ function WorkflowWorkspace({
       )}
 
       <div className="workflow-primary-grid">
+        <aside className="workflow-run-panel">
+          <label className="run-select">
+            <span>Current Run</span>
+            <select value={selectedRun?.pipelineId || ""} onChange={(event) => onSelectRun(event.target.value)} disabled={!runs.length}>
+              {runs.map((run) => <option key={run.pipelineId} value={run.pipelineId}>{run.pipelineId} · {statusLabel(run.status)}</option>)}
+            </select>
+          </label>
+          <section className="timeline-panel workflow-timeline-panel">
+            <div className="panel-head compact"><strong>Execution Timeline</strong><span>点击 Stage 查看详情</span></div>
+            <div className="timeline workflow-side-timeline">
+              {(dag?.nodes || []).map((stage) => {
+                const state = selectedRun?.nodes[stage.id] || "waiting";
+                return (
+                  <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => onSelectNode(stage.id)}>
+                    <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
+                  </button>
+                );
+              })}
+              {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
+            </div>
+          </section>
+          <section className="workflow-execution-list">
+            <div className="panel-head compact"><strong>Executions</strong><span>{runs.length}</span></div>
+            <div className="workflow-run-list">
+              {runs.slice(0, 8).map((run) => (
+                <button key={run.pipelineId} type="button" className={`workflow-run-row ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`} onClick={() => onSelectRun(run.pipelineId)}>
+                  <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
+                  <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
+                  <small>{run.updatedAt || run.startedAt}</small>
+                </button>
+              ))}
+              {!runs.length && <Empty text="当前 Workspace 还没有 Execution" />}
+            </div>
+          </section>
+        </aside>
+
         <section className="flow-panel workflow-dag-panel">
           <div className="panel-head">
             <div>
@@ -1222,21 +1268,6 @@ function WorkflowWorkspace({
           </div>
         </aside>
       </div>
-
-      <section className="timeline-panel workflow-timeline-panel">
-        <div className="panel-head compact"><strong>Execution Timeline</strong><span>点击 Stage 查看详情 · Info 查看节点配置</span></div>
-        <div className="timeline">
-          {(dag?.nodes || []).map((stage) => {
-            const state = selectedRun?.nodes[stage.id] || "waiting";
-            return (
-              <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => onSelectNode(stage.id)}>
-                <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
-              </button>
-            );
-          })}
-          {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
-        </div>
-      </section>
     </section>
   );
 }
@@ -1905,6 +1936,77 @@ function NodeDraftDrawer({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+function NodeConfigDrawer({
+  nodeId,
+  node,
+  loading,
+  error,
+  onClose,
+}: {
+  nodeId: string;
+  node: NodeConfig | undefined;
+  loading: boolean;
+  error: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="drawer-backdrop" role="presentation">
+      <aside className="side-drawer node-config-drawer" aria-label="Node configuration">
+        <div className="drawer-head">
+          <div>
+            <h2>{node?.title || nodeId || "节点配置"}</h2>
+            <span>{node?.mode || "Node Definition"}</span>
+          </div>
+          <button type="button" className="icon-btn" title="关闭节点配置" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="drawer-body">
+          {loading ? <Skeleton /> : error ? <div className="inline-error">{error}</div> : !node ? <Empty text="节点配置加载失败" /> : (
+            <>
+              <DetailBlock title="Executor">
+                <KeyValues data={Object.fromEntries(Object.entries(node.executor || {}).filter(([, value]) => value))} />
+                {node.skillScript && <div className="kv"><div className="kv-row"><span>script</span><code title={node.skillScript}>{node.skillScript}</code></div></div>}
+              </DetailBlock>
+              {(node.needs?.length ?? 0) > 0 && (
+                <DetailBlock title="Depends On">
+                  <div className="needs-list">{node.needs!.map((item) => <span key={item} className="needs-chip">{item}</span>)}</div>
+                </DetailBlock>
+              )}
+              <DetailBlock title="Input Contract">
+                <KeyValues data={node.inputs || {}} />
+              </DetailBlock>
+              <DetailBlock title="Output Contract">
+                <KeyValues data={node.outputs || {}} />
+              </DetailBlock>
+              {node.optionalInputs && Object.keys(node.optionalInputs).length > 0 && (
+                <DetailBlock title="Optional Inputs">
+                  <KeyValues data={node.optionalInputs} />
+                </DetailBlock>
+              )}
+              <DetailBlock title="Capabilities">
+                <div className="capabilities-grid">
+                  <CapabilityRow label="TG Notify" enabled={node.infra?.tgNotify !== false} />
+                  <CapabilityRow label="Log Record" enabled={node.infra?.logRecord !== false} />
+                </div>
+              </DetailBlock>
+              {node.params && Object.keys(node.params).length > 0 && (
+                <DetailBlock title="Params"><KeyValues data={node.params} /></DetailBlock>
+              )}
+              {node.skillReadme && (
+                <DetailBlock title="Skill README">
+                  <pre className="log-box">{node.skillReadme}</pre>
+                </DetailBlock>
+              )}
+              {node.manifest && Object.keys(node.manifest).length > 0 && (
+                <DetailBlock title="Node Manifest"><KeyValues data={node.manifest} /></DetailBlock>
+              )}
+            </>
+          )}
+        </div>
+      </aside>
     </div>
   );
 }
