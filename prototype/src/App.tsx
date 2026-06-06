@@ -538,6 +538,7 @@ export default function App() {
     const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instance.instanceId)}/runs/${encodeURIComponent(selectedRun.pipelineId)}/events/stream`;
     const stream = new EventSource(url);
     let fallbackTimer = 0;
+    let inFallback = false;
     const refreshFromEvent = (event: MessageEvent) => {
       setStreamStatus("live");
       setRunOverlays((items) => applyStreamEvent(items, selectedRun.pipelineId, event.type, event.data, dag));
@@ -553,11 +554,15 @@ export default function App() {
     stream.onopen = () => {
       window.clearTimeout(fallbackTimer);
       fallbackTimer = 0;
+      inFallback = false;
       setStreamStatus("live");
     };
     stream.onerror = () => {
-      setStreamStatus("reconnecting");
-      if (!fallbackTimer) fallbackTimer = window.setTimeout(() => setStreamStatus("polling fallback"), 5000);
+      if (!inFallback) setStreamStatus("reconnecting");
+      if (!fallbackTimer) fallbackTimer = window.setTimeout(() => {
+        inFallback = true;
+        setStreamStatus("polling fallback");
+      }, 5000);
     };
     return () => {
       window.clearTimeout(fallbackTimer);
