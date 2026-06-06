@@ -28,6 +28,10 @@ export interface DagNode {
   inputs: Record<string, string>;
   outputs: Record<string, string>;
   optionalInputs: Record<string, string>;
+  needs?: string[];
+  executor?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
+  ui?: NodeUi;
 }
 
 export interface DagEdge {
@@ -50,6 +54,28 @@ export interface Run {
   nodes: Record<string, StageStatus>;
   startedAt: string;
   updatedAt: string;
+  nodeCount?: number;
+  doneCount?: number;
+  failedCount?: number;
+  runningNode?: string;
+  progress?: number;
+  artifactCount?: number;
+  gitEventCount?: number;
+  telegramEventCount?: number;
+  pageCount?: number;
+  durationS?: number;
+  nodeStates?: Record<string, RunNodeState>;
+}
+
+export interface RunNodeState {
+  status: StageStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  durationS?: number;
+  attempt?: number;
+  progress?: number;
+  artifactCount?: number;
+  error?: string;
 }
 
 export interface NodeDetail {
@@ -102,14 +128,26 @@ export interface NodeValidation {
 }
 
 export interface NodeEvent {
+  sequence?: number;
   ts: string;
   event: string;
   stage?: string;
+  nodeId?: string;
+  runId?: string;
   trigger?: string;
   ok?: boolean;
   error?: string;
   duration_s?: number;
   reason?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface NodeUi {
+  category?: "input" | "research" | "build" | "notify" | "custom" | string;
+  icon?: string;
+  stageLetter?: string;
+  order?: number;
+  colorRole?: string;
 }
 
 export interface NodeLog {
@@ -145,6 +183,7 @@ export interface NodeRegistryItem extends NodeConfig {
   editable?: boolean;
   publishEnabled?: boolean;
   missingFields?: string[];
+  ui?: NodeUi;
 }
 
 export interface NodeDraftInput {
@@ -182,8 +221,12 @@ export interface SopDataProvider {
   listRuntimes(): Promise<Runtime[]>;
   listInstances(runtime: Runtime): Promise<Instance[]>;
   getDag(runtime: Runtime, instanceId: string): Promise<Dag>;
+  getRunDag(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Dag>;
   listRuns(runtime: Runtime, instanceId: string): Promise<Run[]>;
   getRun(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Run>;
+  getRunEvents(runtime: Runtime, instanceId: string, pipelineId: string): Promise<NodeEvent[]>;
+  getRunArtifacts(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Artifact[]>;
+  getRunArtifactCandidates(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Artifact[]>;
   getNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeDetail>;
   getNodeLog(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeLog>;
   getNodeConfig(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeConfig>;

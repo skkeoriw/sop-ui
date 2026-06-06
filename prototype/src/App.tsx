@@ -48,7 +48,7 @@ import type {
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
 type AppView = "overview" | "runs" | "workflow" | "nodes" | "artifacts" | "settings";
-type AppRoute = { view: AppView; nodeId: string };
+type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string };
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -61,17 +61,21 @@ const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "
 
 function readRoute(): AppRoute {
   const parts = window.location.pathname.split("/").filter(Boolean);
-  if (parts[0] === "overview") return { view: "overview", nodeId: "" };
-  if (parts[0] === "runs") return { view: "runs", nodeId: "" };
-  if (parts[0] === "workflow") return { view: "workflow", nodeId: "" };
-  if (parts[0] === "nodes") return { view: "nodes", nodeId: decodeURIComponent(parts[1] || "") };
-  if (parts[0] === "artifacts") return { view: "artifacts", nodeId: "" };
-  if (parts[0] === "settings") return { view: "settings", nodeId: "" };
-  return { view: "overview", nodeId: "" };
+  const empty = { nodeId: "", pipelineId: "", artifactId: "" };
+  if (parts[0] === "overview") return { view: "overview", ...empty };
+  if (parts[0] === "runs") return { view: "runs", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
+  if (parts[0] === "workflow") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
+  if (parts[0] === "nodes") return { view: "nodes", ...empty, nodeId: decodeURIComponent(parts[1] || "") };
+  if (parts[0] === "artifacts") return { view: "artifacts", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), artifactId: decodeURIComponent(parts[2] || "") };
+  if (parts[0] === "settings") return { view: "settings", ...empty };
+  return { view: "overview", ...empty };
 }
 
-function routePath(view: AppView, nodeId = "") {
-  if (view === "nodes") return nodeId ? `/nodes/${encodeURIComponent(nodeId)}` : "/nodes";
+function routePath(view: AppView, entityId = "", secondaryId = "") {
+  if (view === "nodes") return entityId ? `/nodes/${encodeURIComponent(entityId)}` : "/nodes";
+  if (view === "runs") return entityId ? `/runs/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/runs";
+  if (view === "workflow") return entityId ? `/workflow/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/workflow";
+  if (view === "artifacts") return entityId ? `/artifacts/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/artifacts";
   return `/${view}`;
 }
 
@@ -161,8 +165,13 @@ const StageNode = memo(({ data }: NodeProps<Node<StageNodeData>>) => {
           <span className={`status-pill ${status}`}>{statusIcon(status)}{statusLabel(status)}</span>
           <span className="node-mode">{stage.mode}</span>
         </div>
-        <strong>{stage.title}</strong>
-        <span>{stage.summary || stage.id}</span>
+        <div className="flow-node-title"><span className="stage-letter">{stage.ui?.stageLetter || stage.id.slice(0, 1).toUpperCase()}</span><strong>{stage.title}</strong></div>
+        <span>{String(stage.executor?.type || stage.mode)} · {stage.id}</span>
+        <div className="flow-capabilities" aria-label="Node capabilities">
+          <span className={capabilityEnabled(stage.capabilities?.git) ? "on" : ""}>Git</span>
+          <span className={capabilityEnabled(stage.capabilities?.telegram) ? "on" : ""}>TG</span>
+          <span className={capabilityEnabled(stage.capabilities?.sse) ? "on" : ""}>SSE</span>
+        </div>
         <div className="node-progress">
           <i style={{ width: status === "done" ? "100%" : status === "running" ? "62%" : status === "failed" ? "100%" : "0%" }} />
         </div>
@@ -256,7 +265,29 @@ export default function App() {
     refetchInterval: (query) => (query.state.data?.status === "running" && streamStatus !== "live" ? 15000 : false)
   });
   const selectedRun = runQuery.data || selectedRunSummary;
-  const dag = dagQuery.data;
+  const runDagQuery = useQuery({
+    queryKey: queryKeys.runDag(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
+    queryFn: () => provider.getRunDag(runtime, instance.instanceId, selectedRun.pipelineId),
+    enabled: Boolean(runtime && instance && selectedRun),
+    retry: false,
+  });
+  const runEventsQuery = useQuery({
+    queryKey: queryKeys.runEvents(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
+    queryFn: () => provider.getRunEvents(runtime, instance.instanceId, selectedRun.pipelineId),
+    enabled: Boolean(runtime && instance && selectedRun),
+    refetchInterval: selectedRun?.status === "running" && streamStatus !== "live" ? 15000 : false,
+  });
+  const runArtifactsQuery = useQuery({
+    queryKey: queryKeys.runArtifacts(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
+    queryFn: () => provider.getRunArtifacts(runtime, instance.instanceId, selectedRun.pipelineId),
+    enabled: Boolean(runtime && instance && selectedRun),
+  });
+  const runArtifactCandidatesQuery = useQuery({
+    queryKey: queryKeys.runArtifactCandidates(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
+    queryFn: () => provider.getRunArtifactCandidates(runtime, instance.instanceId, selectedRun.pipelineId),
+    enabled: Boolean(runtime && instance && selectedRun && viewMode === "artifacts"),
+  });
+  const dag = runDagQuery.data || dagQuery.data;
   const selectedStage = dag?.nodes.find((stage) => stage.id === selectedStageId) || dag?.nodes[0];
   const selectedStageKey = selectedStage?.id || "";
   const selectedStatus = selectedStage ? selectedRun?.nodes[selectedStage.id] || "waiting" : "waiting";
@@ -269,7 +300,7 @@ export default function App() {
   const logQuery = useQuery({
     queryKey: queryKeys.log(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || "", selectedStageKey),
     queryFn: () => provider.getNodeLog(runtime, instance.instanceId, selectedRun.pipelineId, selectedStageKey),
-    enabled: Boolean(runtime && instance && selectedRun && selectedStage && inspectorTab === "logs")
+    enabled: Boolean(runtime && instance && selectedRun && selectedStage && (inspectorTab === "logs" || viewMode === "runs"))
   });
   const nodeConfigQuery = useQuery({
     queryKey: queryKeys.nodeConfig(mode, runtime, instance?.instanceId || "", nodeConfigId),
@@ -290,15 +321,15 @@ export default function App() {
   const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
   const nodeFilters = useMemo(() => {
     const values = new Set<string>();
-    managedNodes.forEach((node) => values.add(String(node.case || node.executor?.type || node.mode || "node")));
-    return ["all", ...Array.from(values).sort()];
+    managedNodes.forEach((node) => values.add(String(node.ui?.category || "custom")));
+    return ["all", ...["input", "research", "build", "notify", "custom"].filter((value) => values.has(value))];
   }, [managedNodes]);
   const visibleManagedNodes = useMemo(() => {
     const query = nodeSearch.trim().toLowerCase();
     return managedNodes.filter((node) => {
-      const type = String(node.case || node.executor?.type || node.mode || "node");
-      const searchable = [node.nodeId, node.title, node.description, type].filter(Boolean).join(" ").toLowerCase();
-      return (nodeFilter === "all" || nodeFilter === type) && (!query || searchable.includes(query));
+      const category = String(node.ui?.category || "custom");
+      const searchable = [node.nodeId, node.title, node.description, category, node.case, node.executor?.type].filter(Boolean).join(" ").toLowerCase();
+      return (nodeFilter === "all" || nodeFilter === category) && (!query || searchable.includes(query));
     });
   }, [managedNodes, nodeFilter, nodeSearch]);
 
@@ -362,7 +393,22 @@ export default function App() {
   useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
   useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
   useEffect(() => { if (runs.length && !runs.some((run) => run.pipelineId === selectedRunId)) setSelectedRunId(runs[0].pipelineId); }, [runs, selectedRunId]);
+  useEffect(() => {
+    if (route.pipelineId && runs.some((run) => run.pipelineId === route.pipelineId) && selectedRunId !== route.pipelineId) {
+      setSelectedRunId(route.pipelineId);
+    }
+  }, [route.pipelineId, runs, selectedRunId]);
   useEffect(() => { if (dag?.nodes.length && !dag.nodes.some((stage) => stage.id === selectedStageId)) setSelectedStageId(dag.nodes[0].id); }, [dag, selectedStageId]);
+  useEffect(() => {
+    if (viewMode === "runs" && selectedRun?.runningNode && !route.nodeId) {
+      setSelectedStageId(selectedRun.runningNode);
+    }
+  }, [route.nodeId, selectedRun?.pipelineId, selectedRun?.runningNode, viewMode]);
+  useEffect(() => {
+    if (route.nodeId && dag?.nodes.some((stage) => stage.id === route.nodeId) && selectedStageId !== route.nodeId) {
+      setSelectedStageId(route.nodeId);
+    }
+  }, [dag, route.nodeId, selectedStageId]);
   useEffect(() => { setInstanceId(""); setSelectedRunId(""); setSelectedStageId(""); }, [runtimeId]);
   useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); }, [instanceId]);
   useEffect(() => { setSelectedManagedNodeId(""); }, [runtimeId, instanceId]);
@@ -429,7 +475,7 @@ export default function App() {
     const searchable = [run.pipelineId, run.sourceUrl, run.repo, run.status].filter(Boolean).join(" ").toLowerCase();
     return matchedStatus && (!query || searchable.includes(query));
   });
-  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error, nodesQuery.error, nodeDraftsQuery.error].find(Boolean);
+  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error, nodesQuery.error, nodeDraftsQuery.error, runEventsQuery.error, runArtifactsQuery.error].find(Boolean);
   const completedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "done").length : 0;
   const failedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "failed").length : 0;
   const artifactCount = (nodeQuery.data?.artifacts || []).length;
@@ -442,11 +488,16 @@ export default function App() {
     setRuntimeId(""); setInstanceId(""); setSelectedRunId(""); setSelectedStageId("");
   }
 
-  function navigateTo(view: AppView, nodeId = "") {
-    const nextPath = routePath(view, nodeId);
+  function navigateTo(view: AppView, entityId = "", secondaryId = "") {
+    const nextPath = routePath(view, entityId, secondaryId);
     const nextUrl = `${nextPath}${window.location.search}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-    setRoute({ view, nodeId });
+    setRoute({
+      view,
+      nodeId: view === "nodes" ? entityId : view === "workflow" || view === "runs" ? secondaryId : "",
+      pipelineId: view === "runs" || view === "workflow" || view === "artifacts" ? entityId : "",
+      artifactId: view === "artifacts" ? secondaryId : "",
+    });
   }
 
   function selectManagedNode(nodeId: string) {
@@ -507,16 +558,16 @@ export default function App() {
           <button type="button" className={viewMode === "overview" ? "active" : ""} onClick={() => navigateTo("overview")}>
             <LayoutDashboard size={17} /><span>Overview</span><small>{runs.filter((run) => run.status === "running").length ? "live" : "ops"}</small>
           </button>
-          <button type="button" className={viewMode === "runs" ? "active" : ""} onClick={() => navigateTo("runs")}>
+          <button type="button" className={viewMode === "runs" ? "active" : ""} onClick={() => navigateTo("runs", selectedRun?.pipelineId || "")}>
             <ListChecks size={17} /><span>Runs</span><small>{runs.length || "-"} runs</small>
           </button>
-          <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>
+          <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow", selectedRun?.pipelineId || "", selectedStage?.id || "")}>
             <Network size={17} /><span>Workflow</span><small>DAG</small>
           </button>
           <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
             <Boxes size={17} /><span>Nodes</span><small>{managedNodes.length || "-"} assets</small>
           </button>
-          <button type="button" className={viewMode === "artifacts" ? "active" : ""} onClick={() => navigateTo("artifacts")}>
+          <button type="button" className={viewMode === "artifacts" ? "active" : ""} onClick={() => navigateTo("artifacts", selectedRun?.pipelineId || "")}>
             <PackageSearch size={17} /><span>Artifacts</span><small>{artifactCount || "-"} scoped</small>
           </button>
           <button type="button" className={viewMode === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
@@ -598,7 +649,7 @@ export default function App() {
             </label>
           </div>
           {visibleExecutions.map((run) => (
-            <button key={run.pipelineId} type="button" className={`run-card ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`} onClick={() => setSelectedRunId(run.pipelineId)}>
+            <button key={run.pipelineId} type="button" className={`run-card ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`} onClick={() => { setSelectedRunId(run.pipelineId); navigateTo("workflow", run.pipelineId, selectedStage?.id || ""); }}>
               <div className="row"><strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong><span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span></div>
               <span>{run.updatedAt || run.startedAt}</span><span>{run.sourceUrl || run.repo}</span>
             </button>
@@ -619,16 +670,17 @@ export default function App() {
             selectedStage={selectedStage}
             nodesReadyCount={nodesReadyCount}
             managedNodes={managedNodes}
-            artifactCount={artifactCount}
+            runEvents={runEventsQuery.data || []}
+            artifactCount={selectedRun?.artifactCount ?? runArtifactsQuery.data?.length ?? artifactCount}
             streamStatus={streamStatus}
             onOpenRun={(pipelineId) => {
               if (pipelineId) setSelectedRunId(pipelineId);
-              navigateTo("runs");
+              navigateTo("runs", pipelineId || selectedRun?.pipelineId || "");
             }}
-            onOpenWorkflow={() => navigateTo("workflow")}
+            onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || "", selectedStage?.id || "")}
             onOpenNode={(nodeId) => {
               openNodeConfig(nodeId);
-              navigateTo("workflow");
+              navigateTo("workflow", selectedRun?.pipelineId || "", nodeId);
             }}
           />
         ) : viewMode === "runs" ? (
@@ -640,8 +692,12 @@ export default function App() {
             dag={dag}
             nodeDetail={nodeQuery.data}
             nodeLog={logQuery.data}
+            runEvents={runEventsQuery.data || []}
+            runArtifacts={runArtifactsQuery.data || []}
             streamStatus={streamStatus}
-            onSelectRun={setSelectedRunId}
+            onSelectRun={(pipelineId) => { setSelectedRunId(pipelineId); navigateTo("runs", pipelineId); }}
+            onSelectNode={(nodeId) => { setSelectedStageId(nodeId); navigateTo("runs", selectedRun?.pipelineId || "", nodeId); }}
+            onOpenWorkflow={(nodeId) => navigateTo("workflow", selectedRun?.pipelineId || "", nodeId)}
             onCancelRun={handleCancelRun}
             onRetryNode={handleRetry}
             onCancelNode={handleCancelNode}
@@ -689,7 +745,7 @@ export default function App() {
               </div>
               <div className="flow-wrap">
                 {dagQuery.isLoading ? <Skeleton /> : dag?.nodes.length ? (
-                  <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: .18 }} minZoom={.35} maxZoom={1.7} nodesDraggable onNodeClick={(_, node) => setSelectedStageId(node.id)} defaultEdgeOptions={{ className: "flow-edge" }}>
+                  <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: .18 }} minZoom={.35} maxZoom={1.7} nodesDraggable onNodeClick={(_, node) => { setSelectedStageId(node.id); navigateTo("workflow", selectedRun?.pipelineId || "", node.id); }} defaultEdgeOptions={{ className: "flow-edge" }}>
                     <Background color="#dfe4ec" gap={24} /><Controls showInteractive={false} /><MiniMap nodeStrokeWidth={3} zoomable pannable />
                   </ReactFlow>
                 ) : <Empty text="选择 Runtime 和 Instance 后加载 DAG" />}
@@ -702,7 +758,7 @@ export default function App() {
                 {(dag?.nodes || []).map((stage) => {
                   const state = selectedRun?.nodes[stage.id] || "waiting";
                   return (
-                    <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => setSelectedStageId(stage.id)}>
+                    <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => { setSelectedStageId(stage.id); navigateTo("workflow", selectedRun?.pipelineId || "", stage.id); }}>
                       <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
                     </button>
                   );
@@ -729,7 +785,15 @@ export default function App() {
             onOpenDraft={() => setDraftOpen(true)}
           />
         ) : viewMode === "artifacts" ? (
-          <ArtifactsPage selectedRun={selectedRun} selectedStage={selectedStage} nodeDetail={nodeQuery.data} />
+          <ArtifactsPage
+            selectedRun={selectedRun}
+            selectedStage={selectedStage}
+            recorded={runArtifactsQuery.data || []}
+            candidates={runArtifactCandidatesQuery.data || []}
+            selectedArtifactId={route.artifactId}
+            onSelectArtifact={(artifactId) => navigateTo("artifacts", selectedRun?.pipelineId || "", artifactId)}
+            onOpenProducer={(nodeId) => navigateTo("workflow", selectedRun?.pipelineId || "", nodeId)}
+          />
         ) : (
           <SettingsPage
             mode={mode}
@@ -1032,6 +1096,7 @@ function OverviewPage({
   selectedStage,
   nodesReadyCount,
   managedNodes,
+  runEvents,
   artifactCount,
   streamStatus,
   onOpenRun,
@@ -1047,6 +1112,7 @@ function OverviewPage({
   selectedStage: DagNode | undefined;
   nodesReadyCount: number;
   managedNodes: NodeRegistryItem[];
+  runEvents: NodeEvent[];
   artifactCount: number;
   streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
   onOpenRun: (pipelineId?: string) => void;
@@ -1059,6 +1125,7 @@ function OverviewPage({
     const score = (run: Run) => run.status === "running" ? 0 : run.status === "failed" ? 1 : 2;
     return score(a) - score(b) || b.updatedAt.localeCompare(a.updatedAt);
   }).slice(0, 4);
+  const selectedNodeDefinition = managedNodes.find((node) => node.nodeId === selectedStage?.id);
   return (
     <>
       <section className="concept-hero">
@@ -1116,7 +1183,16 @@ function OverviewPage({
             }} />
           </DetailBlock>
           <DetailBlock title="Attached capabilities">
-            <div className="cap-mini"><span className="on">GitHub persisted</span><span> TG</span><span className="on">SSE</span></div>
+            {selectedNodeDefinition ? <CapabilityMini node={selectedNodeDefinition} /> : <div className="cap-mini"><span className="on">GitHub</span><span>TG</span><span className="on">SSE</span></div>}
+          </DetailBlock>
+          <DetailBlock title="Recent events">
+            <div className="event-list">
+              {runEvents.slice(-3).reverse().map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
+              {!runEvents.length && <Empty text="当前 Run 暂无事件" />}
+            </div>
+          </DetailBlock>
+          <DetailBlock title="CLI">
+            <code className="overview-cli">{selectedNodeDefinition?.cli?.inspect || "选择节点后显示 inspect CLI"}</code>
           </DetailBlock>
           <DetailBlock title="Actions">
             <div className="action-row"><button type="button" onClick={onOpenWorkflow}>Inspect</button><button type="button" onClick={() => onOpenRun()}>Runs</button></div>
@@ -1135,8 +1211,12 @@ function RunsPage({
   dag,
   nodeDetail,
   nodeLog,
+  runEvents,
+  runArtifacts,
   streamStatus,
   onSelectRun,
+  onSelectNode,
+  onOpenWorkflow,
   onCancelRun,
   onRetryNode,
   onCancelNode,
@@ -1151,8 +1231,12 @@ function RunsPage({
   dag: Dag | undefined;
   nodeDetail: NodeDetail | undefined;
   nodeLog: NodeLog | undefined;
+  runEvents: NodeEvent[];
+  runArtifacts: Artifact[];
   streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
   onSelectRun: (pipelineId: string) => void;
+  onSelectNode: (nodeId: string) => void;
+  onOpenWorkflow: (nodeId: string) => void;
   onCancelRun: () => void;
   onRetryNode: () => void;
   onCancelNode: () => void;
@@ -1163,8 +1247,8 @@ function RunsPage({
   const doneCount = selectedRun ? Object.values(selectedRun.nodes).filter((state) => state === "done").length : 0;
   const totalCount = dag?.nodes.length || 0;
   const progress = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
-  const gitEvents = (nodeLog?.events || []).filter((event) => event.event.includes("git"));
-  const tgEvents = (nodeLog?.events || []).filter((event) => event.event.startsWith("tg_notify") || event.event.includes("telegram"));
+  const gitEvents = runEvents.filter((event) => event.event.startsWith("git."));
+  const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram."));
   return (
     <>
       <section className="concept-hero">
@@ -1180,10 +1264,12 @@ function RunsPage({
         </div>
       </section>
       <section className="console-metrics">
-        <Metric label="Pipeline" value={`${progress}%`} subtext={`${doneCount}/${totalCount} stages done`} />
-        <Metric label="Git commits" value={gitEvents.length} subtext="run scoped" />
-        <Metric label="TG events" value={tgEvents.length} subtext="sent / skipped / failed" />
-        <Metric label="Artifacts" value={nodeDetail?.artifacts.length || 0} subtext="recorded node output" />
+        <Metric label="Pipeline" value={`${selectedRun?.progress ?? progress}%`} subtext={`${selectedRun?.doneCount ?? doneCount}/${selectedRun?.nodeCount ?? totalCount} stages done`} />
+        <Metric label="Git commits" value={selectedRun?.gitEventCount ?? gitEvents.length} subtext="run scoped" />
+        <Metric label="TG events" value={selectedRun?.telegramEventCount ?? tgEvents.length} subtext="sent / skipped / failed" />
+        <Metric label="Pages" value={selectedRun?.pageCount || "-"} subtext="30-40 target" />
+        <Metric label="Duration" value={formatDuration(selectedRun?.durationS || 0)} subtext="whole run" />
+        <Metric label="Artifacts" value={selectedRun?.artifactCount ?? runArtifacts.length} subtext="recorded outputs" />
       </section>
       <section className="run-observatory">
         <aside className="runs-table-panel">
@@ -1195,16 +1281,23 @@ function RunsPage({
           <div className="run-stage-list">
             {(dag?.nodes || []).map((stage) => {
               const state = selectedRun?.nodes[stage.id] || "waiting";
-              return <div key={stage.id} className={`run-stage-row ${state}`}><span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span></div>;
+              const stateDetail = selectedRun?.nodeStates?.[stage.id];
+              return (
+                <button key={stage.id} type="button" className={`run-stage-row ${state} ${selectedStage?.id === stage.id ? "active" : ""}`} onClick={() => onSelectNode(stage.id)}>
+                  <span className={`dot ${state}`} />
+                  <span><strong>{stage.title}</strong><small>{stage.ui?.stageLetter || stage.mode} · {String(stage.executor?.type || "executor")} · {formatDuration(stateDetail?.durationS || 0)} · {stateDetail?.artifactCount || 0} artifacts</small>{stateDetail?.error && <small className="error-text">{stateDetail.error}</small>}</span>
+                  <span><span className={`status-pill ${state}`}>{statusLabel(state)}</span><small>{stateDetail?.attempt ? `attempt ${stateDetail.attempt}` : "not started"}</small></span>
+                </button>
+              );
             })}
             {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
           </div>
           <DetailBlock title="Artifacts">
-            <ArtifactList artifacts={nodeDetail?.artifacts || []} />
+            <ArtifactList artifacts={runArtifacts} />
           </DetailBlock>
         </section>
         <aside className="run-command-panel">
-          <div className="panel-head compact"><div><strong>Run command center</strong><span>{selectedRun?.pipelineId || "-"}</span></div><span className={`status-pill ${selectedStatus}`}>{statusLabel(selectedStatus)}</span></div>
+          <div className="panel-head compact"><div><strong>Run command center</strong><span>{selectedRun?.pipelineId || "-"}</span></div><span className={`status-pill ${selectedRun?.status || "waiting"}`}>{statusLabel(selectedRun?.status || "waiting")}</span></div>
           <DetailBlock title="Current node">
             <KeyValues data={{
               node: selectedStage?.id || "-",
@@ -1220,14 +1313,20 @@ function RunsPage({
               <button type="button" disabled={selectedStatus !== "running" || cancelNodePending} onClick={onCancelNode}>Cancel Node</button>
             </div>
           </DetailBlock>
+          <DetailBlock title="Navigate">
+            <button type="button" className="wide" disabled={!selectedStage} onClick={() => selectedStage && onOpenWorkflow(selectedStage.id)}>Open in Workflow</button>
+          </DetailBlock>
           <DetailBlock title="Git / TG">
             <div className="event-list">
-              {(nodeLog?.events || []).slice(0, 6).map((event, index) => <EventRow key={index} event={event} />)}
-              {!(nodeLog?.events || []).length && <Empty text="该节点暂无事件记录" />}
+              {runEvents.filter((event) => event.event.startsWith("git.") || event.event.startsWith("telegram.")).slice(-8).reverse().map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
+              {!gitEvents.length && !tgEvents.length && <Empty text="当前 Run 暂无 Git / TG 事件" />}
             </div>
           </DetailBlock>
           <DetailBlock title="Node output">
             <KeyValues data={nodeDetail?.actualOutputs || {}} />
+          </DetailBlock>
+          <DetailBlock title="Latest log">
+            <pre className="log-box compact-log">{nodeLog?.log || "该节点暂无日志"}</pre>
           </DetailBlock>
         </aside>
       </section>
@@ -1256,14 +1355,21 @@ function RunTable({ runs, selectedRunId, onSelect }: { runs: Run[]; selectedRunI
 function ArtifactsPage({
   selectedRun,
   selectedStage,
-  nodeDetail,
+  recorded,
+  candidates,
+  selectedArtifactId,
+  onSelectArtifact,
+  onOpenProducer,
 }: {
   selectedRun: Run | undefined;
   selectedStage: DagNode | undefined;
-  nodeDetail: NodeDetail | undefined;
+  recorded: Artifact[];
+  candidates: Artifact[];
+  selectedArtifactId: string;
+  onSelectArtifact: (artifactId: string) => void;
+  onOpenProducer: (nodeId: string) => void;
 }) {
-  const recorded = nodeDetail?.artifacts || [];
-  const candidates = nodeDetail?.discoveredCandidates || [];
+  const selectedArtifact = [...recorded, ...candidates].find((artifact) => artifact.id === selectedArtifactId) || recorded[0] || candidates[0];
   return (
     <>
       <section className="concept-hero">
@@ -1274,28 +1380,55 @@ function ArtifactsPage({
         </div>
         <div className="context-card">
           <strong>{selectedRun?.pipelineId || "No selected run"}</strong>
-          <span>{selectedStage?.title || "Selected node"} · {recorded.length} recorded</span>
+          <span>{selectedArtifact?.producer || selectedStage?.title || "Selected node"} · {recorded.length} recorded</span>
           <code>{selectedRun?.repo || "-"}</code>
         </div>
       </section>
       <section className="console-metrics">
         <Metric label="Recorded" value={recorded.length} subtext="current run only" />
         <Metric label="Unverified" value={candidates.length} subtext="not downstream input" />
-        <Metric label="Producer" value={selectedStage?.id || "-"} subtext="selected node" />
-        <Metric label="Resolution" value={recorded[0]?.resolution || "-"} subtext="artifact ownership" />
+        <Metric label="Producer" value={selectedArtifact?.producer || selectedStage?.id || "-"} subtext="selected artifact" />
+        <Metric label="Resolution" value={selectedArtifact?.resolution || "-"} subtext="artifact ownership" />
       </section>
       <section className="artifacts-layout">
         <div className="flow-panel">
           <div className="panel-head"><div><strong>Recorded Artifacts</strong><span>作为当前 Run 的实际产物展示</span></div></div>
-          <div className="panel-body"><ArtifactList artifacts={recorded} /></div>
+          <div className="panel-body artifact-browser-list">
+            {recorded.map((artifact) => (
+              <button key={artifact.id} type="button" className={selectedArtifact?.id === artifact.id ? "active" : ""} onClick={() => onSelectArtifact(artifact.id)}>
+                <PackageSearch size={16} /><span><strong>{artifact.title}</strong><small>{artifact.producer} · {artifact.format} · {formatBytes(artifact.size)}</small></span><span className="status-pill done">recorded</span>
+              </button>
+            ))}
+            {!recorded.length && <Empty text="当前 Run 没有确认产物" />}
+          </div>
         </div>
         <div className="flow-panel">
           <div className="panel-head"><div><strong>Unverified Candidates</strong><span>不会作为下游输入</span></div></div>
           <div className="panel-body">
             <p className="candidate-warning">这些文件来自共享路径扫描，无法确认属于当前 Run。页面需要显示，但下游节点不能依赖它们。</p>
-            <ArtifactList artifacts={candidates} />
+            <div className="artifact-browser-list">
+              {candidates.map((artifact) => (
+                <button key={artifact.id} type="button" className={selectedArtifact?.id === artifact.id ? "active" : ""} onClick={() => onSelectArtifact(artifact.id)}>
+                  <AlertTriangle size={16} /><span><strong>{artifact.title}</strong><small>{artifact.path}</small></span><span className="status-pill waiting">unverified</span>
+                </button>
+              ))}
+              {!candidates.length && <Empty text="没有未确认候选文件" />}
+            </div>
           </div>
         </div>
+        <aside className="artifact-preview-panel">
+          <div className="panel-head"><div><strong>Artifact Preview</strong><span>{selectedArtifact?.path || "选择一个产物"}</span></div></div>
+          {selectedArtifact ? (
+            <div className="artifact-preview-body">
+              <div className="artifact-preview-meta">
+                <span className={`status-pill ${selectedArtifact.ownership === "unconfirmed" ? "waiting" : "done"}`}>{selectedArtifact.ownership === "unconfirmed" ? "unverified" : "recorded"}</span>
+                <button type="button" onClick={() => onOpenProducer(selectedArtifact.producer)}>Open producer</button>
+              </div>
+              <KeyValues data={{ producer: selectedArtifact.producer, output: selectedArtifact.output, type: selectedArtifact.type, format: selectedArtifact.format, size: formatBytes(selectedArtifact.size), resolution: selectedArtifact.resolution }} />
+              <pre className="artifact-preview-content">{selectedArtifact.preview || "当前产物没有文本预览。"}</pre>
+            </div>
+          ) : <Empty text="选择一个产物查看预览" />}
+        </aside>
       </section>
     </>
   );
@@ -1443,45 +1576,55 @@ function NodesWorkspace({
         <Metric label="Publish" value="off" subtext="draft only" />
       </section>
 
-      <section className="node-workbench">
-        <aside className="node-list-panel">
-          <div className="panel-head compact">
-            <div>
-              <strong>Node Registry</strong>
-              <span>资产选择器 · {runtime?.name || "runtime"}</span>
-            </div>
-            <span className="status-pill waiting">{visibleNodes.length}/{nodes.length}</span>
+      <section className="node-lifecycle-panel">
+        <div className="panel-head lifecycle-head">
+          <div><strong>Node lifecycle lanes</strong><span>按输入、研究、构建和通知组织节点资产</span></div>
+          <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Create Node</button>
+        </div>
+        <div className="lifecycle-tools">
+          <div className="lifecycle-tabs" role="tablist" aria-label="Node category">
+            {nodeFilters.map((filter) => <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>{filter === "all" ? "All" : categoryLabel(filter)}</button>)}
           </div>
-          <div className="node-list-tools">
-            <label className="search-box">
-              <Search size={14} />
-              <input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node" />
-            </label>
-            <label className="filter-box">
-              <SlidersHorizontal size={14} />
-              <select value={nodeFilter} onChange={(event) => onNodeFilter(event.target.value)}>
-                {nodeFilters.map((filter) => <option key={filter} value={filter}>{filter === "all" ? "All types" : filter}</option>)}
-              </select>
-            </label>
-          </div>
-          {loading ? <Skeleton /> : visibleNodes.length ? (
-            <div className="node-picker-list">
-              {visibleNodes.map((node) => (
-                <button key={node.nodeId} type="button" className={`node-picker-row ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
-                  <div>
-                    <strong>{node.title || node.nodeId}</strong>
-                    <span>{node.nodeId}</span>
+          <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node" /></label>
+        </div>
+        {loading ? <Skeleton /> : (
+          <div className="lifecycle-lanes">
+            {["input", "research", "build", "notify", "custom"].map((category) => {
+              const laneNodes = visibleNodes.filter((node) => String(node.ui?.category || "custom") === category);
+              const laneDrafts = category === "custom" ? drafts : [];
+              if (nodeFilter !== "all" && nodeFilter !== category) return null;
+              return (
+                <section key={category} className={`lifecycle-lane lane-${category}`}>
+                  <div className="lane-head"><span>{categoryLabel(category)}</span><small>{laneNodes.length + laneDrafts.length}</small></div>
+                  <div className="lane-node-list">
+                    {laneNodes.map((node) => (
+                      <button key={node.nodeId} type="button" className={`lifecycle-node ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
+                        <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+                        <span className="lifecycle-node-copy">
+                          <strong>{node.title || node.nodeId}</strong>
+                          <small>{node.nodeId}</small>
+                          <span>{contractSummary(node)}</span>
+                        </span>
+                        <span className="lifecycle-node-meta">
+                          <span className="node-type">{String(node.executor?.type || node.case || "node")}</span>
+                          <CapabilityMini node={node} />
+                        </span>
+                      </button>
+                    ))}
+                    {laneDrafts.map((draft) => {
+                      const draftNode = draft.node || {};
+                      return <article key={draft.draftId} className="lifecycle-node draft"><span className="stage-letter">+</span><span className="lifecycle-node-copy"><strong>{String(draftNode.title || draftNode.id || draft.draftId)}</strong><small>draft · not published</small><span>Validate before publish</span></span><span className="status-pill waiting">draft</span></article>;
+                    })}
+                    {!laneNodes.length && !laneDrafts.length && <div className="lane-empty">No {categoryLabel(category)} node</div>}
                   </div>
-                  <span className="node-type">{String(node.case || node.executor?.type || node.mode || "node")}</span>
-                  <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>
-                    {(node.missingFields || []).length ? `${node.missingFields?.length} missing` : "ready"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : <Empty text={nodes.length ? "没有匹配的 Node" : "当前 Workspace 没有返回 Node Registry"} />}
-        </aside>
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
+      <section className="node-detail-workspace">
         <NodeDetailPanel node={selectedNode} loading={loading} />
         <NodeAssistPanel node={selectedNode} drafts={drafts} runtime={runtime} instance={instance} onOpenDraft={onOpenDraft} />
       </section>
@@ -1782,6 +1925,23 @@ function CapabilityMini({ node }: { node: NodeRegistryItem }) {
   );
 }
 
+function categoryLabel(category: string) {
+  if (category === "input") return "Input";
+  if (category === "research") return "Research";
+  if (category === "build") return "Build";
+  if (category === "notify") return "Notify";
+  if (category === "custom") return "Custom";
+  return category;
+}
+
+function contractSummary(node: NodeRegistryItem) {
+  const inputs = Object.keys(node.inputs || {});
+  const outputs = Object.keys(node.outputs || {});
+  const left = inputs.slice(0, 2).join(", ") || "no input";
+  const right = outputs.slice(0, 2).join(", ") || "no output";
+  return `${left} → ${right}`;
+}
+
 function capabilityEnabled(value: unknown) {
   if (typeof value === "boolean") return value;
   if (typeof value === "object" && value) return (value as Record<string, unknown>).enabled !== false;
@@ -1808,7 +1968,7 @@ function buildFlowNodes(dag: Dag | undefined, run: Run | undefined, selectedStag
     return {
       id: stage.id,
       type: "stage",
-      position: { x: 40 + column * 300, y: 70 + row * 175 },
+      position: { x: 36 + column * 250, y: 58 + row * 158 },
       data: { stage, status: run?.nodes[stage.id] || "waiting", selected: selectedStageId === stage.id, onInfo }
     };
   });
@@ -1905,6 +2065,13 @@ function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(value: number) {
+  if (!value) return "-";
+  const minutes = Math.floor(value / 60);
+  const seconds = value % 60;
+  return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
 function LoadingOrEmpty({ loading, text }: { loading: boolean; text: string }) {

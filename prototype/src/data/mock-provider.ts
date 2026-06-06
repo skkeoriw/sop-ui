@@ -2,6 +2,7 @@ import { baseRuns, nodeLog, runtimes as mockRuntimes, stages, stageState } from 
 import type { RunMock } from "../mock";
 import type {
   Dag,
+  Artifact,
   Instance,
   NodeConfig,
   NodeDraft,
@@ -28,14 +29,52 @@ function instance(runtimeId: string): Instance {
 }
 
 function mapRun(run: RunMock): Run {
-  return { pipelineId: run.pipelineId, status: run.status, sourceUrl: run.sourceUrl, sourceType: "youtube", repo: "", nodes: stageState(run.profile, run.status), startedAt: run.startedAt, updatedAt: run.updatedAt };
+  const nodes = stageState(run.profile, run.status);
+  const doneCount = Object.values(nodes).filter((state) => state === "done").length;
+  const failedCount = Object.values(nodes).filter((state) => state === "failed").length;
+  return {
+    pipelineId: run.pipelineId, status: run.status, sourceUrl: run.sourceUrl, sourceType: "youtube", repo: "",
+    nodes, startedAt: run.startedAt, updatedAt: run.updatedAt,
+    nodeCount: Object.keys(nodes).length,
+    doneCount,
+    failedCount,
+    runningNode: Object.entries(nodes).find(([, state]) => state === "running")?.[0] || "",
+    progress: Math.round(doneCount * 100 / Object.keys(nodes).length),
+    artifactCount: run.profile === "done" ? 8 : 3,
+    gitEventCount: run.profile === "done" ? 4 : 2,
+    telegramEventCount: run.profile === "done" ? 7 : 3,
+    pageCount: run.profile === "done" ? 34 : run.profile === "wiki-running" ? 27 : 0,
+    durationS: run.profile === "done" ? 333 : 103,
+    nodeStates: Object.fromEntries(Object.entries(nodes).map(([nodeId, state], index) => [nodeId, {
+      status: state,
+      startedAt: state === "waiting" ? "" : `2026-06-05T15:${String(10 + index).padStart(2, "0")}:00Z`,
+      finishedAt: state === "done" ? `2026-06-05T15:${String(11 + index).padStart(2, "0")}:15Z` : "",
+      durationS: state === "done" ? 75 + index * 12 : state === "running" ? 42 : 0,
+      attempt: state === "waiting" ? 0 : 1,
+      progress: state === "done" ? 100 : state === "running" ? 72 : 0,
+      artifactCount: state === "done" ? index + 1 : 0,
+      error: state === "failed" ? "NotebookLM bridge timeout" : "",
+    }])),
+  };
 }
 
 function mockDag(runtimeId: string): Dag {
   const target = instance(runtimeId);
   return {
     instanceId: target.instanceId,
-    nodes: stages.map((stage) => ({ id: stage.id, title: stage.title, mode: stage.mode, summary: stage.summary, inputs: stage.inputs, outputs: stage.outputs, optionalInputs: {} })),
+    nodes: stages.map((stage, index) => ({
+      id: stage.id, title: stage.title, mode: stage.mode, summary: stage.summary, inputs: stage.inputs,
+      outputs: stage.outputs, optionalInputs: {},
+      needs: stage.id === "youtube-fetch" ? [] : stage.id === "wiki-build" ? ["notebooklm-research"] : stage.id === "tg-notify" ? ["wiki-build"] : ["youtube-fetch"],
+      executor: { type: stage.id === "youtube-deep-research" || stage.id === "tg-notify" ? "direct-skill" : "agent-skill" },
+      capabilities: { git: { enabled: true }, telegram: { enabled: stage.id !== "wiki-build" }, sse: { enabled: true } },
+      ui: {
+        category: stage.id === "youtube-fetch" ? "input" : stage.id.includes("research") ? "research" : stage.id === "wiki-build" ? "build" : "notify",
+        icon: stage.id === "youtube-fetch" ? "youtube" : stage.id === "wiki-build" ? "network" : stage.id === "tg-notify" ? "send" : "search",
+        stageLetter: stage.id === "youtube-fetch" ? "A" : stage.id === "notebooklm-research" ? "B" : stage.id === "youtube-deep-research" ? "B2" : stage.id === "wiki-build" ? "C" : "D",
+        order: (index + 1) * 10,
+      },
+    })),
     edges: [
       { source: "youtube-fetch", target: "notebooklm-research" },
       { source: "youtube-fetch", target: "youtube-deep-research" },
@@ -65,6 +104,7 @@ function nodeConfigFromStage(nodeId: string): NodeConfig {
 
 function registryItem(nodeId: string, target: Runtime): NodeRegistryItem {
   const cfg = nodeConfigFromStage(nodeId);
+  const dagNode = mockDag(target.id).nodes.find((node) => node.id === nodeId);
   return {
     ...cfg,
     description: String(stages.find((stage) => stage.id === nodeId)?.summary || ""),
@@ -76,7 +116,7 @@ function registryItem(nodeId: string, target: Runtime): NodeRegistryItem {
     },
     capabilities: {
       github: { enabled: true, role: "artifact_persistence" },
-      telegram: { enabled: cfg.infra?.tgNotify !== false, role: "node_notification" },
+      telegram: { enabled: Boolean((dagNode?.capabilities?.telegram as Record<string, unknown> | undefined)?.enabled), role: "node_notification" },
       sse: { enabled: true, role: "runtime_events" },
       http_action: { enabled: true, role: "remote_node_operation" },
     },
@@ -95,7 +135,15 @@ function registryItem(nodeId: string, target: Runtime): NodeRegistryItem {
     editable: true,
     publishEnabled: false,
     missingFields: [],
+    ui: dagNode?.ui,
   };
+}
+
+function mockArtifacts(nodeId = "wiki-build"): Artifact[] {
+  return [
+    { id: `${nodeId}-report`, producer: nodeId, output: "report", type: "research.report", format: "markdown", path: `raw/pipeline-runs/mock/artifacts/${nodeId}-report.md`, title: `${nodeId} report.md`, size: 4096, mimeType: "text/markdown", tags: ["run-scoped"], resolution: "recorded", preview: "# 核心摘要\n当前 Run 的确认产物。" },
+    { id: `${nodeId}-index`, producer: nodeId, output: "index", type: "wiki.page", format: "markdown", path: "index.md", title: "Knowledge Map", size: 8192, mimeType: "text/markdown", tags: ["wiki"], resolution: "recorded", preview: "# Knowledge Map\n- 34 pages\n- 8 clusters" },
+  ];
 }
 
 export const mockProvider: SopDataProvider = {
@@ -116,6 +164,11 @@ export const mockProvider: SopDataProvider = {
     return mockDag(target.id);
   },
 
+  async getRunDag(target) {
+    await delay();
+    return mockDag(target.id);
+  },
+
   async listRuns(target) {
     await delay();
     return (runsByRuntime.get(target.id) || []).map(mapRun);
@@ -126,6 +179,25 @@ export const mockProvider: SopDataProvider = {
     const run = (runsByRuntime.get(target.id) || []).find((item) => item.pipelineId === pipelineId);
     if (!run) throw new Error(`Mock run 不存在：${pipelineId}`);
     return mapRun(run);
+  },
+
+  async getRunEvents(_target, _instanceId, pipelineId) {
+    await delay();
+    return [
+      { sequence: 1, ts: "2026-06-05T15:12:01Z", event: "node.started", nodeId: "wiki-build", runId: pipelineId, data: { progress: 0 } },
+      { sequence: 2, ts: "2026-06-05T15:12:18Z", event: "git.committed", nodeId: "wiki-build", runId: pipelineId, ok: true, data: { commit: "a19f35d" } },
+      { sequence: 3, ts: "2026-06-05T15:13:02Z", event: "telegram.sent", nodeId: "wiki-build", runId: pipelineId, ok: true, data: { trigger: "done" } },
+    ];
+  },
+
+  async getRunArtifacts() {
+    await delay();
+    return mockArtifacts();
+  },
+
+  async getRunArtifactCandidates() {
+    await delay();
+    return [{ ...mockArtifacts("legacy")[0], id: "legacy-candidate", path: "raw/shared/legacy-report.md", resolution: "pattern", ownership: "unconfirmed" }];
   },
 
   async getNode(target, _instanceId, pipelineId, nodeId) {

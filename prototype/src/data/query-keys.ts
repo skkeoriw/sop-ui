@@ -13,6 +13,14 @@ export const queryKeys = {
     ["sop", mode, ...runtimeKey(runtime), instanceId, "runs"] as const,
   run: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, pipelineId: string) =>
     ["sop", mode, ...runtimeKey(runtime), instanceId, "run", pipelineId] as const,
+  runDag: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, pipelineId: string) =>
+    ["sop", mode, ...runtimeKey(runtime), instanceId, "run", pipelineId, "dag"] as const,
+  runEvents: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, pipelineId: string) =>
+    ["sop", mode, ...runtimeKey(runtime), instanceId, "run", pipelineId, "events"] as const,
+  runArtifacts: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, pipelineId: string) =>
+    ["sop", mode, ...runtimeKey(runtime), instanceId, "run", pipelineId, "artifacts"] as const,
+  runArtifactCandidates: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, pipelineId: string) =>
+    ["sop", mode, ...runtimeKey(runtime), instanceId, "run", pipelineId, "artifactCandidates"] as const,
   node: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, pipelineId: string, nodeId: string) =>
     ["sop", mode, ...runtimeKey(runtime), instanceId, pipelineId, "node", nodeId] as const,
   log: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, pipelineId: string, nodeId: string) =>

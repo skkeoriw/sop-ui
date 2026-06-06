@@ -7,6 +7,7 @@ import type {
   NodeDraft,
   NodeDraftInput,
   NodeLog,
+  NodeEvent,
   NodeRegistryItem,
   Run,
   Runtime,
@@ -74,6 +75,16 @@ function parseMetadata(value: unknown): Record<string, unknown> | undefined {
 function mapRun(raw: Record<string, unknown>): Run {
   const nodes: Record<string, StageStatus> = {};
   for (const [key, value] of Object.entries((raw.nodes as Record<string, string>) || {})) nodes[key] = status(value);
+  const nodeStates = Object.fromEntries(Object.entries((raw.node_states as Record<string, Record<string, unknown>>) || {}).map(([nodeId, state]) => [nodeId, {
+    status: status(String(state.status || nodes[nodeId] || "")),
+    startedAt: String(state.started_at || ""),
+    finishedAt: String(state.finished_at || ""),
+    durationS: Number(state.duration_s || 0),
+    attempt: Number(state.attempt || 0),
+    progress: Number(state.progress || 0),
+    artifactCount: Number(state.artifact_count || 0),
+    error: String(state.error || ""),
+  }]));
   return {
     pipelineId: String(raw.pipeline_id || ""),
     status: status(String(raw.status || "")),
@@ -82,7 +93,66 @@ function mapRun(raw: Record<string, unknown>): Run {
     repo: String(raw.repo || ""),
     nodes,
     startedAt: String(raw.started_at || ""),
-    updatedAt: String(raw.updated_at || "")
+    updatedAt: String(raw.updated_at || ""),
+    nodeCount: Number(raw.node_count || Object.keys(nodes).length),
+    doneCount: Number(raw.done_count || 0),
+    failedCount: Number(raw.failed_count || 0),
+    runningNode: String(raw.running_node || ""),
+    progress: Number(raw.progress || 0),
+    artifactCount: Number(raw.artifact_count || 0),
+    gitEventCount: Number(raw.git_event_count || 0),
+    telegramEventCount: Number(raw.telegram_event_count || 0),
+    pageCount: Number(raw.page_count || 0),
+    durationS: Number(raw.duration_s || 0),
+    nodeStates,
+  };
+}
+
+function mapUi(raw: unknown) {
+  const ui = typeof raw === "object" && raw ? raw as Record<string, unknown> : {};
+  return {
+    category: ui.category ? String(ui.category) : undefined,
+    icon: ui.icon ? String(ui.icon) : undefined,
+    stageLetter: ui.stage_letter ? String(ui.stage_letter) : ui.stageLetter ? String(ui.stageLetter) : undefined,
+    order: typeof ui.order === "number" ? ui.order : undefined,
+    colorRole: ui.color_role ? String(ui.color_role) : ui.colorRole ? String(ui.colorRole) : undefined,
+  };
+}
+
+function mapDag(data: { nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>> }, instanceId: string): Dag {
+  return {
+    instanceId,
+    nodes: (data.nodes || []).map((node) => ({
+      id: String(node.id || ""),
+      title: String(node.title || node.id || ""),
+      mode: String(node.mode || "blocking"),
+      summary: String(node.webhook_route || node.summary || ""),
+      inputs: (node.inputs as Record<string, string>) || {},
+      outputs: (node.outputs as Record<string, string>) || {},
+      optionalInputs: ((node.optional_inputs || node.optionalInputs) as Record<string, string>) || {},
+      needs: (node.needs as string[]) || [],
+      executor: (node.executor as Record<string, unknown>) || {},
+      capabilities: (node.capabilities as Record<string, unknown>) || {},
+      ui: mapUi(node.ui),
+    })),
+    edges: (data.edges || []).map((edge) => ({ source: String(edge.source || ""), target: String(edge.target || "") }))
+  };
+}
+
+function mapEvent(ev: Record<string, unknown>): NodeEvent {
+  return {
+    sequence: typeof ev.sequence === "number" ? ev.sequence : undefined,
+    ts: String(ev.ts || ""),
+    event: String(ev.event || ""),
+    stage: ev.stage ? String(ev.stage) : undefined,
+    nodeId: ev.node_id ? String(ev.node_id) : undefined,
+    runId: ev.run_id ? String(ev.run_id) : undefined,
+    trigger: ev.trigger ? String(ev.trigger) : undefined,
+    ok: typeof ev.ok === "boolean" ? ev.ok : undefined,
+    error: ev.error ? String(ev.error) : undefined,
+    duration_s: typeof ev.duration_s === "number" ? ev.duration_s : undefined,
+    reason: ev.reason ? String(ev.reason) : undefined,
+    data: (ev.data as Record<string, unknown>) || {},
   };
 }
 
@@ -141,6 +211,7 @@ function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
     editable: Boolean(raw.editable),
     publishEnabled: Boolean(raw.publish_enabled ?? raw.publishEnabled),
     missingFields: ((raw.missing_fields || raw.missingFields) as string[]) || [],
+    ui: mapUi(raw.ui || (raw.manifest as Record<string, unknown> | undefined)?.ui),
   };
 }
 
@@ -193,19 +264,14 @@ export const sopProvider: SopDataProvider = {
       nodes?: Array<Record<string, unknown>>;
       edges?: Array<Record<string, unknown>>;
     }>(`${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/dag`);
-    return {
-      instanceId,
-      nodes: (data.nodes || []).map((node) => ({
-        id: String(node.id || ""),
-        title: String(node.title || node.id || ""),
-        mode: String(node.mode || "blocking"),
-        summary: String(node.webhook_route || ""),
-        inputs: (node.inputs as Record<string, string>) || {},
-        outputs: (node.outputs as Record<string, string>) || {},
-        optionalInputs: (node.optional_inputs as Record<string, string>) || {}
-      })),
-      edges: (data.edges || []).map((edge) => ({ source: String(edge.source || ""), target: String(edge.target || "") }))
-    };
+    return mapDag(data, instanceId);
+  },
+
+  async getRunDag(runtime, instanceId, pipelineId) {
+    const data = await requestJson<{ nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>> }>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/dag`
+    );
+    return mapDag(data, instanceId);
   },
 
   async listRuns(runtime, instanceId) {
@@ -221,6 +287,28 @@ export const sopProvider: SopDataProvider = {
         `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}`
       )
     );
+  },
+
+  async getRunEvents(runtime, instanceId, pipelineId) {
+    const raw = await requestJson<{ events?: Array<Record<string, unknown>> }>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/events`
+    );
+    return (raw.events || []).map(mapEvent);
+  },
+
+  async getRunArtifacts(runtime, instanceId, pipelineId) {
+    const raw = await requestJson<Array<Record<string, unknown>> | { artifacts?: Array<Record<string, unknown>> }>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/artifacts`
+    );
+    const items = Array.isArray(raw) ? raw : raw.artifacts || [];
+    return items.map(mapArtifact);
+  },
+
+  async getRunArtifactCandidates(runtime, instanceId, pipelineId) {
+    const raw = await requestJson<{ artifacts?: Array<Record<string, unknown>> }>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/artifact-candidates`
+    );
+    return (raw.artifacts || []).map(mapArtifact);
   },
 
   async getNode(runtime, instanceId, pipelineId, nodeId) {
@@ -271,16 +359,7 @@ export const sopProvider: SopDataProvider = {
       pipelineId: String(raw.pipeline_id || pipelineId),
       nodeId: String(raw.node_id || nodeId),
       log: String(raw.log || ""),
-      events: rawEvents.map((ev) => ({
-        ts: String(ev.ts || ""),
-        event: String(ev.event || ""),
-        stage: ev.stage ? String(ev.stage) : undefined,
-        trigger: ev.trigger ? String(ev.trigger) : undefined,
-        ok: typeof ev.ok === "boolean" ? ev.ok : undefined,
-        error: ev.error ? String(ev.error) : undefined,
-        duration_s: typeof ev.duration_s === "number" ? ev.duration_s : undefined,
-        reason: ev.reason ? String(ev.reason) : undefined,
-      })),
+      events: rawEvents.map(mapEvent),
     };
   },
 
