@@ -56,6 +56,7 @@ interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
   status: StageStatus;
   selected: boolean;
+  onSelect: (id: string) => void;
   onInfo: (id: string) => void;
 }
 
@@ -184,10 +185,10 @@ function CapabilityRow({ label, enabled }: { label: string; enabled: boolean }) 
 }
 
 const StageNode = memo(({ data }: NodeProps<Node<StageNodeData>>) => {
-  const { stage, status, selected, onInfo } = data;
+  const { stage, status, selected, onSelect, onInfo } = data;
   return (
     <div className={`flow-node-wrap ${selected ? "selected" : ""}`}>
-      <button type="button" className={`flow-node ${status}`}>
+      <button type="button" className={`flow-node ${status}`} onClick={() => onSelect(stage.id)}>
         <Handle type="target" position={Position.Left} />
         <div className="node-top">
           <span className={`status-pill ${status}`}>{statusIcon(status)}{statusLabel(status)}</span>
@@ -518,7 +519,16 @@ export default function App() {
     if (matched && runtimeId !== matched.id) setRuntimeId(matched.id);
   }, [initialEndpoint, runtimes, runtimeId]);
 
-  const flowNodes = useMemo(() => buildFlowNodes(dag, selectedRun, selectedStageId, openNodeConfig), [dag, selectedRun, selectedStageId]);
+  const flowNodes = useMemo(() => buildFlowNodes(
+    dag,
+    selectedRun,
+    selectedStageId,
+    (nodeId) => {
+      setSelectedStageId(nodeId);
+      navigateTo("workflow", selectedRun?.pipelineId || "", nodeId);
+    },
+    openNodeConfig
+  ), [dag, selectedRun, selectedStageId]);
   const flowEdges = useMemo(() => buildFlowEdges(dag, selectedRun), [dag, selectedRun]);
   const sortedRuns = [...runs].sort((a, b) => {
     const delta = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
@@ -2026,7 +2036,13 @@ function capabilityEnabled(value: unknown) {
   return false;
 }
 
-function buildFlowNodes(dag: Dag | undefined, run: Run | undefined, selectedStageId: string, onInfo: (id: string) => void): Node<StageNodeData>[] {
+function buildFlowNodes(
+  dag: Dag | undefined,
+  run: Run | undefined,
+  selectedStageId: string,
+  onSelect: (id: string) => void,
+  onInfo: (id: string) => void
+): Node<StageNodeData>[] {
   if (!dag) return [];
   const depths = new Map<string, number>();
   const parents = new Map<string, string[]>();
@@ -2047,7 +2063,7 @@ function buildFlowNodes(dag: Dag | undefined, run: Run | undefined, selectedStag
       id: stage.id,
       type: "stage",
       position: { x: 36 + column * 250, y: 58 + row * 158 },
-      data: { stage, status: run?.nodes[stage.id] || "waiting", selected: selectedStageId === stage.id, onInfo }
+      data: { stage, status: run?.nodes[stage.id] || "waiting", selected: selectedStageId === stage.id, onSelect, onInfo }
     };
   });
 }
