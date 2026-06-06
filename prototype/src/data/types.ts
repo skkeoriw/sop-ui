@@ -180,10 +180,29 @@ export interface NodeRegistryItem extends NodeConfig {
   capabilities?: Record<string, unknown>;
   actions?: Record<string, unknown>;
   cli?: Record<string, string>;
+  modules?: NodeModule[];
   editable?: boolean;
   publishEnabled?: boolean;
   missingFields?: string[];
   ui?: NodeUi;
+}
+
+export interface NodeModule {
+  id: string;
+  title: string;
+  description?: string;
+  status: string;
+  summary?: string;
+  detailUrl?: string;
+  runScoped?: boolean;
+}
+
+export interface NodeModuleDetail {
+  sopId: string;
+  nodeId: string;
+  pipelineId?: string;
+  module: NodeModule;
+  detail: Record<string, unknown>;
 }
 
 export interface NodeDraftInput {
@@ -231,6 +250,8 @@ export interface SopDataProvider {
   getNodeLog(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeLog>;
   getNodeConfig(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeConfig>;
   listNodes(runtime: Runtime, instanceId: string): Promise<NodeRegistryItem[]>;
+  listNodeModules(runtime: Runtime, instanceId: string, nodeId: string, pipelineId?: string): Promise<NodeModule[]>;
+  getNodeModule(runtime: Runtime, instanceId: string, nodeId: string, moduleId: string, pipelineId?: string): Promise<NodeModuleDetail>;
   listNodeDrafts(runtime: Runtime, instanceId: string): Promise<NodeDraft[]>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;

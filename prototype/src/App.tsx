@@ -40,6 +40,8 @@ import type {
   NodeDetail,
   NodeEvent,
   NodeLog,
+  NodeModule,
+  NodeModuleDetail,
   NodeRegistryItem,
   Run,
   Runtime,
@@ -47,8 +49,8 @@ import type {
 } from "./data/types";
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
-type AppView = "overview" | "runs" | "workflow" | "nodes" | "artifacts" | "settings";
-type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string };
+type AppView = "workflow" | "nodes" | "settings";
+type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string };
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -61,22 +63,24 @@ const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "
 
 function readRoute(): AppRoute {
   const parts = window.location.pathname.split("/").filter(Boolean);
-  const empty = { nodeId: "", pipelineId: "", artifactId: "" };
-  if (parts[0] === "overview") return { view: "overview", ...empty };
-  if (parts[0] === "runs") return { view: "runs", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
-  if (parts[0] === "workflow") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
-  if (parts[0] === "nodes") return { view: "nodes", ...empty, nodeId: decodeURIComponent(parts[1] || "") };
-  if (parts[0] === "artifacts") return { view: "artifacts", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), artifactId: decodeURIComponent(parts[2] || "") };
+  const empty = { nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
+  if (parts[0] === "runs") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
+  if (parts[0] === "workflow") {
+    const offset = parts[1] === "runs" ? 2 : 1;
+    return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[offset] || ""), nodeId: decodeURIComponent(parts[offset + 1] || "") };
+  }
+  if (parts[0] === "nodes") {
+    return { view: "nodes", ...empty, nodeId: decodeURIComponent(parts[1] || ""), moduleId: parts[2] === "modules" ? decodeURIComponent(parts[3] || "") : "" };
+  }
+  if (parts[0] === "artifacts") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), artifactId: decodeURIComponent(parts[2] || "") };
   if (parts[0] === "settings") return { view: "settings", ...empty };
-  return { view: "overview", ...empty };
+  return { view: "workflow", ...empty };
 }
 
 function routePath(view: AppView, entityId = "", secondaryId = "") {
-  if (view === "nodes") return entityId ? `/nodes/${encodeURIComponent(entityId)}` : "/nodes";
-  if (view === "runs") return entityId ? `/runs/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/runs";
-  if (view === "workflow") return entityId ? `/workflow/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/workflow";
-  if (view === "artifacts") return entityId ? `/artifacts/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/artifacts";
-  return `/${view}`;
+  if (view === "nodes") return entityId ? `/nodes/${encodeURIComponent(entityId)}${secondaryId ? `/modules/${encodeURIComponent(secondaryId)}` : ""}` : "/nodes";
+  if (view === "workflow") return entityId ? `/workflow/runs/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/workflow";
+  return "/settings";
 }
 
 function inspectorTabLabel(tab: InspectorTab) {
@@ -112,6 +116,30 @@ function streamStatusHint(status: "live" | "reconnecting" | "polling fallback" |
   if (status === "reconnecting") return "正在恢复 SSE";
   if (status === "polling fallback") return "15 秒轮询降级";
   return "当前没有运行中的 Run";
+}
+
+function fallbackNodeModules(node: NodeRegistryItem | undefined, runScoped: boolean): NodeModule[] {
+  if (!node) return [];
+  const rows: Array<[string, string, string, string]> = [
+    ["basic", "Basic", "节点身份、分类和发布状态", node.title || node.nodeId],
+    ["executor", "Executor", "执行器、Agent、Webhook 和操作入口", String(node.executor?.type || node.case || "node")],
+    ["skill", "Skill", "节点背后的 Skill 安装、说明和来源", String(node.skill?.id || node.executor?.skill || "skill")],
+    ["inputs", "Inputs", "输入契约和当前 Run 的 resolved inputs", `${Object.keys(node.inputs || {}).length} inputs`],
+    ["outputs", "Outputs", "输出契约、实际输出和校验结果", `${Object.keys(node.outputs || {}).length} outputs`],
+    ["artifacts", "Artifacts", "当前 Run 的记录产物和候选产物", "run-scoped artifacts"],
+    ["capabilities", "Capabilities", "Git、TG、SSE 和日志附属能力", "git / telegram / sse"],
+    ["runtime", "Runtime State", "节点运行状态、进度、耗时和错误", runScoped ? "current run" : "waiting for run"],
+    ["actions", "Actions", "Inspect、Retry、Cancel、Validate 和 Publish", "inspect / retry / cancel"],
+    ["logs", "Logs / Events", "节点日志、事件和错误线索", "node events"],
+  ];
+  return rows.map(([id, title, description, summary]) => ({
+    id,
+    title,
+    description,
+    summary,
+    status: (node.missingFields || []).length && ["basic", "executor", "outputs"].includes(id) ? "warning" : "ready",
+    runScoped,
+  }));
 }
 
 const EVENT_META: Record<string, { icon: string; label: string }> = {
@@ -222,6 +250,7 @@ export default function App() {
   const [nodeSearch, setNodeSearch] = useState("");
   const [nodeFilter, setNodeFilter] = useState("all");
   const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
+  const [selectedNodeModuleId, setSelectedNodeModuleId] = useState("basic");
   const [draftOpen, setDraftOpen] = useState(false);
   const [confirmRealDraft, setConfirmRealDraft] = useState(false);
   const [draftInput, setDraftInput] = useState<NodeDraftInput>({
@@ -256,36 +285,37 @@ export default function App() {
     refetchInterval: (query) => (query.state.data?.some((run) => run.status === "running") && streamStatus !== "live" ? 15000 : false)
   });
   const runs = runsQuery.data || [];
-  const selectedRunSummary = runs.find((run) => run.pipelineId === selectedRunId) || runs[0];
+  const routeRunMissing = Boolean(selectedRunId && runs.length && !runs.some((run) => run.pipelineId === selectedRunId));
+  const selectedRunSummary = selectedRunId ? runs.find((run) => run.pipelineId === selectedRunId) : runs[0];
 
   const runQuery = useQuery({
     queryKey: queryKeys.run(mode, runtime, instance?.instanceId || "", selectedRunSummary?.pipelineId || ""),
-    queryFn: () => provider.getRun(runtime, instance.instanceId, selectedRunSummary.pipelineId),
+    queryFn: () => provider.getRun(runtime!, instance!.instanceId, selectedRunSummary!.pipelineId),
     enabled: Boolean(runtime && instance && selectedRunSummary),
     refetchInterval: (query) => (query.state.data?.status === "running" && streamStatus !== "live" ? 15000 : false)
   });
   const selectedRun = runQuery.data || selectedRunSummary;
   const runDagQuery = useQuery({
     queryKey: queryKeys.runDag(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
-    queryFn: () => provider.getRunDag(runtime, instance.instanceId, selectedRun.pipelineId),
+    queryFn: () => provider.getRunDag(runtime!, instance!.instanceId, selectedRun!.pipelineId),
     enabled: Boolean(runtime && instance && selectedRun),
     retry: false,
   });
   const runEventsQuery = useQuery({
     queryKey: queryKeys.runEvents(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
-    queryFn: () => provider.getRunEvents(runtime, instance.instanceId, selectedRun.pipelineId),
+    queryFn: () => provider.getRunEvents(runtime!, instance!.instanceId, selectedRun!.pipelineId),
     enabled: Boolean(runtime && instance && selectedRun),
     refetchInterval: selectedRun?.status === "running" && streamStatus !== "live" ? 15000 : false,
   });
   const runArtifactsQuery = useQuery({
     queryKey: queryKeys.runArtifacts(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
-    queryFn: () => provider.getRunArtifacts(runtime, instance.instanceId, selectedRun.pipelineId),
+    queryFn: () => provider.getRunArtifacts(runtime!, instance!.instanceId, selectedRun!.pipelineId),
     enabled: Boolean(runtime && instance && selectedRun),
   });
   const runArtifactCandidatesQuery = useQuery({
     queryKey: queryKeys.runArtifactCandidates(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
-    queryFn: () => provider.getRunArtifactCandidates(runtime, instance.instanceId, selectedRun.pipelineId),
-    enabled: Boolean(runtime && instance && selectedRun && viewMode === "artifacts"),
+    queryFn: () => provider.getRunArtifactCandidates(runtime!, instance!.instanceId, selectedRun!.pipelineId),
+    enabled: false,
   });
   const dag = runDagQuery.data || dagQuery.data;
   const selectedStage = dag?.nodes.find((stage) => stage.id === selectedStageId) || dag?.nodes[0];
@@ -294,31 +324,47 @@ export default function App() {
 
   const nodeQuery = useQuery({
     queryKey: queryKeys.node(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || "", selectedStageKey),
-    queryFn: () => provider.getNode(runtime, instance.instanceId, selectedRun.pipelineId, selectedStageKey),
+    queryFn: () => provider.getNode(runtime!, instance!.instanceId, selectedRun!.pipelineId, selectedStageKey),
     enabled: Boolean(runtime && instance && selectedRun && selectedStage)
   });
   const logQuery = useQuery({
     queryKey: queryKeys.log(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || "", selectedStageKey),
-    queryFn: () => provider.getNodeLog(runtime, instance.instanceId, selectedRun.pipelineId, selectedStageKey),
-    enabled: Boolean(runtime && instance && selectedRun && selectedStage && (inspectorTab === "logs" || viewMode === "runs"))
+    queryFn: () => provider.getNodeLog(runtime!, instance!.instanceId, selectedRun!.pipelineId, selectedStageKey),
+    enabled: Boolean(runtime && instance && selectedRun && selectedStage && viewMode === "workflow")
   });
   const nodeConfigQuery = useQuery({
     queryKey: queryKeys.nodeConfig(mode, runtime, instance?.instanceId || "", nodeConfigId),
-    queryFn: () => provider.getNodeConfig(runtime, instance.instanceId, nodeConfigId),
+    queryFn: () => provider.getNodeConfig(runtime!, instance!.instanceId, nodeConfigId),
     enabled: Boolean(runtime && instance && showNodeConfig && nodeConfigId)
   });
   const nodesQuery = useQuery({
     queryKey: queryKeys.nodes(mode, runtime, instance?.instanceId || ""),
-    queryFn: () => provider.listNodes(runtime, instance.instanceId),
+    queryFn: () => provider.listNodes(runtime!, instance!.instanceId),
     enabled: Boolean(runtime && instance)
   });
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
-    queryFn: () => provider.listNodeDrafts(runtime, instance.instanceId),
+    queryFn: () => provider.listNodeDrafts(runtime!, instance!.instanceId),
     enabled: Boolean(runtime && instance && (viewMode === "nodes" || viewMode === "settings"))
   });
   const managedNodes = nodesQuery.data || [];
   const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
+  const nodeModulesQuery = useQuery({
+    queryKey: queryKeys.nodeModules(mode, runtime, instance?.instanceId || "", selectedManagedNode?.nodeId || "", selectedRun?.pipelineId || ""),
+    queryFn: () => provider.listNodeModules(runtime!, instance!.instanceId, selectedManagedNode!.nodeId, selectedRun?.pipelineId),
+    enabled: Boolean(runtime && instance && selectedManagedNode && viewMode === "nodes"),
+  });
+  const selectedNodeModules = (nodeModulesQuery.data && nodeModulesQuery.data.length)
+    ? nodeModulesQuery.data
+    : selectedManagedNode?.modules?.length
+      ? selectedManagedNode.modules
+      : fallbackNodeModules(selectedManagedNode, Boolean(selectedRun));
+  const selectedNodeModule = selectedNodeModules.find((module) => module.id === selectedNodeModuleId) || selectedNodeModules[0];
+  const nodeModuleQuery = useQuery({
+    queryKey: queryKeys.nodeModule(mode, runtime, instance?.instanceId || "", selectedManagedNode?.nodeId || "", selectedNodeModule?.id || "", selectedRun?.pipelineId || ""),
+    queryFn: () => provider.getNodeModule(runtime!, instance!.instanceId, selectedManagedNode!.nodeId, selectedNodeModule!.id, selectedRun?.pipelineId),
+    enabled: Boolean(runtime && instance && selectedManagedNode && selectedNodeModule && viewMode === "nodes"),
+  });
   const nodeFilters = useMemo(() => {
     const values = new Set<string>();
     managedNodes.forEach((node) => values.add(String(node.ui?.category || "custom")));
@@ -383,7 +429,7 @@ export default function App() {
   useEffect(() => {
     const routePrefixes = ["/overview", "/runs", "/workflow", "/nodes", "/artifacts", "/settings"];
     if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
-      window.history.replaceState(null, "", `${routePath("overview")}${window.location.search}`);
+      window.history.replaceState(null, "", `${routePath("workflow")}${window.location.search}`);
       setRoute(readRoute());
     }
     const onPopState = () => setRoute(readRoute());
@@ -392,7 +438,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
   useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
-  useEffect(() => { if (runs.length && !runs.some((run) => run.pipelineId === selectedRunId)) setSelectedRunId(runs[0].pipelineId); }, [runs, selectedRunId]);
+  useEffect(() => { if (runs.length && !selectedRunId) setSelectedRunId(runs[0].pipelineId); }, [runs, selectedRunId]);
   useEffect(() => {
     if (route.pipelineId && runs.some((run) => run.pipelineId === route.pipelineId) && selectedRunId !== route.pipelineId) {
       setSelectedRunId(route.pipelineId);
@@ -400,7 +446,7 @@ export default function App() {
   }, [route.pipelineId, runs, selectedRunId]);
   useEffect(() => { if (dag?.nodes.length && !dag.nodes.some((stage) => stage.id === selectedStageId)) setSelectedStageId(dag.nodes[0].id); }, [dag, selectedStageId]);
   useEffect(() => {
-    if (viewMode === "runs" && selectedRun?.runningNode && !route.nodeId) {
+    if (viewMode === "workflow" && selectedRun?.runningNode && !route.nodeId) {
       setSelectedStageId(selectedRun.runningNode);
     }
   }, [route.nodeId, selectedRun?.pipelineId, selectedRun?.runningNode, viewMode]);
@@ -420,6 +466,15 @@ export default function App() {
     }
     if (!managedNodes.some((node) => node.nodeId === selectedManagedNodeId)) setSelectedManagedNodeId(managedNodes[0].nodeId);
   }, [managedNodes, route.nodeId, route.view, selectedManagedNodeId]);
+  useEffect(() => {
+    if (route.view === "nodes" && route.moduleId) {
+      setSelectedNodeModuleId(route.moduleId);
+      return;
+    }
+    if (selectedNodeModules.length && !selectedNodeModules.some((module) => module.id === selectedNodeModuleId)) {
+      setSelectedNodeModuleId(selectedNodeModules[0].id);
+    }
+  }, [route.moduleId, route.view, selectedNodeModuleId, selectedNodeModules]);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 3000); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => { setInspectorTab("config"); setShowNodeConfig(false); }, [selectedStageId]);
   useEffect(() => {
@@ -475,7 +530,7 @@ export default function App() {
     const searchable = [run.pipelineId, run.sourceUrl, run.repo, run.status].filter(Boolean).join(" ").toLowerCase();
     return matchedStatus && (!query || searchable.includes(query));
   });
-  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error, nodesQuery.error, nodeDraftsQuery.error, runEventsQuery.error, runArtifactsQuery.error].find(Boolean);
+  const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error, nodesQuery.error, nodeDraftsQuery.error, nodeModulesQuery.error, nodeModuleQuery.error, runEventsQuery.error, runArtifactsQuery.error].find(Boolean);
   const completedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "done").length : 0;
   const failedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "failed").length : 0;
   const artifactCount = (nodeQuery.data?.artifacts || []).length;
@@ -494,15 +549,17 @@ export default function App() {
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
     setRoute({
       view,
-      nodeId: view === "nodes" ? entityId : view === "workflow" || view === "runs" ? secondaryId : "",
-      pipelineId: view === "runs" || view === "workflow" || view === "artifacts" ? entityId : "",
-      artifactId: view === "artifacts" ? secondaryId : "",
+      nodeId: view === "nodes" ? entityId : view === "workflow" ? secondaryId : "",
+      pipelineId: view === "workflow" ? entityId : "",
+      artifactId: "",
+      moduleId: view === "nodes" ? secondaryId : "",
     });
   }
 
-  function selectManagedNode(nodeId: string) {
+  function selectManagedNode(nodeId: string, moduleId = selectedNodeModuleId || "basic") {
     setSelectedManagedNodeId(nodeId);
-    navigateTo("nodes", nodeId);
+    setSelectedNodeModuleId(moduleId);
+    navigateTo("nodes", nodeId, moduleId);
   }
 
   function addManualEndpoint(event: FormEvent) {
@@ -545,7 +602,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell ${viewMode === "workflow" ? "workflow-shell" : "single-shell"}`}>
+    <div className="app-shell single-shell">
       <aside className="control-rail">
         <div className="rail-brand">
           <div className="brand-mark">S</div>
@@ -555,20 +612,11 @@ export default function App() {
           </div>
         </div>
         <nav className="rail-nav" aria-label="Primary">
-          <button type="button" className={viewMode === "overview" ? "active" : ""} onClick={() => navigateTo("overview")}>
-            <LayoutDashboard size={17} /><span>Overview</span><small>{runs.filter((run) => run.status === "running").length ? "live" : "ops"}</small>
-          </button>
-          <button type="button" className={viewMode === "runs" ? "active" : ""} onClick={() => navigateTo("runs", selectedRun?.pipelineId || "")}>
-            <ListChecks size={17} /><span>Runs</span><small>{runs.length || "-"} runs</small>
-          </button>
           <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow", selectedRun?.pipelineId || "", selectedStage?.id || "")}>
-            <Network size={17} /><span>Workflow</span><small>DAG</small>
+            <Network size={17} /><span>Workflow</span><small>{runs.length || "-"} runs</small>
           </button>
           <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
-            <Boxes size={17} /><span>Nodes</span><small>{managedNodes.length || "-"} assets</small>
-          </button>
-          <button type="button" className={viewMode === "artifacts" ? "active" : ""} onClick={() => navigateTo("artifacts", selectedRun?.pipelineId || "")}>
-            <PackageSearch size={17} /><span>Artifacts</span><small>{artifactCount || "-"} scoped</small>
+            <Boxes size={17} /><span>Nodes</span><small>{managedNodes.length || "-"} modules</small>
           </button>
           <button type="button" className={viewMode === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
             <Settings size={17} /><span>Settings</span><small>{mode}</small>
@@ -607,7 +655,7 @@ export default function App() {
 
       {queryError && <div className="error-banner">数据请求失败：{String((queryError as Error).message || queryError)}</div>}
 
-      {viewMode === "workflow" && <aside className="sidebar">
+      {false && viewMode === "workflow" && <aside className="sidebar">
         <section>
           <div className="section-title"><span>Runtime</span><span>{mode}</span></div>
           {runtime ? (
@@ -659,45 +707,29 @@ export default function App() {
       </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
-        {viewMode === "overview" ? (
-          <OverviewPage
+        {viewMode === "workflow" ? (
+          <WorkflowWorkspace
             runtime={runtime}
             instance={instance}
             mode={mode}
-            runs={runs}
-            dag={dag}
-            selectedRun={selectedRun}
-            selectedStage={selectedStage}
-            nodesReadyCount={nodesReadyCount}
-            managedNodes={managedNodes}
-            runEvents={runEventsQuery.data || []}
-            artifactCount={selectedRun?.artifactCount ?? runArtifactsQuery.data?.length ?? artifactCount}
-            streamStatus={streamStatus}
-            onOpenRun={(pipelineId) => {
-              if (pipelineId) setSelectedRunId(pipelineId);
-              navigateTo("runs", pipelineId || selectedRun?.pipelineId || "");
-            }}
-            onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || "", selectedStage?.id || "")}
-            onOpenNode={(nodeId) => {
-              openNodeConfig(nodeId);
-              navigateTo("workflow", selectedRun?.pipelineId || "", nodeId);
-            }}
-          />
-        ) : viewMode === "runs" ? (
-          <RunsPage
             runs={visibleExecutions}
             selectedRun={selectedRun}
+            selectedRunMissing={routeRunMissing}
             selectedStage={selectedStage}
             selectedStatus={selectedStatus}
             dag={dag}
+            dagLoading={dagQuery.isLoading}
+            flowNodes={flowNodes}
+            flowEdges={flowEdges}
             nodeDetail={nodeQuery.data}
             nodeLog={logQuery.data}
             runEvents={runEventsQuery.data || []}
             runArtifacts={runArtifactsQuery.data || []}
             streamStatus={streamStatus}
-            onSelectRun={(pipelineId) => { setSelectedRunId(pipelineId); navigateTo("runs", pipelineId); }}
-            onSelectNode={(nodeId) => { setSelectedStageId(nodeId); navigateTo("runs", selectedRun?.pipelineId || "", nodeId); }}
-            onOpenWorkflow={(nodeId) => navigateTo("workflow", selectedRun?.pipelineId || "", nodeId)}
+            nodesReadyCount={nodesReadyCount}
+            managedNodeCount={managedNodes.length}
+            onSelectRun={(pipelineId) => { setSelectedRunId(pipelineId); navigateTo("workflow", pipelineId, selectedStage?.id || ""); }}
+            onSelectNode={(nodeId) => { setSelectedStageId(nodeId); navigateTo("workflow", selectedRun?.pipelineId || "", nodeId); }}
             onCancelRun={handleCancelRun}
             onRetryNode={handleRetry}
             onCancelNode={handleCancelNode}
@@ -705,67 +737,6 @@ export default function App() {
             retryPending={retryMutation.isPending}
             cancelNodePending={cancelNodeMutation.isPending}
           />
-        ) : viewMode === "workflow" ? (
-          <>
-            <section className="summary-grid">
-              <div className="overview-panel">
-                <div className="row">
-                  <span className={`status-pill ${runtime?.localStatus === "ok" ? "done" : "waiting"}`}><Activity size={14} />Ops Console</span>
-                  <span>{mode === "real" ? "Real data" : "Mock data"}</span>
-                </div>
-                <h1>用一个操作台掌控 Runtime、Execution 和节点状态</h1>
-                <p>{instance?.title || "SOP Workflow"} · 默认聚焦运行健康、失败节点、最近产物和下一步操作。</p>
-                <div className="overview-tags">
-                  <span><Workflow size={13} />Workflow Map</span>
-                  <span><GitBranch size={13} />Git / TG / SSE</span>
-                  <span><Boxes size={13} />{nodesReadyCount}/{managedNodes.length || 0} nodes ready</span>
-                </div>
-              </div>
-              <Metric label="Active executions" value={runs.filter((run) => run.status === "running").length} subtext={`${failedCount} failed node signals`} />
-              <Metric label="Nodes ready" value={`${nodesReadyCount}/${managedNodes.length || 0}`} subtext="metadata complete" />
-              <Metric label="Artifacts" value={artifactCount} subtext="selected node" />
-              <Metric label="Events" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
-            </section>
-
-            <section className="flow-panel">
-              <div className="panel-head">
-                <div>
-                  <strong>DAG Canvas</strong>
-                  <span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
-                </div>
-                <div className="head-actions">
-                  {selectedRun?.status === "running" && (
-                    <button type="button" className="btn-danger-sm" disabled={cancelRunMutation.isPending} onClick={handleCancelRun}>
-                      <X size={14} />Cancel Execution
-                    </button>
-                  )}
-                  {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
-                  <button type="button" onClick={() => dag?.nodes[0] && setSelectedStageId(dag.nodes[0].id)}><Search size={15} />Focus</button>
-                </div>
-              </div>
-              <div className="flow-wrap">
-                {dagQuery.isLoading ? <Skeleton /> : dag?.nodes.length ? (
-                  <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: .18 }} minZoom={.35} maxZoom={1.7} nodesDraggable onNodeClick={(_, node) => { setSelectedStageId(node.id); navigateTo("workflow", selectedRun?.pipelineId || "", node.id); }} defaultEdgeOptions={{ className: "flow-edge" }}>
-                    <Background color="#dfe4ec" gap={24} /><Controls showInteractive={false} /><MiniMap nodeStrokeWidth={3} zoomable pannable />
-                  </ReactFlow>
-                ) : <Empty text="选择 Runtime 和 Instance 后加载 DAG" />}
-              </div>
-            </section>
-
-            <section className="timeline-panel">
-              <div className="panel-head compact"><strong>Execution Timeline</strong><span>点击 Stage 查看详情 · Info 查看节点配置</span></div>
-              <div className="timeline">
-                {(dag?.nodes || []).map((stage) => {
-                  const state = selectedRun?.nodes[stage.id] || "waiting";
-                  return (
-                    <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => { setSelectedStageId(stage.id); navigateTo("workflow", selectedRun?.pipelineId || "", stage.id); }}>
-                      <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          </>
         ) : viewMode === "nodes" ? (
           <NodesWorkspace
             instance={instance}
@@ -775,6 +746,10 @@ export default function App() {
             loading={nodesQuery.isLoading}
             selectedNodeId={selectedManagedNode?.nodeId || ""}
             selectedNode={selectedManagedNode}
+            modules={selectedNodeModules}
+            selectedModule={selectedNodeModule}
+            moduleDetail={nodeModuleQuery.data}
+            moduleLoading={nodeModulesQuery.isLoading || nodeModuleQuery.isLoading}
             visibleNodes={visibleManagedNodes}
             nodeSearch={nodeSearch}
             nodeFilter={nodeFilter}
@@ -782,17 +757,11 @@ export default function App() {
             onNodeSearch={setNodeSearch}
             onNodeFilter={setNodeFilter}
             onSelectNode={selectManagedNode}
+            onSelectModule={(moduleId) => {
+              setSelectedNodeModuleId(moduleId);
+              if (selectedManagedNode) navigateTo("nodes", selectedManagedNode.nodeId, moduleId);
+            }}
             onOpenDraft={() => setDraftOpen(true)}
-          />
-        ) : viewMode === "artifacts" ? (
-          <ArtifactsPage
-            selectedRun={selectedRun}
-            selectedStage={selectedStage}
-            recorded={runArtifactsQuery.data || []}
-            candidates={runArtifactCandidatesQuery.data || []}
-            selectedArtifactId={route.artifactId}
-            onSelectArtifact={(artifactId) => navigateTo("artifacts", selectedRun?.pipelineId || "", artifactId)}
-            onOpenProducer={(nodeId) => navigateTo("workflow", selectedRun?.pipelineId || "", nodeId)}
           />
         ) : (
           <SettingsPage
@@ -810,241 +779,6 @@ export default function App() {
           />
         )}
       </main>
-
-      {/* ── Inspector panel ── */}
-      {viewMode === "workflow" && <aside className="inspector">
-        {showNodeConfig ? (
-          /* Node Config Panel — static, run-independent */
-          <>
-            <div className="inspector-head">
-              <div className="row">
-                <div>
-                  <h2>{nodeConfigQuery.data?.title || nodeConfigId || "节点配置"}</h2>
-                  <span>{nodeConfigQuery.data?.mode || "加载中…"}</span>
-                </div>
-                <button type="button" className="icon-btn" title="返回 Inspector" onClick={() => setShowNodeConfig(false)}>
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-            <div className="inspector-body">
-              {nodeConfigQuery.isLoading ? <Skeleton /> : !nodeConfigQuery.data ? <Empty text="节点配置加载失败" /> : (() => {
-                const cfg = nodeConfigQuery.data;
-                return (
-                  <>
-                    <DetailBlock title="Executor">
-                      <KeyValues data={Object.fromEntries(Object.entries(cfg.executor || {}).filter(([, v]) => v))} />
-                      {cfg.skillScript && <div className="kv"><div className="kv-row"><span>script</span><code title={cfg.skillScript}>{cfg.skillScript}</code></div></div>}
-                    </DetailBlock>
-
-                    {(cfg.needs?.length ?? 0) > 0 && (
-                      <DetailBlock title="Depends On">
-                        <div className="needs-list">{cfg.needs!.map((n) => <span key={n} className="needs-chip">{n}</span>)}</div>
-                      </DetailBlock>
-                    )}
-
-                    <DetailBlock title="Input Contract">
-                      <KeyValues data={cfg.inputs as Record<string, unknown> || {}} />
-                    </DetailBlock>
-                    <DetailBlock title="Output Contract">
-                      <KeyValues data={cfg.outputs as Record<string, unknown> || {}} />
-                    </DetailBlock>
-
-                    {cfg.optionalInputs && Object.keys(cfg.optionalInputs).length > 0 && (
-                      <DetailBlock title="Optional Inputs">
-                        <KeyValues data={cfg.optionalInputs as Record<string, unknown>} />
-                      </DetailBlock>
-                    )}
-
-                    <DetailBlock title="Capabilities">
-                      <div className="capabilities-grid">
-                        <CapabilityRow label="TG Notify" enabled={cfg.infra?.tgNotify !== false} />
-                        <CapabilityRow label="Log Record" enabled={cfg.infra?.logRecord !== false} />
-                      </div>
-                    </DetailBlock>
-
-                    {cfg.params && Object.keys(cfg.params).length > 0 && (
-                      <DetailBlock title="Params"><KeyValues data={cfg.params as Record<string, unknown>} /></DetailBlock>
-                    )}
-
-                    {cfg.skillReadme && (
-                      <DetailBlock title="Skill README">
-                        <pre className="log-box" style={{ fontSize: 11, maxHeight: 260 }}>{cfg.skillReadme}</pre>
-                      </DetailBlock>
-                    )}
-                    {cfg.manifest && Object.keys(cfg.manifest).length > 0 && (
-                      <DetailBlock title="Node Manifest"><KeyValues data={cfg.manifest} /></DetailBlock>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          </>
-        ) : (
-          /* Run Inspector */
-          <>
-            <div className="inspector-head">
-              <div className="row">
-                <div>
-                  <h2>{selectedStage?.title || "Node Inspector"}</h2>
-                  <span>{selectedStage?.mode || "选择 DAG 节点"}</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  {selectedStage && <span className={`status-pill ${selectedStatus}`}>{statusIcon(selectedStatus)}{statusLabel(selectedStatus)}</span>}
-                  {selectedStage && (
-                    <button type="button" className="icon-btn" title="查看节点配置" onClick={() => openNodeConfig(selectedStageKey)}>
-                      <Info size={15} />
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="tabs">
-                {(["config", "run", "artifacts", "logs"] as InspectorTab[]).map((tab) => (
-                  <button key={tab} type="button" className={inspectorTab === tab ? "active" : ""} onClick={() => setInspectorTab(tab)}>{inspectorTabLabel(tab)}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="inspector-body">
-              {!selectedStage || !selectedRun || !instance || !runtime ? <Empty text="选择一个 Execution 和 Stage 查看详情" /> : (
-                <>
-                  {/* ── config tab: static node configuration ── */}
-                  {inspectorTab === "config" && (
-                    <>
-                      <DetailBlock title="Node Definition">
-                        <KeyValues data={{
-                          stage_id: selectedStage.id,
-                          title: selectedStage.title,
-                          mode: selectedStage.mode,
-                          summary: selectedStage.summary || "-"
-                        }} />
-                      </DetailBlock>
-
-                      <DetailBlock title="Executor">
-                        {nodeQuery.data?.executor ? (
-                          <KeyValues data={Object.fromEntries(Object.entries(nodeQuery.data.executor).filter(([, v]) => v))} />
-                        ) : <Empty text="选择节点后加载" />}
-                      </DetailBlock>
-
-                      <DetailBlock title="Input Contract">
-                        <KeyValues data={nodeQuery.data?.declaredInputs || selectedStage.inputs} />
-                      </DetailBlock>
-
-                      <DetailBlock title="Output Contract">
-                        <KeyValues data={nodeQuery.data?.declaredOutputs || selectedStage.outputs} />
-                      </DetailBlock>
-
-                      <DetailBlock title="Capabilities">
-                        <KeyValues data={nodeQuery.data?.capabilities || {
-                          telegram: { enabled: nodeQuery.data?.infra?.tgNotify !== false },
-                          log: { enabled: nodeQuery.data?.infra?.logRecord !== false }
-                        }} />
-                      </DetailBlock>
-                      {nodeQuery.data?.plan && <DetailBlock title="Wiki Build Plan"><KeyValues data={nodeQuery.data.plan} /></DetailBlock>}
-                    </>
-                  )}
-
-                  {/* ── run tab: runtime execution details ── */}
-                  {inspectorTab === "run" && (
-                    <>
-                      <DetailBlock title="Execution">
-                        <div className="kv">
-                          {[
-                            ["execution", selectedRun.pipelineId],
-                            ["run_id", nodeQuery.data?.runId || "-"],
-                            ["started", nodeQuery.data?.startedAt || "-"],
-                            ["finished", nodeQuery.data?.finishedAt || "-"],
-                            ["instance", instance.instanceId],
-                            ["repo", instance.repo],
-                          ].map(([key, value]) => (
-                            <div key={key} className="kv-row"><span>{key}</span><code>{value}</code></div>
-                          ))}
-                        </div>
-                      </DetailBlock>
-
-                      {/* Validation */}
-                      {nodeQuery.data?.validation && (
-                        <DetailBlock title="Output Validation">
-                          <ValidationSummary validation={nodeQuery.data.validation} />
-                        </DetailBlock>
-                      )}
-
-                      <DetailBlock title="Resolved Inputs">
-                        <KeyValues data={nodeQuery.data?.resolvedInputs || {}} />
-                      </DetailBlock>
-
-                      <DetailBlock title="Recorded Outputs">
-                        <KeyValues data={nodeQuery.data?.actualOutputs || {}} />
-                      </DetailBlock>
-
-                      {/* Error */}
-                      {nodeQuery.data?.error && (
-                        <DetailBlock title="Error">
-                          <pre className="log-box error-log">{nodeQuery.data.error}</pre>
-                        </DetailBlock>
-                      )}
-
-                      {/* Operations */}
-                      <DetailBlock title="Operations">
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          {(selectedStatus === "failed" || selectedStatus === "cancelled" || selectedStatus === "done") && (
-                            <button type="button" className="retry-button" disabled={retryMutation.isPending} onClick={handleRetry}>
-                              <RotateCcw size={16} />{retryMutation.isPending ? "重试中…" : "Retry"}
-                            </button>
-                          )}
-                          {selectedStatus === "running" && (
-                            <button type="button" className="cancel-button" disabled={cancelNodeMutation.isPending} onClick={handleCancelNode}>
-                              <X size={16} />{cancelNodeMutation.isPending ? "取消中…" : "Cancel Node"}
-                            </button>
-                          )}
-                        </div>
-                      </DetailBlock>
-                    </>
-                  )}
-
-                  {/* ── artifacts tab ── */}
-                  {inspectorTab === "artifacts" && (
-                    <>
-                      <DetailBlock title={`Recorded Artifacts · ${nodeQuery.data?.artifacts.length || 0}`}>
-                        <ArtifactList artifacts={nodeQuery.data?.artifacts || []} />
-                      </DetailBlock>
-                      <DetailBlock title={`Unverified Candidates · ${nodeQuery.data?.discoveredCandidates?.length || 0}`}>
-                        <p className="candidate-warning">这些文件来自共享路径扫描，无法确认属于当前 Execution，不会作为下游节点输入。</p>
-                        <ArtifactList artifacts={nodeQuery.data?.discoveredCandidates || []} />
-                      </DetailBlock>
-                    </>
-                  )}
-
-                  {/* ── logs tab: structured events + raw log ── */}
-                  {inspectorTab === "logs" && (
-                    <>
-                      {logQuery.isLoading ? <Skeleton /> : (
-                        <>
-                          {(logQuery.data?.events ?? []).length > 0 && (
-                            <DetailBlock title="Events">
-                              <div className="event-list">
-                                {(logQuery.data?.events ?? []).map((ev, i) => <EventRow key={i} event={ev} />)}
-                              </div>
-                            </DetailBlock>
-                          )}
-                          <DetailBlock title={
-                            <button type="button" className="log-toggle" onClick={() => setRawLogOpen((v) => !v)}>
-                              Raw Log {rawLogOpen ? "▲" : "▼"}
-                            </button> as unknown as string
-                          }>
-                            {rawLogOpen && <pre className="log-box">{logQuery.data?.log || "没有日志"}</pre>}
-                            {!rawLogOpen && <div className="empty-state" style={{ fontSize: 12 }}>点击 Raw Log 展开</div>}
-                          </DetailBlock>
-                        </>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          </>
-        )}
-      </aside>}
 
       {triggerOpen && runtime && instance && (
         <div className="modal-backdrop" role="presentation">
@@ -1200,6 +934,180 @@ function OverviewPage({
         </aside>
       </section>
     </>
+  );
+}
+
+function WorkflowWorkspace({
+  runtime,
+  instance,
+  mode,
+  runs,
+  selectedRun,
+  selectedRunMissing,
+  selectedStage,
+  selectedStatus,
+  dag,
+  dagLoading,
+  flowNodes,
+  flowEdges,
+  nodeDetail,
+  nodeLog,
+  runEvents,
+  runArtifacts,
+  streamStatus,
+  nodesReadyCount,
+  managedNodeCount,
+  onSelectRun,
+  onSelectNode,
+  onCancelRun,
+  onRetryNode,
+  onCancelNode,
+  cancelRunPending,
+  retryPending,
+  cancelNodePending,
+}: {
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  mode: DataMode;
+  runs: Run[];
+  selectedRun: Run | undefined;
+  selectedRunMissing: boolean;
+  selectedStage: DagNode | undefined;
+  selectedStatus: StageStatus;
+  dag: Dag | undefined;
+  dagLoading: boolean;
+  flowNodes: Node<StageNodeData>[];
+  flowEdges: Edge[];
+  nodeDetail: NodeDetail | undefined;
+  nodeLog: NodeLog | undefined;
+  runEvents: NodeEvent[];
+  runArtifacts: Artifact[];
+  streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
+  nodesReadyCount: number;
+  managedNodeCount: number;
+  onSelectRun: (pipelineId: string) => void;
+  onSelectNode: (nodeId: string) => void;
+  onCancelRun: () => void;
+  onRetryNode: () => void;
+  onCancelNode: () => void;
+  cancelRunPending: boolean;
+  retryPending: boolean;
+  cancelNodePending: boolean;
+}) {
+  const gitEvents = runEvents.filter((event) => event.event.startsWith("git."));
+  const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram."));
+  return (
+    <section className="workflow-workspace">
+      <div className="workflow-command-bar">
+        <div className="workflow-title">
+          <span className="status-pill running"><Workflow size={14} />Workflow</span>
+          <div>
+            <h1>DAG 驱动的执行观察</h1>
+            <p>{instance?.title || "SOP Workflow"} · {runtime?.endpoint || "No endpoint"} · {mode}</p>
+          </div>
+        </div>
+        <label className="run-select">
+          <span>Current Run</span>
+          <select value={selectedRun?.pipelineId || ""} onChange={(event) => onSelectRun(event.target.value)} disabled={!runs.length}>
+            {runs.map((run) => <option key={run.pipelineId} value={run.pipelineId}>{run.pipelineId} · {statusLabel(run.status)}</option>)}
+          </select>
+        </label>
+        <div className="workflow-metrics">
+          <Metric label="Progress" value={`${selectedRun?.progress ?? 0}%`} subtext={`${selectedRun?.doneCount ?? 0}/${selectedRun?.nodeCount ?? dag?.nodes.length ?? 0} nodes`} />
+          <Metric label="Artifacts" value={selectedRun?.artifactCount ?? runArtifacts.length} subtext="run scoped" />
+          <Metric label="Nodes" value={`${nodesReadyCount}/${managedNodeCount || 0}`} subtext="metadata ready" />
+          <Metric label="SSE" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
+        </div>
+      </div>
+
+      {selectedRunMissing && (
+        <div className="warning-banner">
+          URL 指向的 Run 不存在或当前 Runtime 未返回该 Run。页面不会静默切换到其他 Run，请从 Current Run 重新选择。
+        </div>
+      )}
+
+      <div className="workflow-primary-grid">
+        <section className="flow-panel workflow-dag-panel">
+          <div className="panel-head">
+            <div>
+              <strong>DAG Canvas</strong>
+              <span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
+            </div>
+            <div className="head-actions">
+              {selectedRun?.status === "running" && (
+                <button type="button" className="btn-danger-sm" disabled={cancelRunPending} onClick={onCancelRun}>
+                  <X size={14} />Cancel Run
+                </button>
+              )}
+              {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
+            </div>
+          </div>
+          <div className="flow-wrap workflow-flow-wrap">
+            {dagLoading ? <Skeleton /> : dag?.nodes.length ? (
+              <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: .22 }} minZoom={.35} maxZoom={1.7} nodesDraggable onNodeClick={(_, node) => onSelectNode(node.id)} defaultEdgeOptions={{ className: "flow-edge" }}>
+                <Background color="#dfe4ec" gap={24} /><Controls showInteractive={false} /><MiniMap nodeStrokeWidth={3} zoomable pannable />
+              </ReactFlow>
+            ) : <Empty text="选择 Runtime 和 Instance 后加载 DAG" />}
+          </div>
+        </section>
+
+        <aside className="workflow-node-inspector">
+          <div className="panel-head compact">
+            <div>
+              <strong>{selectedStage?.title || "Node Inspector"}</strong>
+              <span>{selectedStage?.id || "-"}</span>
+            </div>
+            <span className={`status-pill ${selectedStatus}`}>{statusLabel(selectedStatus)}</span>
+          </div>
+          <DetailBlock title="Runtime state">
+            <KeyValues data={{
+              status: selectedStatus,
+              attempt: nodeDetail?.runId ? (selectedRun?.nodeStates?.[selectedStage?.id || ""]?.attempt || "-") : "-",
+              duration: formatDuration(selectedRun?.nodeStates?.[selectedStage?.id || ""]?.durationS || 0),
+              error: nodeDetail?.error || "-",
+            }} />
+          </DetailBlock>
+          <DetailBlock title="Inputs">
+            <KeyValues data={nodeDetail?.resolvedInputs || {}} />
+          </DetailBlock>
+          <DetailBlock title="Outputs">
+            <KeyValues data={nodeDetail?.actualOutputs || {}} />
+          </DetailBlock>
+          <DetailBlock title="Artifacts">
+            <ArtifactList artifacts={(nodeDetail?.artifacts || runArtifacts).slice(0, 5)} />
+          </DetailBlock>
+          <DetailBlock title="Git / TG">
+            <div className="event-list">
+              {[...gitEvents, ...tgEvents].slice(-6).reverse().map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
+              {!gitEvents.length && !tgEvents.length && <Empty text="当前 Run 暂无 Git / TG 事件" />}
+            </div>
+          </DetailBlock>
+          <DetailBlock title="Operations">
+            <div className="action-row">
+              <button type="button" className="retry-button" disabled={!selectedRun || retryPending} onClick={onRetryNode}>Retry Node</button>
+              <button type="button" disabled={selectedStatus !== "running" || cancelNodePending} onClick={onCancelNode}>Cancel Node</button>
+            </div>
+          </DetailBlock>
+          <DetailBlock title="Latest log">
+            <pre className="log-box compact-log">{nodeLog?.log || "该节点暂无日志"}</pre>
+          </DetailBlock>
+        </aside>
+      </div>
+
+      <section className="timeline-panel workflow-timeline-panel">
+        <div className="panel-head compact"><strong>Run Timeline</strong><span>围绕 DAG 节点查看一次执行</span></div>
+        <div className="timeline">
+          {(dag?.nodes || []).map((stage) => {
+            const state = selectedRun?.nodes[stage.id] || "waiting";
+            return (
+              <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => onSelectNode(stage.id)}>
+                <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -1528,6 +1436,10 @@ function NodesWorkspace({
   nodes,
   visibleNodes,
   selectedNode,
+  modules,
+  selectedModule,
+  moduleDetail,
+  moduleLoading,
   drafts,
   loading,
   selectedNodeId,
@@ -1537,6 +1449,7 @@ function NodesWorkspace({
   onNodeSearch,
   onNodeFilter,
   onSelectNode,
+  onSelectModule,
   onOpenDraft,
 }: {
   instance: Instance | undefined;
@@ -1544,6 +1457,10 @@ function NodesWorkspace({
   nodes: NodeRegistryItem[];
   visibleNodes: NodeRegistryItem[];
   selectedNode: NodeRegistryItem | undefined;
+  modules: NodeModule[];
+  selectedModule: NodeModule | undefined;
+  moduleDetail: NodeModuleDetail | undefined;
+  moduleLoading: boolean;
   drafts: NodeDraft[];
   loading: boolean;
   selectedNodeId: string;
@@ -1552,7 +1469,8 @@ function NodesWorkspace({
   nodeFilters: string[];
   onNodeSearch: (value: string) => void;
   onNodeFilter: (value: string) => void;
-  onSelectNode: (nodeId: string) => void;
+  onSelectNode: (nodeId: string, moduleId?: string) => void;
+  onSelectModule: (moduleId: string) => void;
   onOpenDraft: () => void;
 }) {
   const completeNodes = nodes.filter((node) => (node.missingFields || []).length === 0).length;
@@ -1576,59 +1494,99 @@ function NodesWorkspace({
         <Metric label="Publish" value="off" subtext="draft only" />
       </section>
 
-      <section className="node-lifecycle-panel">
-        <div className="panel-head lifecycle-head">
-          <div><strong>Node lifecycle lanes</strong><span>按输入、研究、构建和通知组织节点资产</span></div>
-          <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Create Node</button>
-        </div>
-        <div className="lifecycle-tools">
-          <div className="lifecycle-tabs" role="tablist" aria-label="Node category">
-            {nodeFilters.map((filter) => <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>{filter === "all" ? "All" : categoryLabel(filter)}</button>)}
+      <section className="node-module-workbench">
+        <aside className="node-list-panel">
+          <div className="panel-head compact"><div><strong>Node List</strong><span>{visibleNodes.length}/{nodes.length} registered</span></div><button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Create</button></div>
+          <div className="node-list-tools">
+            <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node" /></label>
+            <div className="lifecycle-tabs" role="tablist" aria-label="Node category">
+              {nodeFilters.map((filter) => <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>{filter === "all" ? "All" : categoryLabel(filter)}</button>)}
+            </div>
           </div>
-          <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node" /></label>
-        </div>
-        {loading ? <Skeleton /> : (
-          <div className="lifecycle-lanes">
-            {["input", "research", "build", "notify", "custom"].map((category) => {
-              const laneNodes = visibleNodes.filter((node) => String(node.ui?.category || "custom") === category);
-              const laneDrafts = category === "custom" ? drafts : [];
-              if (nodeFilter !== "all" && nodeFilter !== category) return null;
-              return (
-                <section key={category} className={`lifecycle-lane lane-${category}`}>
-                  <div className="lane-head"><span>{categoryLabel(category)}</span><small>{laneNodes.length + laneDrafts.length}</small></div>
-                  <div className="lane-node-list">
-                    {laneNodes.map((node) => (
-                      <button key={node.nodeId} type="button" className={`lifecycle-node ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
-                        <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
-                        <span className="lifecycle-node-copy">
-                          <strong>{node.title || node.nodeId}</strong>
-                          <small>{node.nodeId}</small>
-                          <span>{contractSummary(node)}</span>
-                        </span>
-                        <span className="lifecycle-node-meta">
-                          <span className="node-type">{String(node.executor?.type || node.case || "node")}</span>
-                          <CapabilityMini node={node} />
-                        </span>
-                      </button>
-                    ))}
-                    {laneDrafts.map((draft) => {
-                      const draftNode = draft.node || {};
-                      return <article key={draft.draftId} className="lifecycle-node draft"><span className="stage-letter">+</span><span className="lifecycle-node-copy"><strong>{String(draftNode.title || draftNode.id || draft.draftId)}</strong><small>draft · not published</small><span>Validate before publish</span></span><span className="status-pill waiting">draft</span></article>;
-                    })}
-                    {!laneNodes.length && !laneDrafts.length && <div className="lane-empty">No {categoryLabel(category)} node</div>}
+          {loading ? <Skeleton /> : (
+            <div className="node-picker-list">
+              {visibleNodes.map((node) => (
+                <button key={node.nodeId} type="button" className={`node-picker-row ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId, selectedModule?.id || "basic")}>
+                  <div>
+                    <strong>{node.title || node.nodeId}</strong>
+                    <span>{node.nodeId}</span>
+                    <span>{categoryLabel(String(node.ui?.category || "custom"))} · {String(node.executor?.type || node.case || "node")}</span>
                   </div>
-                </section>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                  <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+                  <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "warning" : "ready"}</span>
+                </button>
+              ))}
+              {!visibleNodes.length && <Empty text="没有匹配的 Node" />}
+            </div>
+          )}
+        </aside>
 
-      <section className="node-detail-workspace">
-        <NodeDetailPanel node={selectedNode} loading={loading} />
-        <NodeAssistPanel node={selectedNode} drafts={drafts} runtime={runtime} instance={instance} onOpenDraft={onOpenDraft} />
+        <section className="node-modules-panel">
+          <div className="panel-head compact"><div><strong>Node Modules</strong><span>{selectedNode?.nodeId || "No node"}</span></div></div>
+          <div className="node-module-list">
+            {modules.map((module) => (
+              <button key={module.id} type="button" className={`node-module-row ${selectedModule?.id === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
+                <span className={`dot ${module.status}`} />
+                <span>
+                  <strong>{module.title}</strong>
+                  <small>{module.description}</small>
+                  <small>{module.summary || "-"}</small>
+                </span>
+                <span className={`status-pill ${module.status}`}>{module.status}</span>
+              </button>
+            ))}
+            {!modules.length && <Empty text="该节点暂未返回 modules" />}
+          </div>
+          <div className="draft-strip">
+            <div className="section-title"><span>Drafts</span><span>{drafts.length}</span></div>
+            {drafts.slice(0, 3).map((draft) => <article key={draft.draftId} className="draft-item"><strong>{draft.draftId}</strong><code>{formatValue(draft.validation)}</code></article>)}
+            {!drafts.length && <Empty text="还没有节点草稿" />}
+          </div>
+        </section>
+
+        <ModuleDetailPanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} />
       </section>
     </>
+  );
+}
+
+function ModuleDetailPanel({
+  node,
+  module,
+  detail,
+  loading,
+}: {
+  node: NodeRegistryItem | undefined;
+  module: NodeModule | undefined;
+  detail: NodeModuleDetail | undefined;
+  loading: boolean;
+}) {
+  if (loading) return <section className="module-detail-panel"><Skeleton /></section>;
+  if (!node || !module) return <section className="module-detail-panel"><Empty text="选择一个 Node 和 Module 查看详情" /></section>;
+  const payload = detail?.detail || {};
+  return (
+    <section className="module-detail-panel">
+      <div className="node-detail-hero compact-hero">
+        <div>
+          <span className={`status-pill ${module.status}`}>{module.status}</span>
+          <h2>{node.title || node.nodeId}</h2>
+          <p>{module.title} · {module.description || "模块详情"}</p>
+          <div className="overview-tags">
+            <span>{node.nodeId}</span>
+            <span>{String(node.executor?.type || node.case || "node")}</span>
+            <span>{module.runScoped ? "Run scoped" : "Definition"}</span>
+          </div>
+        </div>
+      </div>
+      <div className="module-detail-body">
+        <DetailBlock title={`${module.title} Detail`}>
+          <KeyValues data={payload} />
+        </DetailBlock>
+        {module.id === "skill" && <DetailBlock title="Skill README"><pre className="log-box compact-log">{String((payload.skill_readme as string) || node.skillReadme || "No README")}</pre></DetailBlock>}
+        {module.id === "artifacts" && <DetailBlock title="Artifacts"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
+        {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
+      </div>
+    </section>
   );
 }
 

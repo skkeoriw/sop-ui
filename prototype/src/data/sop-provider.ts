@@ -8,6 +8,8 @@ import type {
   NodeDraftInput,
   NodeLog,
   NodeEvent,
+  NodeModule,
+  NodeModuleDetail,
   NodeRegistryItem,
   Run,
   Runtime,
@@ -175,6 +177,28 @@ function mapArtifact(artifact: Record<string, unknown>) {
   };
 }
 
+function mapNodeModule(raw: Record<string, unknown>): NodeModule {
+  return {
+    id: String(raw.id || ""),
+    title: String(raw.title || raw.id || ""),
+    description: raw.description ? String(raw.description) : undefined,
+    status: String(raw.status || "waiting"),
+    summary: raw.summary ? String(raw.summary) : undefined,
+    detailUrl: raw.detail_url ? String(raw.detail_url) : raw.detailUrl ? String(raw.detailUrl) : undefined,
+    runScoped: Boolean(raw.run_scoped ?? raw.runScoped),
+  };
+}
+
+function mapNodeModuleDetail(raw: Record<string, unknown>): NodeModuleDetail {
+  return {
+    sopId: String(raw.sop_id || raw.sopId || ""),
+    nodeId: String(raw.node_id || raw.nodeId || ""),
+    pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : raw.pipelineId ? String(raw.pipelineId) : undefined,
+    module: mapNodeModule((raw.module as Record<string, unknown>) || {}),
+    detail: (raw.detail as Record<string, unknown>) || {},
+  };
+}
+
 function mapNodeConfig(raw: Record<string, unknown>, nodeId: string): NodeConfig {
   const infraRaw = raw.infra as Record<string, unknown> | undefined;
   return {
@@ -208,6 +232,7 @@ function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
     actions: (raw.actions as Record<string, unknown>) || {},
     cli: (raw.cli as Record<string, string>) || {},
+    modules: ((raw.modules as Array<Record<string, unknown>>) || []).map(mapNodeModule),
     editable: Boolean(raw.editable),
     publishEnabled: Boolean(raw.publish_enabled ?? raw.publishEnabled),
     missingFields: ((raw.missing_fields || raw.missingFields) as string[]) || [],
@@ -375,6 +400,23 @@ export const sopProvider: SopDataProvider = {
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes`
     );
     return (raw.nodes || []).map(mapNodeRegistryItem);
+  },
+
+  async listNodeModules(runtime, instanceId, nodeId, pipelineId) {
+    const prefix = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}`;
+    const url = pipelineId
+      ? `${prefix}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/modules`
+      : `${prefix}/nodes/${encodeURIComponent(nodeId)}/modules`;
+    const raw = await requestJson<{ modules?: Array<Record<string, unknown>> }>(url);
+    return (raw.modules || []).map(mapNodeModule);
+  },
+
+  async getNodeModule(runtime, instanceId, nodeId, moduleId, pipelineId) {
+    const prefix = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}`;
+    const url = pipelineId
+      ? `${prefix}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}/modules/${encodeURIComponent(moduleId)}`
+      : `${prefix}/nodes/${encodeURIComponent(nodeId)}/modules/${encodeURIComponent(moduleId)}`;
+    return mapNodeModuleDetail(await requestJson<Record<string, unknown>>(url));
   },
 
   async listNodeDrafts(runtime, instanceId) {

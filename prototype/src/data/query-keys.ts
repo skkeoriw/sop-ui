@@ -29,6 +29,10 @@ export const queryKeys = {
     ["sop", mode, ...runtimeKey(runtime), instanceId, "nodeConfig", nodeId] as const,
   nodes: (mode: DataMode, runtime: Runtime | undefined, instanceId: string) =>
     ["sop", mode, ...runtimeKey(runtime), instanceId, "nodes"] as const,
+  nodeModules: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId: string, pipelineId = "") =>
+    ["sop", mode, ...runtimeKey(runtime), instanceId, "nodeModules", nodeId, pipelineId] as const,
+  nodeModule: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId: string, moduleId: string, pipelineId = "") =>
+    ["sop", mode, ...runtimeKey(runtime), instanceId, "nodeModule", nodeId, moduleId, pipelineId] as const,
   nodeDrafts: (mode: DataMode, runtime: Runtime | undefined, instanceId: string) =>
     ["sop", mode, ...runtimeKey(runtime), instanceId, "nodeDrafts"] as const,
 };

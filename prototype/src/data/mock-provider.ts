@@ -8,6 +8,8 @@ import type {
   NodeDraft,
   NodeDraftInput,
   NodeLog,
+  NodeModule,
+  NodeModuleDetail,
   NodeRegistryItem,
   Run,
   Runtime,
@@ -132,10 +134,58 @@ function registryItem(nodeId: string, target: Runtime): NodeRegistryItem {
       actions: `bash <(curl -fsSL https://skill.vyibc.com/sop-node.sh) --endpoint=${target.endpoint} --instance=${instance(target.id).instanceId} --node=${nodeId} --action=actions`,
       retry_dry_run: `bash <(curl -fsSL https://skill.vyibc.com/sop-node.sh) --endpoint=${target.endpoint} --instance=${instance(target.id).instanceId} --node=${nodeId} --pipeline-id=<pipeline_id> --action=retry --dry-run`,
     },
+    modules: mockNodeModules(nodeId),
     editable: true,
     publishEnabled: false,
     missingFields: [],
     ui: dagNode?.ui,
+  };
+}
+
+function mockNodeModules(nodeId: string, runScoped = false): NodeModule[] {
+  return [
+    ["basic", "Basic", "节点身份、分类和发布状态"],
+    ["executor", "Executor", "执行器、Agent、Webhook 和操作入口"],
+    ["skill", "Skill", "节点背后的 Skill 安装、说明和来源"],
+    ["inputs", "Inputs", "输入契约和当前 Run 的 resolved inputs"],
+    ["outputs", "Outputs", "输出契约、实际输出和校验结果"],
+    ["artifacts", "Artifacts", "当前 Run 的记录产物和候选产物"],
+    ["capabilities", "Capabilities", "Git、TG、SSE 和日志附属能力"],
+    ["runtime", "Runtime State", "节点运行状态、进度、耗时和错误"],
+    ["actions", "Actions", "Inspect、Retry、Cancel、Validate 和 Publish"],
+    ["logs", "Logs / Events", "节点日志、事件和错误线索"],
+  ].map(([id, title, description]) => ({
+    id,
+    title,
+    description,
+    status: id === "runtime" && runScoped ? "done" : "ready",
+    summary: id === "skill" ? `sop-${nodeId}` : id === "executor" ? "agent-skill · hermes" : id === "artifacts" ? "2 recorded artifacts" : `${title} module`,
+    detailUrl: runScoped ? `/runs/mock/nodes/${nodeId}/modules/${id}` : `/nodes/${nodeId}/modules/${id}`,
+    runScoped,
+  }));
+}
+
+function mockNodeModuleDetail(target: Runtime, pipelineId: string | undefined, nodeId: string, moduleId: string): NodeModuleDetail {
+  const item = registryItem(nodeId, target);
+  const module = mockNodeModules(nodeId, Boolean(pipelineId)).find((candidate) => candidate.id === moduleId) || mockNodeModules(nodeId)[0];
+  const detailByModule: Record<string, Record<string, unknown>> = {
+    basic: { node_id: item.nodeId, title: item.title, description: item.description, ui: item.ui, missing_fields: item.missingFields },
+    executor: { executor: item.executor, actions: item.actions, cli: item.cli },
+    skill: { skill: item.skill, skill_script: item.skillScript, skill_readme: item.skillReadme },
+    inputs: { declared_inputs: item.inputs, optional_inputs: item.optionalInputs, resolved_inputs: { source_url: "https://youtube.example/watch?v=mock", reports: ["raw/mock/report.md"] } },
+    outputs: { declared_outputs: item.outputs, actual_outputs: { pages: ["wiki/entities/Agent.md"], index: ["index.md"] }, validation: { status: "passed" } },
+    artifacts: { artifacts: mockArtifacts(nodeId), discovered_candidates: [] },
+    capabilities: { declared_capabilities: item.capabilities, run_capabilities: { git: { status: "done", commit: "mock123" }, telegram: { status: "sent" }, sse: { status: "live" } } },
+    runtime: { status: "done", progress: 100, attempt: 1, duration_s: 96, error: "" },
+    actions: { actions: item.actions, cli: item.cli, publish_enabled: false },
+    logs: { log: nodeLog(nodeId, "done"), events: [{ ts: new Date().toISOString(), event: "node.completed", node_id: nodeId }] },
+  };
+  return {
+    sopId: instance(target.id).instanceId,
+    nodeId,
+    pipelineId,
+    module,
+    detail: detailByModule[moduleId] || detailByModule.basic,
   };
 }
 
@@ -260,6 +310,16 @@ export const mockProvider: SopDataProvider = {
   async listNodes(target): Promise<NodeRegistryItem[]> {
     await delay();
     return stages.map((stage) => registryItem(stage.id, target));
+  },
+
+  async listNodeModules(_target, _instanceId, nodeId, pipelineId): Promise<NodeModule[]> {
+    await delay();
+    return mockNodeModules(nodeId, Boolean(pipelineId));
+  },
+
+  async getNodeModule(target, _instanceId, nodeId, moduleId, pipelineId): Promise<NodeModuleDetail> {
+    await delay();
+    return mockNodeModuleDetail(target, pipelineId, nodeId, moduleId);
   },
 
   async listNodeDrafts(target): Promise<NodeDraft[]> {
