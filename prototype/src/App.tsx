@@ -728,6 +728,11 @@ export default function App() {
             streamStatus={streamStatus}
             nodesReadyCount={nodesReadyCount}
             managedNodeCount={managedNodes.length}
+            inspectorTab={inspectorTab}
+            setInspectorTab={setInspectorTab}
+            rawLogOpen={rawLogOpen}
+            setRawLogOpen={setRawLogOpen}
+            openNodeConfig={openNodeConfig}
             onSelectRun={(pipelineId) => { setSelectedRunId(pipelineId); navigateTo("workflow", pipelineId, selectedStage?.id || ""); }}
             onSelectNode={(nodeId) => { setSelectedStageId(nodeId); navigateTo("workflow", selectedRun?.pipelineId || "", nodeId); }}
             onCancelRun={handleCancelRun}
@@ -957,6 +962,11 @@ function WorkflowWorkspace({
   streamStatus,
   nodesReadyCount,
   managedNodeCount,
+  inspectorTab,
+  setInspectorTab,
+  rawLogOpen,
+  setRawLogOpen,
+  openNodeConfig,
   onSelectRun,
   onSelectNode,
   onCancelRun,
@@ -985,6 +995,11 @@ function WorkflowWorkspace({
   streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
   nodesReadyCount: number;
   managedNodeCount: number;
+  inspectorTab: InspectorTab;
+  setInspectorTab: (tab: InspectorTab) => void;
+  rawLogOpen: boolean;
+  setRawLogOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  openNodeConfig: (nodeId: string) => void;
   onSelectRun: (pipelineId: string) => void;
   onSelectNode: (nodeId: string) => void;
   onCancelRun: () => void;
@@ -995,7 +1010,7 @@ function WorkflowWorkspace({
   cancelNodePending: boolean;
 }) {
   const gitEvents = runEvents.filter((event) => event.event.startsWith("git."));
-  const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram."));
+  const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram.") || event.event.startsWith("tg_notify"));
   return (
     <section className="workflow-workspace">
       <div className="workflow-command-bar">
@@ -1055,125 +1070,161 @@ function WorkflowWorkspace({
           <div className="panel-head compact">
             <div>
               <strong>{selectedStage?.title || "Node Inspector"}</strong>
-              <span>{selectedStage?.id || "-"}</span>
+              <span>{selectedStage?.mode || selectedStage?.id || "选择 DAG 节点"}</span>
             </div>
-            <span className={`status-pill ${selectedStatus}`}>{statusLabel(selectedStatus)}</span>
+            <div className="head-actions compact-actions">
+              {selectedStage && <span className={`status-pill ${selectedStatus}`}>{statusIcon(selectedStatus)}{statusLabel(selectedStatus)}</span>}
+              {selectedStage && (
+                <button type="button" className="icon-btn" title="查看节点配置" onClick={() => openNodeConfig(selectedStage.id)}>
+                  <Info size={15} />
+                </button>
+              )}
+            </div>
           </div>
-          <DetailBlock title="Runtime state">
-            <KeyValues data={{
-              status: selectedStatus,
-              attempt: nodeDetail?.runId ? (selectedRun?.nodeStates?.[selectedStage?.id || ""]?.attempt || "-") : "-",
-              duration: formatDuration(selectedRun?.nodeStates?.[selectedStage?.id || ""]?.durationS || 0),
-              error: nodeDetail?.error || "-",
-            }} />
-          </DetailBlock>
-          <DetailBlock title="Inputs">
-            <KeyValues data={nodeDetail?.resolvedInputs || {}} />
-          </DetailBlock>
-          <DetailBlock title="Outputs">
-            <KeyValues data={nodeDetail?.actualOutputs || {}} />
-          </DetailBlock>
-          <DetailBlock title="Artifacts">
-            <ArtifactList artifacts={(nodeDetail?.artifacts || runArtifacts).slice(0, 5)} />
-          </DetailBlock>
-          <DetailBlock title="Git / TG">
-            <div className="event-list">
-              {[...gitEvents, ...tgEvents].slice(-6).reverse().map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
-              {!gitEvents.length && !tgEvents.length && <Empty text="当前 Run 暂无 Git / TG 事件" />}
-            </div>
-          </DetailBlock>
-          <DetailBlock title="Operations">
-            <div className="action-row">
-              <button type="button" className="retry-button" disabled={!selectedRun || retryPending} onClick={onRetryNode}>Retry Node</button>
-              <button type="button" disabled={selectedStatus !== "running" || cancelNodePending} onClick={onCancelNode}>Cancel Node</button>
-            </div>
-          </DetailBlock>
-          <DetailBlock title="Latest log">
-            <pre className="log-box compact-log">{nodeLog?.log || "该节点暂无日志"}</pre>
-          </DetailBlock>
+
+          <div className="tabs">
+            {(["config", "run", "artifacts", "logs"] as InspectorTab[]).map((tab) => (
+              <button key={tab} type="button" className={inspectorTab === tab ? "active" : ""} onClick={() => setInspectorTab(tab)}>{inspectorTabLabel(tab)}</button>
+            ))}
+          </div>
+
+          <div className="workflow-inspector-body">
+            {!selectedStage || !selectedRun || !instance || !runtime ? <Empty text="选择一个 Execution 和 Stage 查看详情" /> : (
+              <>
+                {inspectorTab === "config" && (
+                  <>
+                    <DetailBlock title="Node Definition">
+                      <KeyValues data={{
+                        stage_id: selectedStage.id,
+                        title: selectedStage.title,
+                        mode: selectedStage.mode,
+                        summary: selectedStage.summary || "-"
+                      }} />
+                    </DetailBlock>
+                    <DetailBlock title="Executor">
+                      {nodeDetail?.executor ? <KeyValues data={Object.fromEntries(Object.entries(nodeDetail.executor).filter(([, value]) => value))} /> : <Empty text="选择节点后加载" />}
+                    </DetailBlock>
+                    <DetailBlock title="Input Contract">
+                      <KeyValues data={nodeDetail?.declaredInputs || selectedStage.inputs} />
+                    </DetailBlock>
+                    <DetailBlock title="Output Contract">
+                      <KeyValues data={nodeDetail?.declaredOutputs || selectedStage.outputs} />
+                    </DetailBlock>
+                    <DetailBlock title="Capabilities">
+                      <KeyValues data={nodeDetail?.capabilities || {
+                        github: { enabled: true },
+                        telegram: { enabled: nodeDetail?.infra?.tgNotify !== false },
+                        sse: { enabled: true },
+                        log: { enabled: nodeDetail?.infra?.logRecord !== false }
+                      }} />
+                    </DetailBlock>
+                    {nodeDetail?.plan && <DetailBlock title="Wiki Build Plan"><KeyValues data={nodeDetail.plan} /></DetailBlock>}
+                  </>
+                )}
+
+                {inspectorTab === "run" && (
+                  <>
+                    <DetailBlock title="Execution">
+                      <KeyValues data={{
+                        execution: selectedRun.pipelineId,
+                        run_id: nodeDetail?.runId || "-",
+                        started: nodeDetail?.startedAt || "-",
+                        finished: nodeDetail?.finishedAt || "-",
+                        instance: instance.instanceId,
+                        repo: instance.repo,
+                        status: selectedStatus,
+                        attempt: selectedRun.nodeStates?.[selectedStage.id]?.attempt || "-",
+                        duration: formatDuration(selectedRun.nodeStates?.[selectedStage.id]?.durationS || 0),
+                      }} />
+                    </DetailBlock>
+                    {nodeDetail?.validation && (
+                      <DetailBlock title="Output Validation">
+                        <ValidationSummary validation={nodeDetail.validation} />
+                      </DetailBlock>
+                    )}
+                    <DetailBlock title="Resolved Inputs">
+                      <KeyValues data={nodeDetail?.resolvedInputs || {}} />
+                    </DetailBlock>
+                    <DetailBlock title="Recorded Outputs">
+                      <KeyValues data={nodeDetail?.actualOutputs || {}} />
+                    </DetailBlock>
+                    <DetailBlock title="Git / TG">
+                      <div className="event-list">
+                        {[...gitEvents, ...tgEvents].slice(-8).reverse().map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
+                        {!gitEvents.length && !tgEvents.length && <Empty text="当前 Run 暂无 Git / TG 事件" />}
+                      </div>
+                    </DetailBlock>
+                    {nodeDetail?.error && (
+                      <DetailBlock title="Error">
+                        <pre className="log-box error-log">{nodeDetail.error}</pre>
+                      </DetailBlock>
+                    )}
+                    <DetailBlock title="Operations">
+                      <div className="action-row">
+                        {selectedRun.status === "running" && <button type="button" className="cancel-button" disabled={cancelRunPending} onClick={onCancelRun}>Cancel Run</button>}
+                        {(selectedStatus === "failed" || selectedStatus === "cancelled" || selectedStatus === "done") && (
+                          <button type="button" className="retry-button" disabled={retryPending} onClick={onRetryNode}>Retry Node</button>
+                        )}
+                        {selectedStatus === "running" && <button type="button" className="cancel-button" disabled={cancelNodePending} onClick={onCancelNode}>Cancel Node</button>}
+                      </div>
+                    </DetailBlock>
+                  </>
+                )}
+
+                {inspectorTab === "artifacts" && (
+                  <>
+                    <DetailBlock title={`Recorded Artifacts · ${nodeDetail?.artifacts?.length || 0}`}>
+                      <ArtifactList artifacts={nodeDetail?.artifacts || []} />
+                    </DetailBlock>
+                    <DetailBlock title={`Unverified Candidates · ${nodeDetail?.discoveredCandidates?.length || 0}`}>
+                      <p className="candidate-warning">这些文件来自共享路径扫描，无法确认属于当前 Execution，不会作为下游节点输入。</p>
+                      <ArtifactList artifacts={nodeDetail?.discoveredCandidates || []} />
+                    </DetailBlock>
+                    {!nodeDetail?.artifacts?.length && runArtifacts.length > 0 && (
+                      <DetailBlock title={`Run Artifacts · ${runArtifacts.length}`}>
+                        <ArtifactList artifacts={runArtifacts} />
+                      </DetailBlock>
+                    )}
+                  </>
+                )}
+
+                {inspectorTab === "logs" && (
+                  <>
+                    {(nodeLog?.events ?? []).length > 0 && (
+                      <DetailBlock title="Events">
+                        <div className="event-list">
+                          {(nodeLog?.events ?? []).map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
+                        </div>
+                      </DetailBlock>
+                    )}
+                    <DetailBlock title={
+                      <button type="button" className="log-toggle" onClick={() => setRawLogOpen((value) => !value)}>
+                        Raw Log {rawLogOpen ? "▲" : "▼"}
+                      </button>
+                    }>
+                      {rawLogOpen && <pre className="log-box">{nodeLog?.log || "没有日志"}</pre>}
+                      {!rawLogOpen && <div className="empty-state" style={{ fontSize: 12 }}>点击 Raw Log 展开</div>}
+                    </DetailBlock>
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </aside>
       </div>
 
-      <section className="workflow-runtime-observatory">
-        <div className="panel-head">
-          <div>
-            <strong>Run Observatory</strong>
-            <span>运行时进度、节点输入输出、产物、日志和附属能力状态</span>
-          </div>
-          <span className="status-pill running">SSE {streamStatus}</span>
-        </div>
-        <div className="run-observatory workflow-run-observatory">
-          <aside className="runs-table-panel">
-            <div className="panel-head compact"><div><strong>Runs</strong><span>选择一个 pipeline</span></div></div>
-            <RunTable runs={runs} selectedRunId={selectedRun?.pipelineId || ""} onSelect={onSelectRun} />
-          </aside>
-
-          <section className="timeline-panel run-timeline-panel">
-            <div className="panel-head"><div><strong>Node runtime timeline</strong><span>节点级状态、耗时、产物数量和错误</span></div></div>
-            <div className="run-stage-list">
-              {(dag?.nodes || []).map((stage) => {
-                const state = selectedRun?.nodes[stage.id] || "waiting";
-                const stateDetail = selectedRun?.nodeStates?.[stage.id];
-                return (
-                  <button key={stage.id} type="button" className={`run-stage-row ${state} ${selectedStage?.id === stage.id ? "active" : ""}`} onClick={() => onSelectNode(stage.id)}>
-                    <span className={`dot ${state}`} />
-                    <span>
-                      <strong>{stage.title}</strong>
-                      <small>{stage.ui?.stageLetter || stage.mode} · {String(stage.executor?.type || "executor")} · {formatDuration(stateDetail?.durationS || 0)} · {stateDetail?.artifactCount || 0} artifacts</small>
-                      {stateDetail?.error && <small className="error-text">{stateDetail.error}</small>}
-                    </span>
-                    <span>
-                      <span className={`status-pill ${state}`}>{statusLabel(state)}</span>
-                      <small>{stateDetail?.attempt ? `attempt ${stateDetail.attempt}` : "not started"}</small>
-                    </span>
-                  </button>
-                );
-              })}
-              {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
-            </div>
-          </section>
-
-          <aside className="run-command-panel">
-            <div className="panel-head compact">
-              <div><strong>Node runtime detail</strong><span>{selectedStage?.id || "-"}</span></div>
-              <span className={`status-pill ${selectedStatus}`}>{statusLabel(selectedStatus)}</span>
-            </div>
-            <DetailBlock title="Operations">
-              <div className="action-row">
-                <button type="button" className="cancel-button" disabled={!selectedRun || cancelRunPending} onClick={onCancelRun}>Cancel Run</button>
-                <button type="button" className="retry-button" disabled={!selectedRun || retryPending} onClick={onRetryNode}>Retry Node</button>
-                <button type="button" disabled={selectedStatus !== "running" || cancelNodePending} onClick={onCancelNode}>Cancel Node</button>
-              </div>
-            </DetailBlock>
-            <DetailBlock title="Runtime state">
-              <KeyValues data={{
-                run: selectedRun?.pipelineId || "-",
-                node: selectedStage?.id || "-",
-                status: selectedStatus,
-                duration: formatDuration(selectedRun?.nodeStates?.[selectedStage?.id || ""]?.durationS || 0),
-                progress: `${selectedRun?.nodeStates?.[selectedStage?.id || ""]?.progress || 0}%`,
-                error: nodeDetail?.error || "-",
-              }} />
-            </DetailBlock>
-            <DetailBlock title="Resolved Inputs">
-              <KeyValues data={nodeDetail?.resolvedInputs || {}} />
-            </DetailBlock>
-            <DetailBlock title="Actual Outputs">
-              <KeyValues data={nodeDetail?.actualOutputs || {}} />
-            </DetailBlock>
-            <DetailBlock title={`Artifacts · ${nodeDetail?.artifacts?.length || runArtifacts.length || 0}`}>
-              <ArtifactList artifacts={nodeDetail?.artifacts?.length ? nodeDetail.artifacts : runArtifacts} />
-            </DetailBlock>
-            <DetailBlock title="Git / TG">
-              <div className="event-list">
-                {runEvents.filter((event) => event.event.startsWith("git.") || event.event.startsWith("telegram.")).slice(-8).reverse().map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
-                {!gitEvents.length && !tgEvents.length && <Empty text="当前 Run 暂无 Git / TG 事件" />}
-              </div>
-            </DetailBlock>
-            <DetailBlock title="Latest log">
-              <pre className="log-box compact-log">{nodeLog?.log || "该节点暂无日志"}</pre>
-            </DetailBlock>
-          </aside>
+      <section className="timeline-panel workflow-timeline-panel">
+        <div className="panel-head compact"><strong>Execution Timeline</strong><span>点击 Stage 查看详情 · Info 查看节点配置</span></div>
+        <div className="timeline">
+          {(dag?.nodes || []).map((stage) => {
+            const state = selectedRun?.nodes[stage.id] || "waiting";
+            return (
+              <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => onSelectNode(stage.id)}>
+                <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
+              </button>
+            );
+          })}
+          {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
         </div>
       </section>
     </section>
