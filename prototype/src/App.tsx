@@ -683,7 +683,7 @@ export default function App() {
           </button>
         </div>
         <nav className="rail-nav" aria-label="Primary">
-          <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow", selectedRun?.pipelineId || "", selectedStage?.id || "")}>
+          <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>
             <Network size={17} /><span>Workflow</span><small>{runs.length || "-"} runs</small>
           </button>
           <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
@@ -778,11 +778,24 @@ export default function App() {
       </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
-        {viewMode === "workflow" ? (
-          <WorkflowWorkspace
+        {viewMode === "workflow" && !route.pipelineId ? (
+          <WorkflowHome
             runtime={runtime}
             instance={instance}
             mode={mode}
+            selectedRun={selectedRun}
+            dag={dag}
+            runArtifacts={runArtifactsQuery.data || []}
+            streamStatus={streamStatus}
+            nodesReadyCount={nodesReadyCount}
+            managedNodeCount={managedNodes.length}
+            runs={visibleExecutions}
+            onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "", selectedStage?.id || dag?.nodes[0]?.id || "")}
+          />
+        ) : viewMode === "workflow" ? (
+          <WorkflowWorkspace
+            runtime={runtime}
+            instance={instance}
             runs={visibleExecutions}
             selectedRun={selectedRun}
             selectedRunMissing={routeRunMissing}
@@ -797,8 +810,6 @@ export default function App() {
             runEvents={runEventsQuery.data || []}
             runArtifacts={runArtifactsQuery.data || []}
             streamStatus={streamStatus}
-            nodesReadyCount={nodesReadyCount}
-            managedNodeCount={managedNodes.length}
             inspectorTab={inspectorTab}
             setInspectorTab={setInspectorTab}
             rawLogOpen={rawLogOpen}
@@ -1015,10 +1026,80 @@ function OverviewPage({
   );
 }
 
-function WorkflowWorkspace({
+function WorkflowHome({
   runtime,
   instance,
   mode,
+  selectedRun,
+  dag,
+  runArtifacts,
+  streamStatus,
+  nodesReadyCount,
+  managedNodeCount,
+  runs,
+  onOpenWorkflow,
+}: {
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  mode: DataMode;
+  selectedRun: Run | undefined;
+  dag: Dag | undefined;
+  runArtifacts: Artifact[];
+  streamStatus: StreamStatus;
+  nodesReadyCount: number;
+  managedNodeCount: number;
+  runs: Run[];
+  onOpenWorkflow: () => void;
+}) {
+  return (
+    <section className="workflow-home">
+      <div className="workflow-command-bar">
+        <div className="workflow-title">
+          <span className="status-pill running"><Workflow size={14} />Workflow</span>
+          <div>
+            <h1>DAG 驱动的执行观察</h1>
+            <p>{instance?.title || "SOP Workflow"} · {runtime?.endpoint || "No endpoint"} · {mode}</p>
+          </div>
+        </div>
+        <div className="workflow-metrics">
+          <Metric label="Progress" value={`${selectedRun?.progress ?? 0}%`} subtext={`${selectedRun?.doneCount ?? 0}/${selectedRun?.nodeCount ?? dag?.nodes.length ?? 0} nodes`} />
+          <Metric label="Artifacts" value={selectedRun?.artifactCount ?? runArtifacts.length} subtext="run scoped" />
+          <Metric label="Nodes" value={`${nodesReadyCount}/${managedNodeCount || 0}`} subtext="metadata ready" />
+          <Metric label="SSE" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
+        </div>
+      </div>
+
+      <section className="workflow-entry-panel">
+        <div className="panel-head">
+          <div>
+            <strong>Workflows</strong>
+            <span>选择一个 Workflow 后进入 DAG 运行详情</span>
+          </div>
+          <span>{instance ? 1 : 0}</span>
+        </div>
+        {instance ? (
+          <button type="button" className="workflow-entry-card" onClick={onOpenWorkflow}>
+            <div>
+              <span className="status-pill done"><GitBranch size={14} />Active Workflow</span>
+              <h2>{instance.title || "YouTube Wiki SOP"}</h2>
+              <p>{instance.repo || instance.instanceId}</p>
+            </div>
+            <div className="workflow-entry-meta">
+              <Metric label="Executions" value={runs.length} subtext={selectedRun?.pipelineId ? shortId(selectedRun.pipelineId) : "no run selected"} />
+              <span className={`status-pill ${selectedRun?.status || "waiting"}`}>{selectedRun ? statusLabel(selectedRun.status) : "No run"}</span>
+            </div>
+          </button>
+        ) : (
+          <Empty text="当前 Runtime 没有可用 Workflow" />
+        )}
+      </section>
+    </section>
+  );
+}
+
+function WorkflowWorkspace({
+  runtime,
+  instance,
   runs,
   selectedRun,
   selectedRunMissing,
@@ -1033,8 +1114,6 @@ function WorkflowWorkspace({
   runEvents,
   runArtifacts,
   streamStatus,
-  nodesReadyCount,
-  managedNodeCount,
   inspectorTab,
   setInspectorTab,
   rawLogOpen,
@@ -1051,7 +1130,6 @@ function WorkflowWorkspace({
 }: {
   runtime: Runtime | undefined;
   instance: Instance | undefined;
-  mode: DataMode;
   runs: Run[];
   selectedRun: Run | undefined;
   selectedRunMissing: boolean;
@@ -1065,9 +1143,7 @@ function WorkflowWorkspace({
   nodeLog: NodeLog | undefined;
   runEvents: NodeEvent[];
   runArtifacts: Artifact[];
-  streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
-  nodesReadyCount: number;
-  managedNodeCount: number;
+  streamStatus: StreamStatus;
   inspectorTab: InspectorTab;
   setInspectorTab: (tab: InspectorTab) => void;
   rawLogOpen: boolean;
@@ -1086,25 +1162,9 @@ function WorkflowWorkspace({
   const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram.") || event.event.startsWith("tg_notify"));
   return (
     <section className="workflow-workspace">
-      <div className="workflow-command-bar">
-        <div className="workflow-title">
-          <span className="status-pill running"><Workflow size={14} />Workflow</span>
-          <div>
-            <h1>DAG 驱动的执行观察</h1>
-            <p>{instance?.title || "SOP Workflow"} · {runtime?.endpoint || "No endpoint"} · {mode}</p>
-          </div>
-        </div>
-        <div className="workflow-metrics">
-          <Metric label="Progress" value={`${selectedRun?.progress ?? 0}%`} subtext={`${selectedRun?.doneCount ?? 0}/${selectedRun?.nodeCount ?? dag?.nodes.length ?? 0} nodes`} />
-          <Metric label="Artifacts" value={selectedRun?.artifactCount ?? runArtifacts.length} subtext="run scoped" />
-          <Metric label="Nodes" value={`${nodesReadyCount}/${managedNodeCount || 0}`} subtext="metadata ready" />
-          <Metric label="SSE" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
-        </div>
-      </div>
-
       {selectedRunMissing && (
         <div className="warning-banner">
-          URL 指向的 Run 不存在或当前 Runtime 未返回该 Run。页面不会静默切换到其他 Run，请从 Current Run 重新选择。
+          URL 指向的 Run 不存在或当前 Runtime 未返回该 Run。页面不会静默切换到其他 Run，请从 Executions 重新选择。
         </div>
       )}
 

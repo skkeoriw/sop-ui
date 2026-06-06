@@ -121,7 +121,7 @@ pre {
 }
 
 .app-shell.single-shell.rail-collapsed {
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .single-shell .topbar,
@@ -228,12 +228,14 @@ pre {
 }
 
 .rail-collapsed .control-rail {
-  padding: 14px 10px;
+  padding: 12px 8px;
 }
 
 .rail-collapsed .rail-brand {
-  justify-content: center;
-  padding-bottom: 10px;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 0 0 10px;
 }
 
 .rail-collapsed .rail-brand > div:not(.brand-mark),
@@ -244,16 +246,20 @@ pre {
 }
 
 .rail-collapsed .rail-collapse-btn {
-  width: 28px;
-  min-width: 28px;
-  min-height: 28px;
+  width: 36px;
+  min-width: 36px;
+  min-height: 36px;
   margin-left: 0;
 }
 
 .rail-collapsed .rail-nav button {
   grid-template-columns: 1fr;
   justify-items: center;
+  width: 44px;
+  min-height: 44px;
+  justify-self: center;
   padding: 0;
+  border-radius: 8px;
 }
 
 .rail-empty {
@@ -1094,6 +1100,12 @@ pre {
   gap: 14px;
 }
 
+.workflow-home {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
 .workflow-command-bar {
   display: grid;
   grid-template-columns: minmax(360px, .85fr) minmax(520px, 1.15fr);
@@ -1104,6 +1116,7 @@ pre {
 .workflow-title,
 .run-select,
 .warning-banner,
+.workflow-entry-panel,
 .workflow-node-inspector,
 .workflow-run-panel,
 .workflow-execution-list,
@@ -1163,6 +1176,50 @@ pre {
   font-size: 20px;
   line-height: 1.12;
   overflow-wrap: anywhere;
+}
+
+.workflow-entry-panel {
+  overflow: hidden;
+}
+
+.workflow-entry-card {
+  width: 100%;
+  min-height: 148px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, .32fr);
+  align-items: stretch;
+  gap: 14px;
+  padding: 16px;
+  border: 0;
+  border-top: 1px solid var(--line-2);
+  border-radius: 0;
+  background: linear-gradient(180deg, #fff, #f8fbff);
+  text-align: left;
+}
+
+.workflow-entry-card:hover {
+  background: var(--blue-soft);
+}
+
+.workflow-entry-card h2 {
+  margin: 12px 0 6px;
+  font-size: 24px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.workflow-entry-card p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.workflow-entry-meta {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  justify-items: end;
 }
 
 .workflow-metrics .metric-panel small {
@@ -2662,7 +2719,7 @@ pre {
   }
 
   .app-shell.single-shell.rail-collapsed {
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: 64px minmax(0, 1fr);
   }
 
   .control-rail {
@@ -2710,6 +2767,7 @@ pre {
   .console-grid,
   .run-observatory,
   .workflow-command-bar,
+  .workflow-entry-card,
   .workflow-primary-grid,
   .artifacts-layout,
   .settings-grid {
@@ -2834,6 +2892,7 @@ pre {
   .summary-grid,
   .console-metrics,
   .workflow-metrics,
+  .workflow-entry-card,
   .node-summary,
   .draft-grid,
   .node-workbench,
