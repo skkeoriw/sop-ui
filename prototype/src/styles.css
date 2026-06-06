@@ -117,7 +117,7 @@ pre {
 }
 
 .app-shell.single-shell {
-  grid-template-columns: 230px minmax(0, 1fr);
+  grid-template-columns: 204px minmax(0, 1fr);
 }
 
 .app-shell.single-shell.rail-collapsed {
@@ -134,8 +134,8 @@ pre {
   min-width: 0;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 18px;
-  padding: 18px 14px;
+  gap: 14px;
+  padding: 14px 10px;
   border-right: 1px solid var(--line);
   background: var(--rail);
   color: var(--text);
@@ -1180,14 +1180,14 @@ pre {
 .workflow-primary-grid {
   min-height: 640px;
   display: grid;
-  grid-template-columns: minmax(260px, 300px) minmax(520px, 1fr) minmax(360px, 420px);
+  grid-template-columns: minmax(210px, 240px) minmax(640px, 1fr) minmax(340px, 380px);
   gap: 14px;
   align-items: stretch;
 }
 
 .workflow-run-panel {
-  min-width: 240px;
-  max-width: 430px;
+  min-width: 210px;
+  max-width: 340px;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   overflow: auto;
@@ -1199,12 +1199,64 @@ pre {
   margin-bottom: 0;
 }
 
+.workflow-dag-head {
+  grid-template-columns: minmax(240px, .8fr) minmax(520px, 1.2fr);
+  align-items: start;
+}
+
+.dag-title-block {
+  min-width: 0;
+}
+
+.dag-title-block span {
+  max-width: 100%;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dag-actions {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(420px, 1fr);
+  gap: 8px;
+  justify-content: end;
+  align-items: center;
+}
+
+.dag-status-strip {
+  min-width: 0;
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.dag-progress {
+  height: 9px;
+  overflow: hidden;
+  border: 1px solid #cbd8f8;
+  border-radius: 999px;
+  background: #edf3ff;
+}
+
+.dag-progress span {
+  display: block;
+  height: 100%;
+  min-width: 4px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #16a34a);
+  transition: width .25s ease;
+}
+
 .workflow-flow-wrap {
   height: 588px;
 }
 
 .workflow-node-inspector {
-  min-width: 340px;
+  min-width: 320px;
   max-width: 620px;
   max-height: 720px;
   overflow: auto;
@@ -1242,7 +1294,7 @@ pre {
 
 .workflow-run-row {
   height: auto;
-  min-height: 72px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px 8px;
@@ -1263,6 +1315,10 @@ pre {
   grid-column: 1 / 3;
   color: var(--muted);
   font-size: 11px;
+}
+
+.workflow-run-row small:last-child {
+  display: none;
 }
 
 .workflow-run-row.active {
@@ -1514,6 +1570,23 @@ pre {
 
 .head-actions {
   gap: 8px;
+}
+
+.panel-head.workflow-dag-head {
+  display: grid;
+  grid-template-columns: minmax(240px, .8fr) minmax(520px, 1.2fr);
+  align-items: start;
+}
+
+.panel-head .dag-actions {
+  display: grid;
+  grid-template-columns: auto minmax(420px, 1fr);
+}
+
+.panel-head .dag-status-strip {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto;
 }
 
 .flow-wrap {
@@ -2669,6 +2742,13 @@ pre {
 
   .workflow-metrics {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .workflow-dag-head,
+  .dag-actions,
+  .dag-status-strip {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
   }
 
   .node-detail-workspace {

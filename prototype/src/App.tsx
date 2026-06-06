@@ -1114,7 +1114,13 @@ function WorkflowWorkspace({
             <div className="panel-head compact"><div><strong>Executions</strong><span>选择一个 run 查看 DAG</span></div><span>{runs.length}</span></div>
             <div className="workflow-run-list">
               {runs.slice(0, 8).map((run) => (
-                <button key={run.pipelineId} type="button" className={`workflow-run-row ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`} onClick={() => onSelectRun(run.pipelineId)}>
+                <button
+                  key={run.pipelineId}
+                  type="button"
+                  title={`${run.pipelineId}\n${statusLabel(run.status)} · ${run.progress ?? 0}%\n${run.sourceUrl || run.repo}\n${run.updatedAt || run.startedAt}`}
+                  className={`workflow-run-row ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`}
+                  onClick={() => onSelectRun(run.pipelineId)}
+                >
                   <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
                   <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
                   <small>{run.progress ?? 0}% · {run.updatedAt || run.startedAt}</small>
@@ -1127,20 +1133,25 @@ function WorkflowWorkspace({
         </aside>
 
         <section className="flow-panel workflow-dag-panel">
-          <div className="panel-head">
-            <div>
+          <div className="panel-head workflow-dag-head">
+            <div className="dag-title-block">
               <strong>DAG Canvas</strong>
               <span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
             </div>
-            <div className="head-actions">
+            <div className="head-actions dag-actions">
               {selectedRun?.status === "running" && (
                 <button type="button" className="btn-danger-sm" disabled={cancelRunPending} onClick={onCancelRun}>
                   <X size={14} />Cancel Run
                 </button>
               )}
-              {selectedRun && <span className="status-pill running">{selectedRun.progress ?? 0}%</span>}
-              <span className={`status-pill ${streamStatus === "live" ? "done" : streamStatus === "closed" ? "waiting" : "running"}`}>SSE {streamStatus}</span>
-              {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
+              <div className="dag-status-strip">
+                <div className="dag-progress" aria-label={`Run progress ${selectedRun?.progress ?? 0}%`}>
+                  <span style={{ width: `${selectedRun?.progress ?? 0}%` }} />
+                </div>
+                {selectedRun && <span className="status-pill running">{selectedRun.progress ?? 0}%</span>}
+                <span className={`status-pill ${streamStatus === "live" ? "done" : streamStatus === "closed" ? "waiting" : "running"}`}>SSE {streamStatus}</span>
+                {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
+              </div>
             </div>
           </div>
           <div className="flow-wrap workflow-flow-wrap">
