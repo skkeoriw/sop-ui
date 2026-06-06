@@ -1148,6 +1148,34 @@ pre {
   overflow: auto;
 }
 
+.workflow-runtime-observatory {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.workflow-run-observatory {
+  padding: 14px;
+  border-top: 1px solid var(--line-2);
+  background: #fbfcfe;
+}
+
+.workflow-run-observatory .run-command-panel,
+.workflow-run-observatory .runs-table-panel,
+.workflow-run-observatory .run-timeline-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.workflow-run-observatory .run-command-panel {
+  max-height: 760px;
+  overflow: auto;
+}
+
 .node-module-workbench {
   min-height: 720px;
   display: grid;

@@ -1094,17 +1094,86 @@ function WorkflowWorkspace({
         </aside>
       </div>
 
-      <section className="timeline-panel workflow-timeline-panel">
-        <div className="panel-head compact"><strong>Run Timeline</strong><span>围绕 DAG 节点查看一次执行</span></div>
-        <div className="timeline">
-          {(dag?.nodes || []).map((stage) => {
-            const state = selectedRun?.nodes[stage.id] || "waiting";
-            return (
-              <button key={stage.id} type="button" className={selectedStage?.id === stage.id ? "active" : ""} onClick={() => onSelectNode(stage.id)}>
-                <span className={`dot ${state}`} /><strong>{stage.title}</strong><span>{statusLabel(state)}</span>
-              </button>
-            );
-          })}
+      <section className="workflow-runtime-observatory">
+        <div className="panel-head">
+          <div>
+            <strong>Run Observatory</strong>
+            <span>运行时进度、节点输入输出、产物、日志和附属能力状态</span>
+          </div>
+          <span className="status-pill running">SSE {streamStatus}</span>
+        </div>
+        <div className="run-observatory workflow-run-observatory">
+          <aside className="runs-table-panel">
+            <div className="panel-head compact"><div><strong>Runs</strong><span>选择一个 pipeline</span></div></div>
+            <RunTable runs={runs} selectedRunId={selectedRun?.pipelineId || ""} onSelect={onSelectRun} />
+          </aside>
+
+          <section className="timeline-panel run-timeline-panel">
+            <div className="panel-head"><div><strong>Node runtime timeline</strong><span>节点级状态、耗时、产物数量和错误</span></div></div>
+            <div className="run-stage-list">
+              {(dag?.nodes || []).map((stage) => {
+                const state = selectedRun?.nodes[stage.id] || "waiting";
+                const stateDetail = selectedRun?.nodeStates?.[stage.id];
+                return (
+                  <button key={stage.id} type="button" className={`run-stage-row ${state} ${selectedStage?.id === stage.id ? "active" : ""}`} onClick={() => onSelectNode(stage.id)}>
+                    <span className={`dot ${state}`} />
+                    <span>
+                      <strong>{stage.title}</strong>
+                      <small>{stage.ui?.stageLetter || stage.mode} · {String(stage.executor?.type || "executor")} · {formatDuration(stateDetail?.durationS || 0)} · {stateDetail?.artifactCount || 0} artifacts</small>
+                      {stateDetail?.error && <small className="error-text">{stateDetail.error}</small>}
+                    </span>
+                    <span>
+                      <span className={`status-pill ${state}`}>{statusLabel(state)}</span>
+                      <small>{stateDetail?.attempt ? `attempt ${stateDetail.attempt}` : "not started"}</small>
+                    </span>
+                  </button>
+                );
+              })}
+              {!dag?.nodes.length && <Empty text="没有 DAG 数据" />}
+            </div>
+          </section>
+
+          <aside className="run-command-panel">
+            <div className="panel-head compact">
+              <div><strong>Node runtime detail</strong><span>{selectedStage?.id || "-"}</span></div>
+              <span className={`status-pill ${selectedStatus}`}>{statusLabel(selectedStatus)}</span>
+            </div>
+            <DetailBlock title="Operations">
+              <div className="action-row">
+                <button type="button" className="cancel-button" disabled={!selectedRun || cancelRunPending} onClick={onCancelRun}>Cancel Run</button>
+                <button type="button" className="retry-button" disabled={!selectedRun || retryPending} onClick={onRetryNode}>Retry Node</button>
+                <button type="button" disabled={selectedStatus !== "running" || cancelNodePending} onClick={onCancelNode}>Cancel Node</button>
+              </div>
+            </DetailBlock>
+            <DetailBlock title="Runtime state">
+              <KeyValues data={{
+                run: selectedRun?.pipelineId || "-",
+                node: selectedStage?.id || "-",
+                status: selectedStatus,
+                duration: formatDuration(selectedRun?.nodeStates?.[selectedStage?.id || ""]?.durationS || 0),
+                progress: `${selectedRun?.nodeStates?.[selectedStage?.id || ""]?.progress || 0}%`,
+                error: nodeDetail?.error || "-",
+              }} />
+            </DetailBlock>
+            <DetailBlock title="Resolved Inputs">
+              <KeyValues data={nodeDetail?.resolvedInputs || {}} />
+            </DetailBlock>
+            <DetailBlock title="Actual Outputs">
+              <KeyValues data={nodeDetail?.actualOutputs || {}} />
+            </DetailBlock>
+            <DetailBlock title={`Artifacts · ${nodeDetail?.artifacts?.length || runArtifacts.length || 0}`}>
+              <ArtifactList artifacts={nodeDetail?.artifacts?.length ? nodeDetail.artifacts : runArtifacts} />
+            </DetailBlock>
+            <DetailBlock title="Git / TG">
+              <div className="event-list">
+                {runEvents.filter((event) => event.event.startsWith("git.") || event.event.startsWith("telegram.")).slice(-8).reverse().map((event, index) => <EventRow key={event.sequence || index} event={event} />)}
+                {!gitEvents.length && !tgEvents.length && <Empty text="当前 Run 暂无 Git / TG 事件" />}
+              </div>
+            </DetailBlock>
+            <DetailBlock title="Latest log">
+              <pre className="log-box compact-log">{nodeLog?.log || "该节点暂无日志"}</pre>
+            </DetailBlock>
+          </aside>
         </div>
       </section>
     </section>
