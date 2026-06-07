@@ -747,6 +747,11 @@ export default function App() {
       setDraftLocalError(`请先填写必填字段: ${missingFields.join(", ")}`);
       return;
     }
+    const nodeId = draftInput.node_id.trim();
+    if (nodeId && managedNodes.some((node) => node.nodeId === nodeId)) {
+      setDraftLocalError(`节点 ID 已存在于生产 DAG: ${nodeId}`);
+      return;
+    }
     setDraftLocalError("");
     createDraftMutation.mutate();
   }
