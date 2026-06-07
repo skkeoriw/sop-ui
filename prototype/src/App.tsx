@@ -287,6 +287,7 @@ export default function App() {
   const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
   const [selectedNodeModuleId, setSelectedNodeModuleId] = useState("basic");
   const [draftOpen, setDraftOpen] = useState(false);
+  const [draftLocalError, setDraftLocalError] = useState("");
   const [confirmRealDraft, setConfirmRealDraft] = useState(false);
   const [draftInput, setDraftInput] = useState<NodeDraftInput>({
     skill_install_command: "bash <(curl -fsSL https://skill.vyibc.com/install-vyibc-face-consistent-album.sh)",
@@ -495,6 +496,7 @@ export default function App() {
     mutationFn: () => provider.createNodeDraft(runtime, instance.instanceId, draftInput),
     onSuccess: async (draft) => {
       setDraftOpen(false);
+      setDraftLocalError("");
       setConfirmRealDraft(false);
       setToast(`节点草稿已创建：${draft.draftId}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
@@ -737,6 +739,15 @@ export default function App() {
 
   function submitDraft(event: FormEvent) {
     event.preventDefault();
+    const schema = nodeDraftSchemaQuery.data;
+    const missingFields = (schema?.fields || [])
+      .filter((field) => field.required && !String(draftInput[field.name as keyof NodeDraftInput] || "").trim())
+      .map((field) => field.label || field.name);
+    if (missingFields.length) {
+      setDraftLocalError(`请先填写必填字段: ${missingFields.join(", ")}`);
+      return;
+    }
+    setDraftLocalError("");
     createDraftMutation.mutate();
   }
 
@@ -997,11 +1008,11 @@ export default function App() {
           instance={instance}
           schema={nodeDraftSchemaQuery.data}
           draftInput={draftInput}
-          setDraftInput={setDraftInput}
+          setDraftInput={(input) => { setDraftLocalError(""); setDraftInput(input); }}
           confirmRealDraft={confirmRealDraft}
           setConfirmRealDraft={setConfirmRealDraft}
           creatingDraft={createDraftMutation.isPending}
-          createError={createDraftMutation.error ? String(createDraftMutation.error.message) : ""}
+          createError={draftLocalError || (createDraftMutation.error ? String(createDraftMutation.error.message) : "")}
           onClose={() => setDraftOpen(false)}
           onCreateDraft={submitDraft}
         />
