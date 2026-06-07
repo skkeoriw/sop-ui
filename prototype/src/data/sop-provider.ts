@@ -269,7 +269,12 @@ export const sopProvider: SopDataProvider = {
           localStatus: String(tunnel.local_status || "unknown")
         }];
       })
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => {
+        const healthA = a.localStatus === "ok" ? 0 : 1;
+        const healthB = b.localStatus === "ok" ? 0 : 1;
+        if (healthA !== healthB) return healthA - healthB;
+        return a.name.localeCompare(b.name);
+      });
   },
 
   async listInstances(runtime) {

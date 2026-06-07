@@ -695,7 +695,7 @@ export default function App() {
         </nav>
         <div className="rail-section">
           <div className="section-title"><span>Runtime</span><span>{mode}</span></div>
-          {runtimes.slice(0, 2).map((item) => (
+          {runtimes.map((item) => (
             <button key={item.id} type="button" className={`rail-runtime ${runtime?.id === item.id ? "active" : ""}`} onClick={() => setRuntimeId(item.id)}>
               <Server size={14} />
               <span>{item.name}</span>
