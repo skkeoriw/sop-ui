@@ -57,7 +57,20 @@ async function postJsonResult<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   const text = await response.text();
-  if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 300)}`);
+  if (!response.ok) {
+    try {
+      const data = JSON.parse(text) as Record<string, unknown>;
+      const validation = data.validation as Record<string, unknown> | undefined;
+      const errors = (validation?.errors as Array<Record<string, unknown>> | undefined) || [];
+      if (errors.length) {
+        throw new Error(`${response.status}: ${errors.map((error) => `${error.field}: ${error.message}`).join("; ")}`);
+      }
+      throw new Error(`${response.status}: ${String(data.detail || text).slice(0, 300)}`);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith(`${response.status}:`)) throw error;
+      throw new Error(`${response.status}: ${text.slice(0, 300)}`);
+    }
+  }
   try {
     return JSON.parse(text) as T;
   } catch {
