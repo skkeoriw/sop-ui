@@ -3217,3 +3217,197 @@ pre {
   color: #dc2626;
   border-color: #dc2626;
 }
+
+/* ── Runtime / Instance information architecture ────────────────────────── */
+
+.runtime-overview,
+.instance-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.runtime-hero h1 {
+  max-width: 780px;
+}
+
+.runtime-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, .72fr) minmax(0, 1.58fr);
+  gap: 16px;
+  min-height: 0;
+}
+
+.runtime-list,
+.instance-table {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+
+.runtime-list.compact {
+  padding: 0;
+}
+
+.runtime-select-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.runtime-select-card.active {
+  border-color: var(--blue);
+  background: #eef5ff;
+}
+
+.runtime-select-card strong,
+.instance-main strong {
+  display: block;
+  color: var(--text);
+}
+
+.runtime-select-card span,
+.instance-main span,
+.instance-meta span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.instance-row {
+  display: grid;
+  grid-template-columns: minmax(220px, .9fr) minmax(0, 1.6fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.instance-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.instance-main > div {
+  min-width: 0;
+}
+
+.instance-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.instance-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.instance-actions button,
+.flow-panel .panel-head button {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 12px;
+}
+
+.instance-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.wide-panel {
+  grid-column: span 2;
+}
+
+.kv-stack {
+  padding: 14px;
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 14px;
+}
+
+.capability-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.capability-chip.ok {
+  color: var(--green);
+  background: var(--green-soft);
+  border-color: #a6e4c1;
+}
+
+.capability-chip strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.stage-map.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 1180px) {
+  .runtime-grid,
+  .instance-grid,
+  .instance-row {
+    grid-template-columns: 1fr;
+  }
+
+  .wide-panel {
+    grid-column: span 1;
+  }
+
+  .instance-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 680px) {
+  .instance-meta,
+  .capability-grid,
+  .stage-map.compact {
+    grid-template-columns: 1fr;
+  }
+}

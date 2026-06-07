@@ -53,7 +53,7 @@ import type {
 } from "./data/types";
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
-type AppView = "workflow" | "nodes" | "settings";
+type AppView = "runtime" | "instance" | "workflow" | "nodes" | "settings";
 type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string };
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
 type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
@@ -75,6 +75,14 @@ const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "
 function readRoute(): AppRoute {
   const parts = window.location.pathname.split("/").filter(Boolean);
   const empty = { nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
+  if (parts[0] === "runtimes") {
+    if (parts[2] === "instances" && parts[4] === "workflow") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[6] || ""), nodeId: decodeURIComponent(parts[7] || "") };
+    if (parts[2] === "instances" && parts[4] === "executions") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[5] || ""), nodeId: decodeURIComponent(parts[7] || "") };
+    if (parts[2] === "instances" && parts[4] === "nodes") return { view: "nodes", ...empty, nodeId: decodeURIComponent(parts[5] || ""), moduleId: parts[6] === "modules" ? decodeURIComponent(parts[7] || "") : "" };
+    if (parts[2] === "instances" && parts[3]) return { view: "instance", ...empty };
+    return { view: "runtime", ...empty };
+  }
+  if (parts[0] === "instances") return { view: parts[2] === "workflow" ? "workflow" : "instance", ...empty, pipelineId: decodeURIComponent(parts[4] || ""), nodeId: decodeURIComponent(parts[5] || "") };
   if (parts[0] === "runs") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
   if (parts[0] === "workflow") {
     const offset = parts[1] === "runs" ? 2 : 1;
@@ -89,9 +97,22 @@ function readRoute(): AppRoute {
 }
 
 function routePath(view: AppView, entityId = "", secondaryId = "") {
+  if (view === "runtime") return "/runtimes";
+  if (view === "instance") return "/instances";
   if (view === "nodes") return entityId ? `/nodes/${encodeURIComponent(entityId)}${secondaryId ? `/modules/${encodeURIComponent(secondaryId)}` : ""}` : "/nodes";
   if (view === "workflow") return entityId ? `/workflow/runs/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/workflow";
   return "/settings";
+}
+
+function readRouteContext() {
+  const parts = window.location.pathname.split("/").filter(Boolean);
+  if (parts[0] === "runtimes") {
+    return {
+      runtimeId: decodeURIComponent(parts[1] || ""),
+      instanceId: parts[2] === "instances" ? decodeURIComponent(parts[3] || "") : "",
+    };
+  }
+  return { runtimeId: "", instanceId: "" };
 }
 
 function inspectorTabLabel(tab: InspectorTab) {
@@ -475,9 +496,9 @@ export default function App() {
   });
 
   useEffect(() => {
-    const routePrefixes = ["/overview", "/runs", "/workflow", "/nodes", "/artifacts", "/settings"];
+    const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/nodes", "/artifacts", "/settings"];
     if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
-      window.history.replaceState(null, "", `${routePath("workflow")}${window.location.search}`);
+      window.history.replaceState(null, "", `${routePath("runtime")}${window.location.search}`);
       setRoute(readRoute());
     }
     const onPopState = () => setRoute(readRoute());
@@ -486,6 +507,18 @@ export default function App() {
   }, []);
   useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
   useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
+  useEffect(() => {
+    const context = readRouteContext();
+    if (context.runtimeId && runtimes.some((item) => item.id === context.runtimeId) && runtimeId !== context.runtimeId) {
+      setRuntimeId(context.runtimeId);
+    }
+  }, [runtimeId, runtimes]);
+  useEffect(() => {
+    const context = readRouteContext();
+    if (context.instanceId && instances.some((item) => item.instanceId === context.instanceId) && instanceId !== context.instanceId) {
+      setInstanceId(context.instanceId);
+    }
+  }, [instanceId, instances]);
   useEffect(() => { if (runs.length && !selectedRunId) setSelectedRunId(runs[0].pipelineId); }, [runs, selectedRunId]);
   useEffect(() => {
     if (route.pipelineId && runs.some((run) => run.pipelineId === route.pipelineId) && selectedRunId !== route.pipelineId) {
@@ -612,7 +645,21 @@ export default function App() {
   }
 
   function navigateTo(view: AppView, entityId = "", secondaryId = "") {
-    const nextPath = routePath(view, entityId, secondaryId);
+    const baseRuntime = runtime?.id || runtimeId || "runtime";
+    const baseInstance = instance?.instanceId || instanceId || "instance";
+    let nextPath = routePath(view, entityId, secondaryId);
+    if (view === "runtime") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}`;
+    if (view === "instance") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}`;
+    if (view === "workflow") {
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflow`;
+      if (entityId) nextPath += `/runs/${encodeURIComponent(entityId)}`;
+      if (secondaryId) nextPath += `/${encodeURIComponent(secondaryId)}`;
+    }
+    if (view === "nodes") {
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/nodes`;
+      if (entityId) nextPath += `/${encodeURIComponent(entityId)}`;
+      if (secondaryId) nextPath += `/modules/${encodeURIComponent(secondaryId)}`;
+    }
     const nextUrl = `${nextPath}${window.location.search}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
     setRoute({
@@ -622,6 +669,24 @@ export default function App() {
       artifactId: "",
       moduleId: view === "nodes" ? secondaryId : "",
     });
+  }
+
+  function selectRuntime(nextRuntimeId: string) {
+    setRuntimeId(nextRuntimeId);
+    const nextUrl = `/runtimes/${encodeURIComponent(nextRuntimeId)}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "runtime", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
+  }
+
+  function selectInstance(nextInstanceId: string, open = false) {
+    setInstanceId(nextInstanceId);
+    const baseRuntime = runtime?.id || runtimeId || "runtime";
+    const nextPath = open
+      ? `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}`
+      : `/runtimes/${encodeURIComponent(baseRuntime)}`;
+    const nextUrl = `${nextPath}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: open ? "instance" : "runtime", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
   }
 
   function selectManagedNode(nodeId: string, moduleId = selectedNodeModuleId || "basic") {
@@ -683,8 +748,14 @@ export default function App() {
           </button>
         </div>
         <nav className="rail-nav" aria-label="Primary">
+          <button type="button" className={viewMode === "runtime" ? "active" : ""} onClick={() => navigateTo("runtime")}>
+            <Server size={17} /><span>Runtime</span><small>{instances.length || "-"} instances</small>
+          </button>
+          <button type="button" className={viewMode === "instance" ? "active" : ""} onClick={() => navigateTo("instance")}>
+            <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
+          </button>
           <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>
-            <Network size={17} /><span>Workflow</span><small>{runs.length || "-"} runs</small>
+            <Network size={17} /><span>Workflow</span><small>{runs.length || "-"} exec</small>
           </button>
           <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
             <Boxes size={17} /><span>Nodes</span><small>{managedNodes.length || "-"} modules</small>
@@ -696,7 +767,7 @@ export default function App() {
         <div className="rail-section">
           <div className="section-title"><span>Runtime</span><span>{mode}</span></div>
           {runtimes.map((item) => (
-            <button key={item.id} type="button" className={`rail-runtime ${runtime?.id === item.id ? "active" : ""}`} onClick={() => setRuntimeId(item.id)}>
+            <button key={item.id} type="button" className={`rail-runtime ${runtime?.id === item.id ? "active" : ""}`} onClick={() => selectRuntime(item.id)}>
               <Server size={14} />
               <span>{item.name}</span>
               <small>{item.machine || item.localStatus}</small>
@@ -709,10 +780,10 @@ export default function App() {
         <div className="active-context">
           <div>
             <span>Active context</span>
-            <strong>{instance?.title || "Workspace"}</strong>
+            <strong>{runtime?.name || "Runtime"} / {instance?.title || "Workspace"}</strong>
           </div>
           <code>{runtime?.endpoint || "No endpoint"}</code>
-          <span className={`status-pill ${runtime?.localStatus === "ok" ? "done" : "waiting"}`}>{runtime?.name || "runtime"} · {runtime?.localStatus || "unknown"}</span>
+          <span className={`status-pill ${instance?.status === "failed" ? "failed" : runtime?.localStatus === "ok" ? "done" : "waiting"}`}>{instance?.status || runtime?.localStatus || "unknown"}</span>
         </div>
         <div className="top-actions">
           <div className="mode-switch" aria-label="数据模式">
@@ -778,7 +849,40 @@ export default function App() {
       </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
-        {viewMode === "workflow" && !route.pipelineId ? (
+        {viewMode === "runtime" ? (
+          <RuntimeOverview
+            runtime={runtime}
+            runtimes={runtimes}
+            instances={instances}
+            loading={runtimesQuery.isLoading || instancesQuery.isLoading}
+            mode={mode}
+            onSelectRuntime={selectRuntime}
+            onOpenInstance={(id) => selectInstance(id, true)}
+            onOpenWorkflow={(id) => {
+              setInstanceId(id);
+              const baseRuntime = runtime?.id || runtimeId || "runtime";
+              const nextUrl = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(id)}/workflow${window.location.search}`;
+              if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+              setRoute({ view: "workflow", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
+              setSelectedRunId("");
+              setSelectedStageId("");
+            }}
+          />
+        ) : viewMode === "instance" ? (
+          <InstanceOverview
+            runtime={runtime}
+            instance={instance}
+            instances={instances}
+            runs={runs}
+            dag={dag}
+            managedNodes={managedNodes}
+            runArtifacts={runArtifactsQuery.data || []}
+            onSelectInstance={(id) => selectInstance(id, true)}
+            onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "", selectedStage?.id || dag?.nodes[0]?.id || "")}
+            onOpenExecutions={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
+            onOpenNodes={() => navigateTo("nodes")}
+          />
+        ) : viewMode === "workflow" && !route.pipelineId ? (
           <WorkflowHome
             runtime={runtime}
             instance={instance}
@@ -905,6 +1009,238 @@ export default function App() {
         />
       )}
       {toast && <div className="toast"><CircleDot size={15} />{toast}</div>}
+    </div>
+  );
+}
+
+function RuntimeOverview({
+  runtime,
+  runtimes,
+  instances,
+  loading,
+  mode,
+  onSelectRuntime,
+  onOpenInstance,
+  onOpenWorkflow,
+}: {
+  runtime: Runtime | undefined;
+  runtimes: Runtime[];
+  instances: Instance[];
+  loading: boolean;
+  mode: DataMode;
+  onSelectRuntime: (runtimeId: string) => void;
+  onOpenInstance: (instanceId: string) => void;
+  onOpenWorkflow: (instanceId: string) => void;
+}) {
+  const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
+  const runningCount = instances.filter((item) => item.latestExecution?.status === "running").length;
+  return (
+    <section className="runtime-overview">
+      <div className="concept-hero runtime-hero">
+        <div>
+          <span className="status-pill running"><Server size={14} />Runtime Overview</span>
+          <h1>先选择业务工作区，再进入 Workflow。</h1>
+          <p>Runtime 是执行服务环境；Instance 才是 repo、RunIndex、Workflow Binding 和 Execution 历史的隔离边界。</p>
+        </div>
+        <div className="context-card">
+          <strong>{runtime?.displayName || runtime?.name || "No runtime"}</strong>
+          <span>{runtime?.endpoint || "未选择 endpoint"}</span>
+          <code>{mode} · {runtime?.localStatus || runtime?.status || "unknown"}</code>
+        </div>
+      </div>
+
+      <section className="console-metrics">
+        <Metric label="Runtimes" value={runtimes.length} subtext="discovered channels" />
+        <Metric label="Instances" value={instances.length} subtext={`${readyCount} ready`} />
+        <Metric label="Running" value={runningCount} subtext="active executions" />
+        <Metric label="SPI" value={runtime?.localStatus || runtime?.status || "-"} subtext={runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`} />
+      </section>
+
+      <section className="runtime-grid">
+        <div className="flow-panel runtime-list-panel">
+          <div className="panel-head">
+            <div><strong>Runtime Fleet</strong><span>公网 Channel 背后的执行服务</span></div>
+            <span>{runtimes.length}</span>
+          </div>
+          <div className="runtime-list">
+            {runtimes.map((item) => (
+              <button key={item.id} type="button" className={`runtime-select-card ${runtime?.id === item.id ? "active" : ""}`} onClick={() => onSelectRuntime(item.id)}>
+                <div>
+                  <strong>{item.displayName || item.name}</strong>
+                  <span>{item.endpoint}</span>
+                </div>
+                <span className={`status-pill ${item.localStatus === "ok" ? "done" : "waiting"}`}>{item.localStatus || item.status}</span>
+              </button>
+            ))}
+            {!runtimes.length && <LoadingOrEmpty loading={loading} text="没有发现 active SOP Runtime" />}
+          </div>
+        </div>
+
+        <div className="flow-panel instance-list-panel">
+          <div className="panel-head">
+            <div><strong>Instances / Workspaces</strong><span>当前 Runtime 下的业务工作区</span></div>
+            <span>{instances.length}</span>
+          </div>
+          <div className="instance-table">
+            {instances.map((item) => <InstanceRow key={item.instanceId} instance={item} onOpen={() => onOpenInstance(item.instanceId)} onWorkflow={() => onOpenWorkflow(item.instanceId)} />)}
+            {!instances.length && <LoadingOrEmpty loading={loading} text="当前 Runtime 没有 enabled Instance" />}
+          </div>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function InstanceOverview({
+  runtime,
+  instance,
+  instances,
+  runs,
+  dag,
+  managedNodes,
+  runArtifacts,
+  onSelectInstance,
+  onOpenWorkflow,
+  onOpenExecutions,
+  onOpenNodes,
+}: {
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  instances: Instance[];
+  runs: Run[];
+  dag: Dag | undefined;
+  managedNodes: NodeRegistryItem[];
+  runArtifacts: Artifact[];
+  onSelectInstance: (instanceId: string) => void;
+  onOpenWorkflow: () => void;
+  onOpenExecutions: () => void;
+  onOpenNodes: () => void;
+}) {
+  const binding = instance?.workflowBinding;
+  const latest = instance?.latestExecution || runs[0];
+  return (
+    <section className="instance-overview">
+      <div className="workflow-command-bar instance-command">
+        <div className="workflow-title">
+          <span className={`status-pill ${instance?.status === "failed" ? "failed" : instance?.status === "running" ? "running" : "done"}`}><LayoutDashboard size={14} />Instance Workspace</span>
+          <div>
+            <h1>{instance?.title || "选择 Instance"}</h1>
+            <p>{runtime?.name || "Runtime"} · {instance?.repo || "repo pending"} · {instance?.instanceId || "-"}</p>
+          </div>
+        </div>
+        <div className="workflow-metrics">
+          <Metric label="Workflow" value={binding?.workflowName || "-"} subtext={binding?.workflowVersion || binding?.bindingStatus || "binding"} />
+          <Metric label="Executions" value={instance?.executionCount ?? runs.length} subtext={latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)}` : "no execution"} />
+          <Metric label="Artifacts" value={instance?.artifactCount ?? runArtifacts.length} subtext={`${instance?.pageCount ?? latest?.pageCount ?? 0} pages`} />
+          <Metric label="Nodes" value={`${binding?.enabledNodeCount ?? managedNodes.length}/${binding?.nodeCount ?? dag?.nodes.length ?? 0}`} subtext="workflow binding" />
+        </div>
+      </div>
+
+      <section className="instance-grid">
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Workspace Identity</strong><span>Instance 是业务工作区，不是 Workflow</span></div></div>
+          {instance ? (
+            <div className="kv-stack">
+              <KeyValues data={{
+                instance_id: instance.instanceId,
+                status: instance.status || "unknown",
+                sop_type: instance.sopType || "-",
+                repo: instance.repo || "-",
+                wiki_local_path: instance.wikiLocalPath || "-",
+                workspace_status: instance.workspaceStatus || "-",
+                run_index_status: instance.runIndexStatus || "-",
+              }} />
+            </div>
+          ) : <Empty text="请选择一个 Instance" />}
+        </div>
+
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Workflow Binding</strong><span>Instance 引用的流程定义</span></div><button type="button" onClick={onOpenWorkflow}>Open Workflow</button></div>
+          <KeyValues data={{
+            workflow_id: binding?.workflowId || "-",
+            workflow_name: binding?.workflowName || "-",
+            workflow_version: binding?.workflowVersion || "-",
+            definition_source: binding?.definitionSource || "-",
+            definition_path: binding?.definitionPath || "-",
+            binding_status: binding?.bindingStatus || "-",
+          }} />
+        </div>
+
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Capabilities</strong><span>工作区级依赖能力</span></div></div>
+          <CapabilityGrid capabilities={instance?.capabilities || {}} />
+        </div>
+
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Latest Executions</strong><span>运行历史属于 Instance</span></div><button type="button" onClick={onOpenExecutions}>Open Executions</button></div>
+          <RunTable runs={runs.slice(0, 5)} selectedRunId={latest?.pipelineId || ""} onSelect={() => onOpenExecutions()} />
+        </div>
+
+        <div className="flow-panel wide-panel">
+          <div className="panel-head"><div><strong>Node Registry</strong><span>当前 Workflow Binding 中的节点</span></div><button type="button" onClick={onOpenNodes}>Open Nodes</button></div>
+          <div className="stage-map compact">
+            {(dag?.nodes || []).map((node) => (
+              <button key={node.id} type="button" className="stage-map-node waiting" onClick={onOpenNodes}>
+                <span className="dot waiting" />
+                <strong>{node.title}</strong>
+                <small>{node.id}</small>
+              </button>
+            ))}
+            {!dag?.nodes.length && <Empty text="还没有加载 Workflow DAG" />}
+          </div>
+        </div>
+
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Other Instances</strong><span>同一 Runtime 下的工作区</span></div></div>
+          <div className="runtime-list compact">
+            {instances.map((item) => (
+              <button key={item.instanceId} type="button" className={`runtime-select-card ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => onSelectInstance(item.instanceId)}>
+                <div><strong>{item.title}</strong><span>{item.workflowBinding?.workflowName || item.sopType}</span></div>
+                <span className={`status-pill ${item.status === "failed" ? "failed" : item.status === "running" ? "running" : "done"}`}>{item.status || "ready"}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function InstanceRow({ instance, onOpen, onWorkflow }: { instance: Instance; onOpen: () => void; onWorkflow: () => void }) {
+  const latest = instance.latestExecution;
+  return (
+    <div className="instance-row">
+      <button type="button" className="instance-main" onClick={onOpen}>
+        <div>
+          <strong>{instance.title}</strong>
+          <span>{instance.instanceId}</span>
+        </div>
+        <span className={`status-pill ${instance.status === "failed" ? "failed" : instance.status === "running" ? "running" : "done"}`}>{instance.status || "ready"}</span>
+      </button>
+      <div className="instance-meta">
+        <span>{instance.workflowBinding?.workflowName || instance.sopType || "Workflow"}</span>
+        <span>{instance.repo || "-"}</span>
+        <span>{latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)} · ${latest.progress ?? 0}%` : "No execution"}</span>
+        <span>{instance.artifactCount || 0} artifacts · {instance.pageCount || 0} pages</span>
+      </div>
+      <div className="instance-actions">
+        <button type="button" onClick={onOpen}>Open</button>
+        <button type="button" onClick={onWorkflow}>Workflow</button>
+      </div>
+    </div>
+  );
+}
+
+function CapabilityGrid({ capabilities }: { capabilities: Record<string, unknown> }) {
+  const entries = Object.entries(capabilities);
+  if (!entries.length) return <Empty text="暂无 capability 状态" />;
+  return (
+    <div className="capability-grid">
+      {entries.map(([key, value]) => {
+        const text = String(value || "unknown");
+        const ok = ["ok", "ready", "configured"].includes(text);
+        return <span key={key} className={`capability-chip ${ok ? "ok" : ""}`}><strong>{key}</strong>{text}</span>;
+      })}
     </div>
   );
 }

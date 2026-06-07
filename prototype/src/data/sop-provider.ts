@@ -88,10 +88,17 @@ function mapRun(raw: Record<string, unknown>): Run {
     error: String(state.error || ""),
   }]));
   return {
-    pipelineId: String(raw.pipeline_id || ""),
+    executionId: String(raw.execution_id || raw.pipeline_id || ""),
+    pipelineId: String(raw.pipeline_id || raw.execution_id || ""),
+    runtimeId: raw.runtime_id ? String(raw.runtime_id) : undefined,
+    instanceId: raw.instance_id ? String(raw.instance_id) : undefined,
+    workflowId: raw.workflow_id ? String(raw.workflow_id) : undefined,
+    workflowVersion: raw.workflow_version ? String(raw.workflow_version) : undefined,
+    workflowSnapshot: (raw.workflow_snapshot as Record<string, unknown>) || {},
     status: status(String(raw.status || "")),
     sourceUrl: String(raw.source_url || ""),
     sourceType: String(raw.source_type || ""),
+    input: (raw.input as Record<string, unknown>) || {},
     repo: String(raw.repo || ""),
     nodes,
     startedAt: String(raw.started_at || ""),
@@ -100,13 +107,61 @@ function mapRun(raw: Record<string, unknown>): Run {
     doneCount: Number(raw.done_count || 0),
     failedCount: Number(raw.failed_count || 0),
     runningNode: String(raw.running_node || ""),
+    failedNode: String(raw.failed_node || ""),
     progress: Number(raw.progress || 0),
     artifactCount: Number(raw.artifact_count || 0),
     gitEventCount: Number(raw.git_event_count || 0),
     telegramEventCount: Number(raw.telegram_event_count || 0),
+    eventCount: Number(raw.event_count || 0),
     pageCount: Number(raw.page_count || 0),
     durationS: Number(raw.duration_s || 0),
     nodeStates,
+  };
+}
+
+function mapWorkflowBinding(raw: unknown) {
+  const data = typeof raw === "object" && raw ? raw as Record<string, unknown> : {};
+  return {
+    workflowId: String(data.workflow_id || data.workflowId || ""),
+    workflowName: String(data.workflow_name || data.workflowName || "Workflow"),
+    workflowVersion: String(data.workflow_version || data.workflowVersion || ""),
+    definitionSource: String(data.definition_source || data.definitionSource || ""),
+    definitionPath: String(data.definition_path || data.definitionPath || ""),
+    nodeCount: Number(data.node_count || data.nodeCount || 0),
+    enabledNodeCount: Number(data.enabled_node_count || data.enabledNodeCount || 0),
+    bindingStatus: String(data.binding_status || data.bindingStatus || "unknown"),
+  };
+}
+
+function mapInstance(item: Record<string, unknown>): Instance {
+  const latest = typeof item.latest_execution === "object" && item.latest_execution
+    ? mapRun(item.latest_execution as Record<string, unknown>)
+    : undefined;
+  return {
+    id: String(item.id || item.instance_id || ""),
+    instanceId: String(item.instance_id || item.id || ""),
+    runtimeId: item.runtime_id ? String(item.runtime_id) : undefined,
+    sopType: String(item.sop_type || ""),
+    title: String(item.title || item.instance_id || item.id || "SOP"),
+    description: item.description ? String(item.description) : undefined,
+    version: String(item.version || ""),
+    repo: String(item.repo || ""),
+    enabled: item.enabled !== false,
+    repoBranch: item.repo_branch ? String(item.repo_branch) : undefined,
+    wikiLocalPath: item.wiki_local_path ? String(item.wiki_local_path) : undefined,
+    workspaceStatus: item.workspace_status ? String(item.workspace_status) : undefined,
+    runIndexStatus: item.run_index_status ? String(item.run_index_status) : undefined,
+    workflowBinding: mapWorkflowBinding(item.workflow_binding),
+    capabilities: (item.capabilities as Record<string, unknown>) || {},
+    executionCount: Number(item.execution_count || 0),
+    latestExecution: latest,
+    artifactCount: Number(item.artifact_count || 0),
+    pageCount: Number(item.page_count || 0),
+    status: String(item.status || (item.enabled === false ? "disabled" : "ready")),
+    channelUrl: item.channel_url ? String(item.channel_url) : undefined,
+    spiBaseUrl: item.spi_base_url ? String(item.spi_base_url) : undefined,
+    createdAt: item.created_at ? String(item.created_at) : undefined,
+    updatedAt: item.updated_at ? String(item.updated_at) : undefined,
   };
 }
 
@@ -266,7 +321,11 @@ export const sopProvider: SopDataProvider = {
           endpoint,
           machine: name.match(/\d+/)?.[0],
           status: String(tunnel.status || "unknown"),
-          localStatus: String(tunnel.local_status || "unknown")
+          localStatus: String(tunnel.local_status || "unknown"),
+          displayName: String(metadata.display_name || metadata.runtime_id || name),
+          channelName: String(metadata.channel_name || name),
+          channelUrl: endpoint,
+          spiBaseUrl: String(metadata.spi_base_url || `${endpoint}/api/sop`),
         }];
       })
       .sort((a, b) => {
@@ -278,15 +337,11 @@ export const sopProvider: SopDataProvider = {
   },
 
   async listInstances(runtime) {
-    const data = await requestJson<{ sops?: Array<Record<string, unknown>> }>(`${runtime.endpoint}/api/sop`);
-    return (data.sops || []).map((item): Instance => ({
-      id: String(item.id || item.instance_id || ""),
-      instanceId: String(item.instance_id || item.id || ""),
-      sopType: String(item.sop_type || ""),
-      title: String(item.title || item.instance_id || item.id || "SOP"),
-      version: String(item.version || ""),
-      repo: String(item.repo || "")
-    }));
+    const data = await requestJson<{ sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> }>(
+      `${runtime.endpoint}/api/sop/instances`
+    );
+    const items = data.instances || data.sops || [];
+    return items.map(mapInstance);
   },
 
   async getDag(runtime, instanceId) {
@@ -305,18 +360,29 @@ export const sopProvider: SopDataProvider = {
   },
 
   async listRuns(runtime, instanceId) {
-    const data = await requestJson<{ runs?: Array<Record<string, unknown>> }>(
-      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs`
-    );
-    return (data.runs || []).map(mapRun);
+    let data: { runs?: Array<Record<string, unknown>>; executions?: Array<Record<string, unknown>> };
+    try {
+      data = await requestJson<{ runs?: Array<Record<string, unknown>>; executions?: Array<Record<string, unknown>> }>(
+        `${runtime.endpoint}/api/sop/instances/${encodeURIComponent(instanceId)}/executions`
+      );
+    } catch {
+      data = await requestJson<{ runs?: Array<Record<string, unknown>> }>(
+        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs`
+      );
+    }
+    return (data.executions || data.runs || []).map(mapRun);
   },
 
   async getRun(runtime, instanceId, pipelineId) {
-    return mapRun(
-      await requestJson<Record<string, unknown>>(
+    try {
+      return mapRun(await requestJson<Record<string, unknown>>(
+        `${runtime.endpoint}/api/sop/instances/${encodeURIComponent(instanceId)}/executions/${encodeURIComponent(pipelineId)}`
+      ));
+    } catch {
+      return mapRun(await requestJson<Record<string, unknown>>(
         `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}`
-      )
-    );
+      ));
+    }
   },
 
   async getRunEvents(runtime, instanceId, pipelineId) {

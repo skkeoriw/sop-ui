@@ -9,6 +9,25 @@ export interface Runtime {
   status: string;
   localStatus: string;
   manual?: boolean;
+  displayName?: string;
+  channelName?: string;
+  channelUrl?: string;
+  spiBaseUrl?: string;
+  supportedSopTypes?: string[];
+  instanceCount?: number;
+  health?: Record<string, unknown>;
+  updatedAt?: string;
+}
+
+export interface WorkflowBinding {
+  workflowId: string;
+  workflowName: string;
+  workflowVersion: string;
+  definitionSource: string;
+  definitionPath: string;
+  nodeCount: number;
+  enabledNodeCount: number;
+  bindingStatus: string;
 }
 
 export interface Instance {
@@ -18,6 +37,24 @@ export interface Instance {
   title: string;
   version?: string;
   repo: string;
+  runtimeId?: string;
+  description?: string;
+  enabled?: boolean;
+  repoBranch?: string;
+  wikiLocalPath?: string;
+  workspaceStatus?: string;
+  runIndexStatus?: string;
+  workflowBinding?: WorkflowBinding;
+  capabilities?: Record<string, unknown>;
+  executionCount?: number;
+  latestExecution?: Run;
+  artifactCount?: number;
+  pageCount?: number;
+  status?: string;
+  channelUrl?: string;
+  spiBaseUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface DagNode {
@@ -46,10 +83,17 @@ export interface Dag {
 }
 
 export interface Run {
+  executionId?: string;
   pipelineId: string;
+  runtimeId?: string;
+  instanceId?: string;
+  workflowId?: string;
+  workflowVersion?: string;
+  workflowSnapshot?: Record<string, unknown>;
   status: StageStatus;
   sourceUrl: string;
   sourceType?: string;
+  input?: Record<string, unknown>;
   repo: string;
   nodes: Record<string, StageStatus>;
   startedAt: string;
@@ -58,10 +102,12 @@ export interface Run {
   doneCount?: number;
   failedCount?: number;
   runningNode?: string;
+  failedNode?: string;
   progress?: number;
   artifactCount?: number;
   gitEventCount?: number;
   telegramEventCount?: number;
+  eventCount?: number;
   pageCount?: number;
   durationS?: number;
   nodeStates?: Record<string, RunNodeState>;
