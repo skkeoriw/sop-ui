@@ -236,9 +236,13 @@ function mapNodeModule(raw: Record<string, unknown>): NodeModule {
   return {
     id: String(raw.id || ""),
     title: String(raw.title || raw.id || ""),
+    lane: raw.lane ? String(raw.lane) : undefined,
+    order: raw.order === undefined ? undefined : Number(raw.order),
     description: raw.description ? String(raw.description) : undefined,
     status: String(raw.status || "waiting"),
     summary: raw.summary ? String(raw.summary) : undefined,
+    schema: ((raw.schema as string[]) || []).map(String),
+    metrics: (raw.metrics as Record<string, unknown>) || {},
     detailUrl: raw.detail_url ? String(raw.detail_url) : raw.detailUrl ? String(raw.detailUrl) : undefined,
     runScoped: Boolean(raw.run_scoped ?? raw.runScoped),
   };

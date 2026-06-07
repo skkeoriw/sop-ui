@@ -2127,6 +2127,7 @@ function NodesWorkspace({
                 <span className={`dot ${module.status}`} />
                 <span>
                   <strong>{module.title}</strong>
+                  {module.lane && <small>{module.lane}</small>}
                   <small>{module.description}</small>
                   <small>{module.summary || "-"}</small>
                 </span>
@@ -2177,6 +2178,15 @@ function ModuleDetailPanel({
         </div>
       </div>
       <div className="module-detail-body">
+        {(module.lane || module.schema?.length || module.metrics) && (
+          <div className="module-contract-strip">
+            {module.lane && <span>{module.lane}</span>}
+            {module.schema?.slice(0, 4).map((item) => <code key={item}>{item}</code>)}
+            {module.metrics && Object.entries(module.metrics).slice(0, 4).map(([key, value]) => (
+              <span key={key}>{key}: {String(value)}</span>
+            ))}
+          </div>
+        )}
         <DetailBlock title={`${module.title} Detail`}>
           <KeyValues data={payload} />
         </DetailBlock>

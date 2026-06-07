@@ -1504,6 +1504,35 @@ pre {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.module-contract-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--surface-2);
+}
+
+.module-contract-strip span,
+.module-contract-strip code {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.module-contract-strip code {
+  color: var(--ink);
+}
+
 .overview-cli {
   display: block;
   overflow: hidden;

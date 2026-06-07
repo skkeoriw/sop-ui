@@ -236,9 +236,13 @@ export interface NodeRegistryItem extends NodeConfig {
 export interface NodeModule {
   id: string;
   title: string;
+  lane?: string;
+  order?: number;
   description?: string;
   status: string;
   summary?: string;
+  schema?: string[];
+  metrics?: Record<string, unknown>;
   detailUrl?: string;
   runScoped?: boolean;
 }
