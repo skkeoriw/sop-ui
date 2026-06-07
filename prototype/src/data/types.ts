@@ -243,6 +243,7 @@ export interface NodeModule {
   summary?: string;
   schema?: string[];
   metrics?: Record<string, unknown>;
+  contractVersion?: string;
   detailUrl?: string;
   runScoped?: boolean;
 }

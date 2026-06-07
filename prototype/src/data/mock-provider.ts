@@ -144,22 +144,27 @@ function registryItem(nodeId: string, target: Runtime): NodeRegistryItem {
 
 function mockNodeModules(nodeId: string, runScoped = false): NodeModule[] {
   return [
-    ["basic", "Basic", "节点身份、分类和发布状态"],
-    ["executor", "Executor", "执行器、Agent、Webhook 和操作入口"],
-    ["skill", "Skill", "节点背后的 Skill 安装、说明和来源"],
-    ["inputs", "Inputs", "输入契约和当前 Run 的 resolved inputs"],
-    ["outputs", "Outputs", "输出契约、实际输出和校验结果"],
-    ["artifacts", "Artifacts", "当前 Run 的记录产物和候选产物"],
-    ["capabilities", "Capabilities", "Git、TG、SSE 和日志附属能力"],
-    ["runtime", "Runtime State", "节点运行状态、进度、耗时和错误"],
-    ["actions", "Actions", "Inspect、Retry、Cancel、Validate 和 Publish"],
-    ["logs", "Logs / Events", "节点日志、事件和错误线索"],
-  ].map(([id, title, description]) => ({
+    ["basic", "Basic", "definition", "节点身份、分类和发布状态", "node_id,title,mode,needs"],
+    ["executor", "Executor", "execution", "执行器、Agent、Webhook 和操作入口", "executor.type,executor.skill,actions,cli"],
+    ["skill", "Skill", "execution", "节点背后的 Skill 安装、说明和来源", "skill.id,skill.source,skill.install_command"],
+    ["inputs", "Inputs", "contract", "输入契约和当前 Run 的 resolved inputs", "declared_inputs,optional_inputs,resolved_inputs"],
+    ["outputs", "Outputs", "contract", "输出契约、实际输出和校验结果", "declared_outputs,actual_outputs,validation"],
+    ["artifacts", "Artifacts", "artifact", "当前 Run 的记录产物和候选产物", "artifacts,discovered_candidates"],
+    ["capabilities", "Capabilities", "capability", "Git、TG、SSE 和日志附属能力", "declared_capabilities,run_capabilities"],
+    ["runtime", "Runtime State", "execution", "节点运行状态、进度、耗时和错误", "status,attempt,progress,duration_s,error"],
+    ["actions", "Actions", "operation", "Inspect、Retry、Cancel、Validate 和 Publish", "actions,cli,publish_enabled"],
+    ["logs", "Logs / Events", "observability", "节点日志、事件和错误线索", "log,events"],
+  ].map(([id, title, lane, description, schema], index) => ({
     id,
     title,
+    lane,
+    order: (index + 1) * 10,
     description,
     status: id === "runtime" && runScoped ? "done" : "ready",
     summary: id === "skill" ? `sop-${nodeId}` : id === "executor" ? "agent-skill · hermes" : id === "artifacts" ? "2 recorded artifacts" : `${title} module`,
+    schema: schema.split(","),
+    metrics: { contract: "mock", runScoped },
+    contractVersion: "node-module-contract/v1",
     detailUrl: runScoped ? `/runs/mock/nodes/${nodeId}/modules/${id}` : `/nodes/${nodeId}/modules/${id}`,
     runScoped,
   }));

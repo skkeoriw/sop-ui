@@ -243,6 +243,7 @@ function mapNodeModule(raw: Record<string, unknown>): NodeModule {
     summary: raw.summary ? String(raw.summary) : undefined,
     schema: ((raw.schema as string[]) || []).map(String),
     metrics: (raw.metrics as Record<string, unknown>) || {},
+    contractVersion: raw.contract_version ? String(raw.contract_version) : raw.contractVersion ? String(raw.contractVersion) : undefined,
     detailUrl: raw.detail_url ? String(raw.detail_url) : raw.detailUrl ? String(raw.detailUrl) : undefined,
     runScoped: Boolean(raw.run_scoped ?? raw.runScoped),
   };
