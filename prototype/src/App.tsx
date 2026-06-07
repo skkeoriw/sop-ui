@@ -2174,13 +2174,15 @@ function ModuleDetailPanel({
             <span>{node.nodeId}</span>
             <span>{String(node.executor?.type || node.case || "node")}</span>
             <span>{module.runScoped ? "Run scoped" : "Definition"}</span>
+            {module.contractVersion && <span>{module.contractVersion}</span>}
           </div>
         </div>
       </div>
       <div className="module-detail-body">
-        {(module.lane || module.schema?.length || module.metrics) && (
+        {(module.lane || module.contractVersion || module.schema?.length || module.metrics) && (
           <div className="module-contract-strip">
             {module.lane && <span>{module.lane}</span>}
+            {module.contractVersion && <span>{module.contractVersion}</span>}
             {module.schema?.slice(0, 4).map((item) => <code key={item}>{item}</code>)}
             {module.metrics && Object.entries(module.metrics).slice(0, 4).map(([key, value]) => (
               <span key={key}>{key}: {String(value)}</span>
