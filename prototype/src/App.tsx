@@ -39,6 +39,7 @@ import type {
   Instance,
   NodeDraft,
   NodeDraftInput,
+  NodeDraftSchema,
   NodeDetail,
   NodeConfig,
   NodeEvent,
@@ -381,6 +382,11 @@ export default function App() {
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodeDrafts(runtime!, instance!.instanceId),
     enabled: Boolean(runtime && instance && (viewMode === "nodes" || viewMode === "settings"))
+  });
+  const nodeDraftSchemaQuery = useQuery({
+    queryKey: queryKeys.nodeDraftSchema(mode, runtime, instance?.instanceId || ""),
+    queryFn: () => provider.getNodeDraftSchema(runtime!, instance!.instanceId),
+    enabled: Boolean(runtime && instance && (viewMode === "nodes" || viewMode === "settings" || draftOpen))
   });
   const managedNodes = nodesQuery.data || [];
   const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
@@ -989,6 +995,7 @@ export default function App() {
           mode={mode}
           runtime={runtime}
           instance={instance}
+          schema={nodeDraftSchemaQuery.data}
           draftInput={draftInput}
           setDraftInput={setDraftInput}
           confirmRealDraft={confirmRealDraft}
@@ -2324,6 +2331,7 @@ function NodeDraftDrawer({
   mode,
   runtime,
   instance,
+  schema,
   draftInput,
   setDraftInput,
   confirmRealDraft,
@@ -2336,6 +2344,7 @@ function NodeDraftDrawer({
   mode: DataMode;
   runtime: Runtime;
   instance: Instance;
+  schema: NodeDraftSchema | undefined;
   draftInput: NodeDraftInput;
   setDraftInput: (input: NodeDraftInput) => void;
   confirmRealDraft: boolean;
@@ -2360,6 +2369,14 @@ function NodeDraftDrawer({
             <strong>安全边界</strong>
             <span>该操作只创建草稿；正式发布、写入 `sop.yaml` 和重启 Runtime 当前仍禁用。</span>
           </div>
+          {schema && (
+            <div className="schema-note">
+              <span>{schema.schemaId}</span>
+              <span>{schema.fields.filter((field) => field.required).length} required fields</span>
+              <span>{schema.safety.publish_enabled ? "publish enabled" : "draft only"}</span>
+              <span>{((schema.safety.writes as string[]) || []).slice(0, 1)[0] || "raw/node-drafts"}</span>
+            </div>
+          )}
           <label>Skill install command<input value={draftInput.skill_install_command} onChange={(event) => setDraftInput({ ...draftInput, skill_install_command: event.target.value })} /></label>
           <div className="draft-grid">
             <label>Skill ID<input value={draftInput.skill_id} onChange={(event) => setDraftInput({ ...draftInput, skill_id: event.target.value })} /></label>

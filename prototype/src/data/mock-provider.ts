@@ -7,6 +7,7 @@ import type {
   NodeConfig,
   NodeDraft,
   NodeDraftInput,
+  NodeDraftSchema,
   NodeLog,
   NodeModule,
   NodeModuleDetail,
@@ -19,6 +20,30 @@ import type {
 
 const runsByRuntime = new Map<string, RunMock[]>(mockRuntimes.map((runtime) => [runtime.id, baseRuns.map((run) => ({ ...run }))]));
 const draftByRuntime = new Map<string, NodeDraft[]>();
+
+const mockNodeDraftSchema: NodeDraftSchema = {
+  schemaId: "node-draft-schema/v1",
+  title: "Node Draft from Skill",
+  description: "把一个 Skill 安装命令转换成可验证的 SOP 节点草稿；不会修改生产 DAG。",
+  fields: [
+    { name: "skill_install_command", label: "Skill install command", type: "string", required: true, mapsTo: "skill.install_command" },
+    { name: "skill_id", label: "Skill ID", type: "slug", required: true, mapsTo: "skill.id" },
+    { name: "node_id", label: "Node ID", type: "slug", required: true, mapsTo: "id" },
+    { name: "title", label: "Title", type: "string", required: true, mapsTo: "title" },
+    { name: "description", label: "Description", type: "text", required: false, mapsTo: "description" },
+    { name: "upstream", label: "Upstream node", type: "node_id", required: false, mapsTo: "needs[0]" },
+    { name: "upstream_output", label: "Upstream output", type: "string", required: false, default: "output", mapsTo: "inputs.*.from" },
+    { name: "input_name", label: "Input name", type: "slug", required: false, default: "input", mapsTo: "inputs" },
+    { name: "output_name", label: "Output name", type: "slug", required: false, default: "artifact", mapsTo: "outputs" },
+    { name: "output_path", label: "Output path", type: "path_pattern", required: false, default: "raw/{node_id}/{pipeline_id}/{output_name}", mapsTo: "outputs.*.path" },
+  ],
+  defaults: { executor_type: "agent-skill", agent: "hermes", mode: "blocking" },
+  safety: {
+    production_dag_changed: false,
+    writes: ["raw/node-drafts/{draft_id}/node.yaml", "raw/node-drafts/{draft_id}/validation.json"],
+    publish_enabled: false,
+  },
+};
 
 function runtime(id: string): Runtime {
   const item = mockRuntimes.find((candidate) => candidate.id === id) || mockRuntimes[0];
@@ -330,6 +355,11 @@ export const mockProvider: SopDataProvider = {
   async listNodeDrafts(target): Promise<NodeDraft[]> {
     await delay();
     return draftByRuntime.get(target.id) || [];
+  },
+
+  async getNodeDraftSchema(): Promise<NodeDraftSchema> {
+    await delay();
+    return mockNodeDraftSchema;
   },
 
   async createNodeDraft(target, _instanceId, input: NodeDraftInput): Promise<NodeDraft> {

@@ -2367,6 +2367,25 @@ pre {
   font-size: 12px;
 }
 
+.schema-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.schema-note span {
+  max-width: 100%;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .drawer-actions {
   justify-content: flex-end;
   border-top: 1px solid var(--line-2);

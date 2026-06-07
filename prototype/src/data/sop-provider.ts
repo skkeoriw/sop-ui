@@ -6,6 +6,7 @@ import type {
   NodeDetail,
   NodeDraft,
   NodeDraftInput,
+  NodeDraftSchema,
   NodeLog,
   NodeEvent,
   NodeModule,
@@ -308,6 +309,26 @@ function mapNodeDraft(raw: Record<string, unknown>): NodeDraft {
   };
 }
 
+function mapNodeDraftSchema(raw: Record<string, unknown>): NodeDraftSchema {
+  const schema = ((raw.schema as Record<string, unknown>) || raw) as Record<string, unknown>;
+  return {
+    schemaId: String(schema.schema_id || schema.schemaId || ""),
+    title: String(schema.title || "Node Draft Schema"),
+    description: schema.description ? String(schema.description) : undefined,
+    fields: ((schema.fields as Array<Record<string, unknown>>) || []).map((field) => ({
+      name: String(field.name || ""),
+      label: String(field.label || field.name || ""),
+      type: String(field.type || "string"),
+      required: Boolean(field.required),
+      default: field.default === undefined ? undefined : String(field.default),
+      placeholder: field.placeholder ? String(field.placeholder) : undefined,
+      mapsTo: field.maps_to ? String(field.maps_to) : field.mapsTo ? String(field.mapsTo) : undefined,
+    })),
+    defaults: (schema.defaults as Record<string, unknown>) || {},
+    safety: (schema.safety as Record<string, unknown>) || {},
+  };
+}
+
 export const sopProvider: SopDataProvider = {
   mode: "real",
 
@@ -500,6 +521,12 @@ export const sopProvider: SopDataProvider = {
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts`
     );
     return (raw.drafts || []).map(mapNodeDraft);
+  },
+
+  async getNodeDraftSchema(runtime, instanceId) {
+    return mapNodeDraftSchema(await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/schema`
+    ));
   },
 
   async createNodeDraft(runtime, instanceId, input: NodeDraftInput) {

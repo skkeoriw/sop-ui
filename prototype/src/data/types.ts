@@ -269,6 +269,25 @@ export interface NodeDraftInput {
   output_path?: string;
 }
 
+export interface NodeDraftSchemaField {
+  name: string;
+  label: string;
+  type: string;
+  required: boolean;
+  default?: string;
+  placeholder?: string;
+  mapsTo?: string;
+}
+
+export interface NodeDraftSchema {
+  schemaId: string;
+  title: string;
+  description?: string;
+  fields: NodeDraftSchemaField[];
+  defaults: Record<string, unknown>;
+  safety: Record<string, unknown>;
+}
+
 export interface NodeDraft {
   draftId: string;
   node: Record<string, unknown>;
@@ -304,6 +323,7 @@ export interface SopDataProvider {
   listNodeModules(runtime: Runtime, instanceId: string, nodeId: string, pipelineId?: string): Promise<NodeModule[]>;
   getNodeModule(runtime: Runtime, instanceId: string, nodeId: string, moduleId: string, pipelineId?: string): Promise<NodeModuleDetail>;
   listNodeDrafts(runtime: Runtime, instanceId: string): Promise<NodeDraft[]>;
+  getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;
   retryNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
