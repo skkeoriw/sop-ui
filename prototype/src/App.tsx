@@ -79,6 +79,7 @@ const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
 type RuntimeManagementFormDefaults = {
   createSshCommand: string;
   createPrivateKey: string;
+  createEnvText: string;
   deleteRuntimeId: string;
   deleteSshCommand: string;
   deletePrivateKey: string;
@@ -93,6 +94,7 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
   const defaults = {
     createSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
     createPrivateKey: "",
+    createEnvText: "",
     deleteRuntimeId: DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID,
     deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
     deletePrivateKey: "",
@@ -105,6 +107,7 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
     return {
       createSshCommand: stringFromStorage(stored.createSshCommand, defaults.createSshCommand),
       createPrivateKey: stringFromStorage(stored.createPrivateKey, defaults.createPrivateKey),
+      createEnvText: stringFromStorage(stored.createEnvText, defaults.createEnvText),
       deleteRuntimeId: stringFromStorage(stored.deleteRuntimeId, defaults.deleteRuntimeId),
       deleteSshCommand: stringFromStorage(stored.deleteSshCommand, defaults.deleteSshCommand),
       deletePrivateKey: stringFromStorage(stored.deletePrivateKey, defaults.deletePrivateKey),
@@ -192,6 +195,20 @@ function encodeSecretB64(value: string) {
   let binary = "";
   bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
   return window.btoa(binary);
+}
+
+function parseRuntimeEnvOverrides(value: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  value.split(/\r?\n/).forEach((line) => {
+    const text = line.trim();
+    if (!text || text.startsWith("#")) return;
+    const separator = text.indexOf("=");
+    if (separator <= 0) return;
+    const key = text.slice(0, separator).trim();
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) return;
+    env[key] = text.slice(separator + 1).trim();
+  });
+  return env;
 }
 
 function statusIcon(status: StageStatus) {
@@ -335,6 +352,7 @@ export default function App() {
   const [runtimeManagementAction, setRuntimeManagementAction] = useState<"create-runtime" | "delete-runtime">("create-runtime");
   const [runtimeCreateSshCommand, setRuntimeCreateSshCommand] = useState(runtimeManagementDefaults.createSshCommand);
   const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState(runtimeManagementDefaults.createPrivateKey);
+  const [runtimeCreateEnvText, setRuntimeCreateEnvText] = useState(runtimeManagementDefaults.createEnvText);
   const [runtimeDeleteId, setRuntimeDeleteId] = useState(runtimeManagementDefaults.deleteRuntimeId);
   const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState(runtimeManagementDefaults.deleteSshCommand);
   const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState(runtimeManagementDefaults.deletePrivateKey);
@@ -385,6 +403,7 @@ export default function App() {
     writeRuntimeManagementFormDefaults({
       createSshCommand: runtimeCreateSshCommand,
       createPrivateKey: runtimeCreatePrivateKey,
+      createEnvText: runtimeCreateEnvText,
       deleteRuntimeId: runtimeDeleteId,
       deleteSshCommand: runtimeDeleteSshCommand,
       deletePrivateKey: runtimeDeletePrivateKey,
@@ -393,6 +412,7 @@ export default function App() {
   }, [
     runtimeCreateSshCommand,
     runtimeCreatePrivateKey,
+    runtimeCreateEnvText,
     runtimeDeleteId,
     runtimeDeleteSshCommand,
     runtimeDeletePrivateKey,
@@ -560,6 +580,7 @@ export default function App() {
           action: "create-runtime",
           ssh_command: runtimeCreateSshCommand,
           private_key_b64: encodeSecretB64(runtimeCreatePrivateKey),
+          ...parseRuntimeEnvOverrides(runtimeCreateEnvText),
         }),
         minimumDelay(450),
       ]);
@@ -1039,6 +1060,7 @@ export default function App() {
             managementInstance={managementInstance}
             createSshCommand={runtimeCreateSshCommand}
             createPrivateKey={runtimeCreatePrivateKey}
+            createEnvText={runtimeCreateEnvText}
             deleteRuntimeId={runtimeDeleteId}
             deleteSshCommand={runtimeDeleteSshCommand}
             deletePrivateKey={runtimeDeletePrivateKey}
@@ -1047,6 +1069,7 @@ export default function App() {
             deletingRuntime={deleteRuntimeMutation.isPending}
             onCreateSshCommandChange={setRuntimeCreateSshCommand}
             onCreatePrivateKeyChange={setRuntimeCreatePrivateKey}
+            onCreateEnvTextChange={setRuntimeCreateEnvText}
             onDeleteRuntimeIdChange={setRuntimeDeleteId}
             onDeleteSshCommandChange={setRuntimeDeleteSshCommand}
             onDeletePrivateKeyChange={setRuntimeDeletePrivateKey}
@@ -1177,6 +1200,8 @@ export default function App() {
           setCreateSshCommand={setRuntimeCreateSshCommand}
           createPrivateKey={runtimeCreatePrivateKey}
           setCreatePrivateKey={setRuntimeCreatePrivateKey}
+          createEnvText={runtimeCreateEnvText}
+          setCreateEnvText={setRuntimeCreateEnvText}
           deleteRuntimeId={runtimeDeleteId}
           setDeleteRuntimeId={setRuntimeDeleteId}
           deleteSshCommand={runtimeDeleteSshCommand}
@@ -1252,6 +1277,7 @@ function RuntimeOverview({
   managementInstance,
   createSshCommand,
   createPrivateKey,
+  createEnvText,
   deleteRuntimeId,
   deleteSshCommand,
   deletePrivateKey,
@@ -1260,6 +1286,7 @@ function RuntimeOverview({
   deletingRuntime,
   onCreateSshCommandChange,
   onCreatePrivateKeyChange,
+  onCreateEnvTextChange,
   onDeleteRuntimeIdChange,
   onDeleteSshCommandChange,
   onDeletePrivateKeyChange,
@@ -1278,6 +1305,7 @@ function RuntimeOverview({
   managementInstance: Instance | undefined;
   createSshCommand: string;
   createPrivateKey: string;
+  createEnvText: string;
   deleteRuntimeId: string;
   deleteSshCommand: string;
   deletePrivateKey: string;
@@ -1286,6 +1314,7 @@ function RuntimeOverview({
   deletingRuntime: boolean;
   onCreateSshCommandChange: (value: string) => void;
   onCreatePrivateKeyChange: (value: string) => void;
+  onCreateEnvTextChange: (value: string) => void;
   onDeleteRuntimeIdChange: (value: string) => void;
   onDeleteSshCommandChange: (value: string) => void;
   onDeletePrivateKeyChange: (value: string) => void;
@@ -1375,6 +1404,16 @@ function RuntimeOverview({
               <span>Private Key</span>
               <textarea value={createPrivateKey} onChange={(event) => onCreatePrivateKeyChange(event.target.value)} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={4} />
               <span className="field-hint">可选。填过后只保存在当前浏览器；不写入源码或日志。</span>
+            </label>
+            <label>
+              <span>Runtime Env Overrides</span>
+              <textarea
+                value={createEnvText}
+                onChange={(event) => onCreateEnvTextChange(event.target.value)}
+                placeholder={"GITHUB_TOKEN=\nDEEPSEEK_API_KEY=\nGOOGLE_CLOUD_API_KEY=\nNOTEBOOKLM_BRIDGE_URL=\nNOTEBOOKLM_BRIDGE_TOKEN=\nYOUTUBE_WIKI_TG_TOKEN=\nCLOUDFLARE_API_KEY="}
+                rows={7}
+              />
+              <span className="field-hint">可选。为空时从当前管理 Runtime 环境继承；填写后作为本次创建请求的能力配置。</span>
             </label>
             <button type="submit" disabled={!createReady || creatingRuntime}>
               {creatingRuntime ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
@@ -2793,6 +2832,8 @@ function RuntimeManagementStartDrawer({
   setCreateSshCommand,
   createPrivateKey,
   setCreatePrivateKey,
+  createEnvText,
+  setCreateEnvText,
   deleteRuntimeId,
   setDeleteRuntimeId,
   deleteSshCommand,
@@ -2817,6 +2858,8 @@ function RuntimeManagementStartDrawer({
   setCreateSshCommand: (value: string) => void;
   createPrivateKey: string;
   setCreatePrivateKey: (value: string) => void;
+  createEnvText: string;
+  setCreateEnvText: (value: string) => void;
   deleteRuntimeId: string;
   setDeleteRuntimeId: (value: string) => void;
   deleteSshCommand: string;
@@ -2873,6 +2916,17 @@ function RuntimeManagementStartDrawer({
                 <span>Private Key</span>
                 <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={7} />
                 <span className="field-hint">可选。填过后只保存在当前浏览器；不写入源码或日志。</span>
+              </label>
+              <label>
+                <span>Runtime Env Overrides</span>
+                <textarea
+                  value={createEnvText}
+                  onChange={(event) => setCreateEnvText(event.target.value)}
+                  disabled={pending}
+                  placeholder={"GITHUB_TOKEN=\nDEEPSEEK_API_KEY=\nGOOGLE_CLOUD_API_KEY=\nNOTEBOOKLM_BRIDGE_URL=\nNOTEBOOKLM_BRIDGE_TOKEN=\nYOUTUBE_WIKI_TG_TOKEN=\nCLOUDFLARE_API_KEY="}
+                  rows={8}
+                />
+                <span className="field-hint">可选。为空时继承当前管理 Runtime 环境；填写后作为本次创建请求传入。</span>
               </label>
             </div>
           ) : (

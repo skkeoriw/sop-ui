@@ -305,6 +305,7 @@ export interface NodeDraft {
 }
 
 export interface TriggerInput {
+  [key: string]: unknown;
   repo?: string;
   url?: string;
   action?: "create-runtime" | "delete-runtime" | string;
