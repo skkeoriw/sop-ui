@@ -1663,6 +1663,12 @@ pre {
   gap: 12px;
 }
 
+.manual-config-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .management-config-group {
   min-width: 0;
   display: grid;
@@ -1713,6 +1719,14 @@ pre {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.management-config-row input:disabled {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+  opacity: 1;
+  -webkit-text-fill-color: var(--text);
 }
 
 .settings-actions {
@@ -2634,6 +2648,74 @@ pre {
   grid-template-columns: 64px minmax(0, 1fr);
   gap: 8px;
   align-items: center;
+}
+
+.resolved-config-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.resolved-config-field {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, .75fr) minmax(180px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.resolved-config-field > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.resolved-config-field code,
+.resolved-config-field small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resolved-config-field code {
+  color: var(--text);
+}
+
+.resolved-config-field small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.resolved-config-field input:disabled {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+  opacity: 1;
+  -webkit-text-fill-color: var(--text);
+}
+
+.resolved-config-field.absent input:disabled {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+  -webkit-text-fill-color: #9a3412;
+}
+
+.advanced-runtime-overrides {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.advanced-runtime-overrides summary {
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.advanced-runtime-overrides label {
+  padding: 0 12px 12px;
 }
 
 .inheritance-meta code,

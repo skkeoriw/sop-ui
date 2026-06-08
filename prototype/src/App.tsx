@@ -722,6 +722,7 @@ export default function App() {
     onSuccess: async () => {
       setManagementConfigValues({});
       setToast("Runtime 管理配置已保存；Create Runtime 会自动继承");
+      initializeManagementConfigMutation.reset();
       await runtimeManagementConfigQuery.refetch();
       await runtimeInheritanceQuery.refetch();
     },
@@ -742,6 +743,8 @@ export default function App() {
       return result;
     },
     onSuccess: async () => {
+      saveManagementConfigMutation.reset();
+      setManagementConfigValues({});
       setToast("已从当前 Runtime 初始化管理配置；Create Runtime 会自动继承");
       await runtimeManagementConfigQuery.refetch();
       await runtimeInheritanceQuery.refetch();
@@ -1308,8 +1311,8 @@ export default function App() {
             initializeManagementConfigPending={initializeManagementConfigMutation.isPending}
             initializeManagementConfigError={initializeManagementConfigMutation.error ? String(initializeManagementConfigMutation.error.message) : ""}
             onRefreshManagementConfig={() => runtimeManagementConfigQuery.refetch()}
-            onSaveManagementConfig={(event) => { event.preventDefault(); saveManagementConfigMutation.mutate(); }}
-            onInitializeManagementConfig={() => initializeManagementConfigMutation.mutate()}
+            onSaveManagementConfig={(event) => { event.preventDefault(); initializeManagementConfigMutation.reset(); saveManagementConfigMutation.mutate(); }}
+            onInitializeManagementConfig={() => { saveManagementConfigMutation.reset(); setManagementConfigValues({}); initializeManagementConfigMutation.mutate(); }}
           />
         )}
       </main>
@@ -2508,8 +2511,15 @@ function SettingsPage({
     groups[key].push(item);
     return groups;
   }, {});
+  const hasManagementConfigEdits = Object.values(managementConfigValues).some((value) => value.trim());
+  const canSaveManualConfig = Boolean(managementInstance && managementConfigToken.trim() && hasManagementConfigEdits && !saveManagementConfigPending);
   const updateManagementConfigValue = (key: string, value: string) => {
     setManagementConfigValues({ ...managementConfigValues, [key]: value });
+  };
+  const displayManagementConfigValue = (item: RuntimeInheritancePreview["items"][number]) => {
+    if (!item.present) return item.required ? "Missing - load current Runtime or override manually" : "Missing optional";
+    if (item.secret) return `Loaded from ${item.source}${item.maskedValue ? ` (${item.maskedValue})` : ""}`;
+    return item.maskedValue || "Loaded";
   };
 
   return (
@@ -2597,12 +2607,9 @@ function SettingsPage({
                   <h3>{category}</h3>
                   <div className="management-config-list">
                     {items.map((item) => {
-                      const currentValue = managementConfigValues[item.key] || "";
-                      const status = currentValue.trim()
-                        ? "editing"
-                        : item.present
-                          ? item.secret ? "saved" : "saved visible"
-                          : item.required ? "required missing" : "missing";
+                      const status = item.present
+                        ? item.secret ? "saved" : "saved visible"
+                        : item.required ? "required missing" : "missing";
                       return (
                         <label key={item.key} className="management-config-row">
                           <span>
@@ -2610,11 +2617,10 @@ function SettingsPage({
                             <small>{item.source} · {status}</small>
                           </span>
                           <input
-                            type={item.secret ? "password" : "text"}
-                            value={currentValue}
-                            onChange={(event) => updateManagementConfigValue(item.key, event.target.value)}
-                            placeholder={item.present ? (item.secret ? "Saved. Enter a new value to replace." : item.maskedValue || "Saved") : "Missing. Enter value to save."}
-                            disabled={saveManagementConfigPending}
+                            type="text"
+                            value={displayManagementConfigValue(item)}
+                            readOnly
+                            disabled
                           />
                         </label>
                       );
@@ -2641,9 +2647,34 @@ function SettingsPage({
                   />
                 </label>
                 {saveManagementConfigError && <div className="inline-error">{saveManagementConfigError}</div>}
+                {!managementConfigToken.trim() && hasManagementConfigEdits && <span className="field-hint">填写 Management Token 后才能保存手动覆盖。</span>}
+                <div className="manual-config-groups">
+                  {Object.entries(groupedManagementConfig).map(([category, items]) => (
+                    <section key={category} className="management-config-group">
+                      <h3>{category}</h3>
+                      <div className="management-config-list">
+                        {items.map((item) => (
+                          <label key={item.key} className="management-config-row">
+                            <span>
+                              <code>{item.key}</code>
+                              <small>{item.present ? `current: ${item.source}` : item.required ? "required missing" : "optional missing"}</small>
+                            </span>
+                            <input
+                              type={item.secret ? "password" : "text"}
+                              value={managementConfigValues[item.key] || ""}
+                              onChange={(event) => updateManagementConfigValue(item.key, event.target.value)}
+                              placeholder={item.present ? (item.secret ? "Leave blank to keep loaded secret" : item.maskedValue || "Current value") : "Enter value to save"}
+                              disabled={saveManagementConfigPending}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
                 <div className="settings-actions">
                   <button type="button" onClick={() => setManagementConfigValues({})} disabled={saveManagementConfigPending}>Clear edits</button>
-                  <button type="submit" className="primary" disabled={saveManagementConfigPending || !managementInstance}>
+                  <button type="submit" className="primary" disabled={!canSaveManualConfig}>
                     {saveManagementConfigPending ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
                     Save manual edits
                   </button>
@@ -3189,26 +3220,29 @@ function RuntimeManagementStartDrawer({
                 <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={7} />
                 <span className="field-hint">可选。填过后只保存在当前浏览器；不写入源码或日志。</span>
               </label>
-              <label>
-                <span>Runtime Env Overrides</span>
-                <textarea
-                  value={createEnvText}
-                  onChange={(event) => setCreateEnvText(event.target.value)}
-                  disabled={pending}
-                  placeholder={"GITHUB_TOKEN=\nDEEPSEEK_API_KEY=\nGOOGLE_CLOUD_API_KEY=\nNOTEBOOKLM_BRIDGE_URL=\nNOTEBOOKLM_BRIDGE_TOKEN=\nYOUTUBE_WIKI_TG_TOKEN=\nCLOUDFLARE_API_KEY="}
-                  rows={8}
-                />
-                <span className="field-hint">可选。为空时继承当前管理 Runtime 环境；填写后作为本次创建请求传入。</span>
-                <button type="button" className="inline-tool-btn" onClick={onLoadInheritanceToEnv} disabled={pending || inheritanceLoading}>
-                  <RefreshCw size={14} />Load inherited template
-                </button>
-              </label>
               <RuntimeInheritancePreviewPanel
                 preview={inheritance}
                 loading={inheritanceLoading}
                 error={inheritanceError}
                 onRefresh={onRefreshInheritance}
               />
+              <details className="advanced-runtime-overrides">
+                <summary>Advanced Runtime Env Overrides</summary>
+                <label>
+                  <span>Runtime Env Overrides</span>
+                  <textarea
+                    value={createEnvText}
+                    onChange={(event) => setCreateEnvText(event.target.value)}
+                    disabled={pending}
+                    placeholder={"GITHUB_TOKEN=\nDEEPSEEK_API_KEY=\nGOOGLE_CLOUD_API_KEY=\nNOTEBOOKLM_BRIDGE_URL=\nNOTEBOOKLM_BRIDGE_TOKEN=\nYOUTUBE_WIKI_TG_TOKEN=\nCLOUDFLARE_API_KEY="}
+                    rows={8}
+                  />
+                  <span className="field-hint">高级覆盖项。正常创建时保持为空，系统会自动继承上方 Resolved Config。</span>
+                  <button type="button" className="inline-tool-btn" onClick={onLoadInheritanceToEnv} disabled={pending || inheritanceLoading}>
+                    <RefreshCw size={14} />Load inherited template
+                  </button>
+                </label>
+              </details>
             </div>
           ) : (
             <div className="runtime-drawer-form">
@@ -3293,8 +3327,8 @@ function RuntimeInheritancePreviewPanel({
     <section className="runtime-inheritance-panel">
       <div className="inheritance-head">
         <div>
-          <strong>Inherited Runtime Config</strong>
-          <span>字段名、source、是否存在都会显示；secret 类值只显示 masked value。</span>
+          <strong>Resolved Runtime Config</strong>
+          <span>这些配置会自动用于 Create Runtime；secret 不回显 raw value，但会明确显示已继承来源。</span>
         </div>
         <button type="button" className="ghost-btn compact" onClick={onRefresh} disabled={loading}>
           {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
@@ -3313,19 +3347,29 @@ function RuntimeInheritancePreviewPanel({
             <span>env_file</span>
             <code>{preview?.envFile || (loading ? "loading..." : "unknown")}</code>
           </div>
-          <div className="inheritance-table" role="table" aria-label="Inherited Runtime Config">
-            <div className="inheritance-row inheritance-row-head" role="row">
-              <span>Key</span><span>Source</span><span>Value</span><span>Status</span>
-            </div>
+          <div className="resolved-config-grid" aria-label="Resolved Runtime Config">
             {(loading && !visibleItems.length) ? (
-              <div className="inheritance-row" role="row"><span>loading</span><span>environment</span><span>...</span><span>checking</span></div>
+              <label className="resolved-config-field"><span>loading</span><input disabled readOnly value="checking..." /></label>
             ) : visibleItems.map((item) => (
-              <div key={item.key} className={`inheritance-row ${item.present ? "present" : "absent"}`} role="row">
-                <code title={(item.aliases || []).join(", ")}>{item.key}</code>
-                <span>{item.source}</span>
-                <code>{item.maskedValue || "-"}</code>
-                <span>{item.present ? (item.secret ? "masked" : "visible") : item.required ? "required missing" : "missing"}</span>
-              </div>
+              <label key={item.key} className={`resolved-config-field ${item.present ? "present" : "absent"}`}>
+                <span>
+                  <code title={(item.aliases || []).join(", ")}>{item.key}</code>
+                  <small>{item.source} · {item.present ? (item.secret ? "inherited secret" : "ready") : item.required ? "required missing" : "optional missing"}</small>
+                </span>
+                <input
+                  disabled
+                  readOnly
+                  value={
+                    item.present
+                      ? item.secret
+                        ? `Inherited from ${item.source}${item.maskedValue ? ` (${item.maskedValue})` : ""}`
+                        : item.maskedValue
+                      : item.required
+                        ? "Missing - load Settings or add manual override"
+                        : "Missing optional"
+                  }
+                />
+              </label>
             ))}
           </div>
           {preview?.note && <span className="field-hint">{preview.note}</span>}
