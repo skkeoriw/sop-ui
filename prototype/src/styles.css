@@ -2598,6 +2598,20 @@ pre {
   gap: 10px;
 }
 
+.resolved-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.resolved-config-actions > span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .inheritance-head > div {
   display: grid;
   gap: 3px;
@@ -2685,19 +2699,22 @@ pre {
   font-size: 11px;
 }
 
-.resolved-config-field input:disabled {
+.resolved-config-field input {
   border-color: var(--line);
   background: var(--surface);
   color: var(--text);
-  opacity: 1;
-  -webkit-text-fill-color: var(--text);
 }
 
-.resolved-config-field.absent input:disabled {
+.resolved-config-field.absent input {
   border-color: #fed7aa;
   background: #fff7ed;
   color: #9a3412;
-  -webkit-text-fill-color: #9a3412;
+}
+
+.resolved-config-field.edited input {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .advanced-runtime-overrides {

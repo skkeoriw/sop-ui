@@ -367,6 +367,7 @@ export default function App() {
   const [runtimeCreateSshCommand, setRuntimeCreateSshCommand] = useState(runtimeManagementDefaults.createSshCommand);
   const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState(runtimeManagementDefaults.createPrivateKey);
   const [runtimeCreateEnvText, setRuntimeCreateEnvText] = useState(runtimeManagementDefaults.createEnvText);
+  const [runtimeCreateConfigOverrides, setRuntimeCreateConfigOverrides] = useState<Record<string, string>>({});
   const [runtimeDeleteId, setRuntimeDeleteId] = useState(runtimeManagementDefaults.deleteRuntimeId);
   const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState(runtimeManagementDefaults.deleteSshCommand);
   const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState(runtimeManagementDefaults.deletePrivateKey);
@@ -644,6 +645,7 @@ export default function App() {
           ssh_command: runtimeCreateSshCommand,
           private_key_b64: encodeSecretB64(runtimeCreatePrivateKey),
           ...parseRuntimeEnvOverrides(runtimeCreateEnvText),
+          ...Object.fromEntries(Object.entries(runtimeCreateConfigOverrides).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()])),
         }),
         minimumDelay(450),
       ]);
@@ -1330,6 +1332,8 @@ export default function App() {
           setCreatePrivateKey={setRuntimeCreatePrivateKey}
           createEnvText={runtimeCreateEnvText}
           setCreateEnvText={setRuntimeCreateEnvText}
+          createConfigOverrides={runtimeCreateConfigOverrides}
+          setCreateConfigOverrides={setRuntimeCreateConfigOverrides}
           deleteRuntimeId={runtimeDeleteId}
           setDeleteRuntimeId={setRuntimeDeleteId}
           deleteSshCommand={runtimeDeleteSshCommand}
@@ -3123,6 +3127,8 @@ function RuntimeManagementStartDrawer({
   setCreatePrivateKey,
   createEnvText,
   setCreateEnvText,
+  createConfigOverrides,
+  setCreateConfigOverrides,
   deleteRuntimeId,
   setDeleteRuntimeId,
   deleteSshCommand,
@@ -3156,6 +3162,8 @@ function RuntimeManagementStartDrawer({
   setCreatePrivateKey: (value: string) => void;
   createEnvText: string;
   setCreateEnvText: (value: string) => void;
+  createConfigOverrides: Record<string, string>;
+  setCreateConfigOverrides: (value: Record<string, string>) => void;
   deleteRuntimeId: string;
   setDeleteRuntimeId: (value: string) => void;
   deleteSshCommand: string;
@@ -3224,6 +3232,8 @@ function RuntimeManagementStartDrawer({
                 preview={inheritance}
                 loading={inheritanceLoading}
                 error={inheritanceError}
+                overrides={createConfigOverrides}
+                onOverridesChange={setCreateConfigOverrides}
                 onRefresh={onRefreshInheritance}
               />
               <details className="advanced-runtime-overrides">
@@ -3286,14 +3296,19 @@ function RuntimeInheritancePreviewPanel({
   preview,
   loading,
   error,
+  overrides,
+  onOverridesChange,
   onRefresh,
 }: {
   preview: RuntimeInheritancePreview | undefined;
   loading: boolean;
   error: string;
+  overrides: Record<string, string>;
+  onOverridesChange: (value: Record<string, string>) => void;
   onRefresh: () => void;
 }) {
   const items = preview?.items || [];
+  const editedCount = Object.values(overrides).filter((value) => value.trim()).length;
   const importantKeys = new Set([
     "GITHUB_TOKEN",
     "DEEPSEEK_API_KEY",
@@ -3314,6 +3329,31 @@ function RuntimeInheritancePreviewPanel({
     "SOP_UI_URL",
   ]);
   const visibleItems = items.filter((item) => importantKeys.has(item.key) || item.required);
+  const updateOverride = (key: string, value: string) => {
+    onOverridesChange({ ...overrides, [key]: value });
+  };
+  const displayResolvedValue = (item: RuntimeInheritancePreview["items"][number]) => {
+    if (Object.prototype.hasOwnProperty.call(overrides, item.key)) return overrides[item.key];
+    if (item.secret) return "";
+    if (item.present) return item.maskedValue;
+    return "";
+  };
+  const placeholderForResolvedValue = (item: RuntimeInheritancePreview["items"][number]) => {
+    if (item.present && item.secret) return `已加载：${item.source}${item.maskedValue ? ` (${item.maskedValue})` : ""}；填写则覆盖本次运行`;
+    if (item.present) return `已加载：${item.source}`;
+    return item.required ? "缺失，直接在这里填写本次运行值" : "可选，留空";
+  };
+  const statusForItem = (item: RuntimeInheritancePreview["items"][number]) => {
+    if (item.key === "GOOGLE_CLOUD_API_KEY" || item.key === "GEMINI_API_KEY") {
+      const vertexReady = items.some((candidate) => candidate.key === "GOOGLE_PROJECT_ID" && candidate.present)
+        && items.some((candidate) => candidate.key === "VERTEX_LOCATION" && candidate.present)
+        && items.some((candidate) => candidate.key === "WIKI_VERTEX_MODEL" && candidate.present);
+      if (!item.present && vertexReady) return "optional: Vertex ready";
+    }
+    if (overrides[item.key]?.trim()) return "edited for this run";
+    if (item.present) return item.secret ? "loaded secret" : "loaded";
+    return item.required ? "required missing" : "optional missing";
+  };
   const groups = [
     ["github", "GitHub"],
     ["hermes", "Hermes"],
@@ -3328,12 +3368,16 @@ function RuntimeInheritancePreviewPanel({
       <div className="inheritance-head">
         <div>
           <strong>Resolved Runtime Config</strong>
-          <span>这些配置会自动用于 Create Runtime；secret 不回显 raw value，但会明确显示已继承来源。</span>
+          <span>这些配置已加载到本次创建空间；可直接编辑覆盖本次运行，留空则继续使用已加载值。</span>
         </div>
-        <button type="button" className="ghost-btn compact" onClick={onRefresh} disabled={loading}>
-          {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-          Refresh
-        </button>
+        <div className="resolved-config-actions">
+          {editedCount > 0 && <span>{editedCount} edited</span>}
+          {editedCount > 0 && <button type="button" className="ghost-btn compact" onClick={() => onOverridesChange({})}>Clear edits</button>}
+          <button type="button" className="ghost-btn compact" onClick={onRefresh} disabled={loading}>
+            {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+            Refresh
+          </button>
+        </div>
       </div>
       {error ? <div className="inline-error">{error}</div> : (
         <>
@@ -3351,23 +3395,16 @@ function RuntimeInheritancePreviewPanel({
             {(loading && !visibleItems.length) ? (
               <label className="resolved-config-field"><span>loading</span><input disabled readOnly value="checking..." /></label>
             ) : visibleItems.map((item) => (
-              <label key={item.key} className={`resolved-config-field ${item.present ? "present" : "absent"}`}>
+              <label key={item.key} className={`resolved-config-field ${item.present ? "present" : "absent"} ${overrides[item.key]?.trim() ? "edited" : ""}`}>
                 <span>
                   <code title={(item.aliases || []).join(", ")}>{item.key}</code>
-                  <small>{item.source} · {item.present ? (item.secret ? "inherited secret" : "ready") : item.required ? "required missing" : "optional missing"}</small>
+                  <small>{item.source} · {statusForItem(item)}</small>
                 </span>
                 <input
-                  disabled
-                  readOnly
-                  value={
-                    item.present
-                      ? item.secret
-                        ? `Inherited from ${item.source}${item.maskedValue ? ` (${item.maskedValue})` : ""}`
-                        : item.maskedValue
-                      : item.required
-                        ? "Missing - load Settings or add manual override"
-                        : "Missing optional"
-                  }
+                  type="text"
+                  value={displayResolvedValue(item)}
+                  onChange={(event) => updateOverride(item.key, event.target.value)}
+                  placeholder={placeholderForResolvedValue(item)}
                 />
               </label>
             ))}
