@@ -224,10 +224,11 @@ const StageNode = memo(({ data }: NodeProps<Node<StageNodeData>>) => {
         <Handle type="target" position={Position.Left} />
         <div className="node-top">
           <span className={`status-pill ${status}`}>{statusIcon(status)}{statusLabel(status)}</span>
-          <span className="node-mode">{stage.mode}</span>
+          <span className="node-mode">{stage.branch || stage.mode}</span>
         </div>
         <div className="flow-node-title"><span className="stage-letter">{stage.ui?.stageLetter || stage.id.slice(0, 1).toUpperCase()}</span><strong>{stage.title}</strong></div>
         <span>{String(stage.executor?.type || stage.mode)} · {stage.id}</span>
+        {stage.purpose && <span className="node-purpose">{stage.purpose}</span>}
         <div className="flow-capabilities" aria-label="Node capabilities">
           <span className={capabilityEnabled(stage.capabilities?.git) ? "on" : ""}>Git</span>
           <span className={capabilityEnabled(stage.capabilities?.telegram) ? "on" : ""}>TG</span>
@@ -1798,7 +1799,10 @@ function WorkflowWorkspace({
                       <KeyValues data={{
                         stage_id: selectedStage.id,
                         title: selectedStage.title,
+                        branch: nodeDetail?.branch || selectedStage.branch || "-",
+                        purpose: nodeDetail?.purpose || selectedStage.purpose || "-",
                         mode: selectedStage.mode,
+                        retryable: nodeDetail?.retryable === undefined ? "-" : nodeDetail.retryable,
                         summary: selectedStage.summary || "-"
                       }} />
                     </DetailBlock>
@@ -1858,6 +1862,11 @@ function WorkflowWorkspace({
                     {nodeDetail?.error && (
                       <DetailBlock title="Error">
                         <pre className="log-box error-log">{nodeDetail.error}</pre>
+                      </DetailBlock>
+                    )}
+                    {nodeDetail?.manualFixHint && (
+                      <DetailBlock title="Manual Fix Hint">
+                        <pre className="log-box">{nodeDetail.manualFixHint}</pre>
                       </DetailBlock>
                     )}
                     <DetailBlock title="Operations">

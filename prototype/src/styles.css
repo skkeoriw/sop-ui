@@ -1750,6 +1750,11 @@ pre {
   border-top: 4px solid var(--red);
 }
 
+.flow-node.skipped {
+  border-top: 4px solid #aab4c3;
+  opacity: .72;
+}
+
 .node-top {
   display: flex;
   justify-content: space-between;
@@ -1759,6 +1764,15 @@ pre {
 .node-mode {
   color: var(--muted);
   font-size: 12px;
+}
+
+.node-purpose {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 32px;
+  overflow: hidden;
+  line-height: 1.35;
 }
 
 .node-progress {

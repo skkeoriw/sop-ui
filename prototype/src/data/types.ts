@@ -62,6 +62,8 @@ export interface DagNode {
   title: string;
   mode: string;
   summary?: string;
+  purpose?: string;
+  branch?: string;
   inputs: Record<string, string>;
   outputs: Record<string, string>;
   optionalInputs: Record<string, string>;
@@ -127,6 +129,11 @@ export interface RunNodeState {
 export interface NodeDetail {
   pipelineId: string;
   nodeId: string;
+  title?: string;
+  purpose?: string;
+  branch?: string;
+  retryable?: boolean;
+  manualFixHint?: string;
   runId?: string;
   status: StageStatus;
   mode?: string;
@@ -206,6 +213,9 @@ export interface NodeLog {
 export interface NodeConfig {
   nodeId: string;
   title?: string;
+  purpose?: string;
+  branch?: string;
+  retryable?: boolean;
   mode?: string;
   needs?: string[];
   executor?: Record<string, unknown>;
