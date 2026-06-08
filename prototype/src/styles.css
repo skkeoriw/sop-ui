@@ -1721,6 +1721,38 @@ pre {
   gap: 8px;
 }
 
+.primary-load-actions {
+  justify-content: flex-start;
+}
+
+.advanced-config-save {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.advanced-config-save summary {
+  padding: 10px 12px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.advanced-config-form {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+.advanced-config-form > label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .panel-head {
   min-height: 50px;
   display: flex;

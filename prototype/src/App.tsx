@@ -2577,25 +2577,20 @@ function SettingsPage({
               {managementConfigLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Refresh
             </button>
           </div>
-          <form className="settings-block management-config-form" onSubmit={onSaveManagementConfig}>
+          <div className="settings-block management-config-form">
             <div className="drawer-note">
               <strong>一次保存，Create Runtime 自动继承</strong>
-              <span>直接加载当前 Runtime 不需要 token；手动保存或覆盖字段才需要 Management Token。Secret 保存后不回显 raw value。</span>
+              <span>点击下面按钮会直接把当前 Runtime 已有配置加载到 server-side config；不需要 token，不需要再点保存。</span>
             </div>
-            <label>
-              <span>Management Token for manual save</span>
-              <input
-                type="password"
-                value={managementConfigToken}
-                onChange={(event) => setManagementConfigToken(event.target.value)}
-                placeholder="SOP_MANAGEMENT_TOKEN 或 HERMES_WEBHOOK_TOKEN"
-                disabled={saveManagementConfigPending}
-              />
-            </label>
             {!managementInstance && <div className="inline-error">当前 Runtime 没有 runtime-management instance。</div>}
             {managementConfigError && <div className="inline-error">{managementConfigError}</div>}
-            {saveManagementConfigError && <div className="inline-error">{saveManagementConfigError}</div>}
             {initializeManagementConfigError && <div className="inline-error">{initializeManagementConfigError}</div>}
+            <div className="settings-actions primary-load-actions">
+              <button type="button" className="primary" onClick={onInitializeManagementConfig} disabled={initializeManagementConfigPending || !managementInstance}>
+                {initializeManagementConfigPending ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+                Load current Runtime config
+              </button>
+            </div>
             <div className="management-config-groups">
               {Object.entries(groupedManagementConfig).map(([category, items]) => (
                 <section key={category} className="management-config-group">
@@ -2628,18 +2623,34 @@ function SettingsPage({
                 </section>
               ))}
             </div>
-            <div className="settings-actions">
-              <button type="button" onClick={() => setManagementConfigValues({})} disabled={saveManagementConfigPending}>Clear edits</button>
-              <button type="button" onClick={onInitializeManagementConfig} disabled={saveManagementConfigPending || initializeManagementConfigPending || !managementInstance}>
-                {initializeManagementConfigPending ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-                Load current Runtime config
-              </button>
-              <button type="submit" className="primary" disabled={saveManagementConfigPending || !managementInstance}>
-                {saveManagementConfigPending ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-                Save management config
-              </button>
-            </div>
-          </form>
+            <details className="advanced-config-save">
+              <summary>Advanced manual override</summary>
+              <form className="advanced-config-form" onSubmit={onSaveManagementConfig}>
+                <div className="drawer-note">
+                  <strong>手动覆盖保存</strong>
+                  <span>只有手动填写或覆盖字段才需要 Management Token。Secret 输入时本地可见，保存后不回显 raw value。</span>
+                </div>
+                <label>
+                  <span>Management Token</span>
+                  <input
+                    type="password"
+                    value={managementConfigToken}
+                    onChange={(event) => setManagementConfigToken(event.target.value)}
+                    placeholder="SOP_MANAGEMENT_TOKEN 或 HERMES_WEBHOOK_TOKEN"
+                    disabled={saveManagementConfigPending}
+                  />
+                </label>
+                {saveManagementConfigError && <div className="inline-error">{saveManagementConfigError}</div>}
+                <div className="settings-actions">
+                  <button type="button" onClick={() => setManagementConfigValues({})} disabled={saveManagementConfigPending}>Clear edits</button>
+                  <button type="submit" className="primary" disabled={saveManagementConfigPending || !managementInstance}>
+                    {saveManagementConfigPending ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+                    Save manual edits
+                  </button>
+                </div>
+              </form>
+            </details>
+          </div>
         </div>
       </section>
     </>
