@@ -13,6 +13,7 @@ import type {
   NodeModuleDetail,
   NodeRegistryItem,
   Run,
+  RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
   Runtime,
   SopDataProvider,
@@ -72,6 +73,14 @@ const mockRuntimeInheritancePreview: RuntimeInheritancePreview = {
     { key: "CLOUDFLARE_API_KEY", aliases: ["cf_api_key"], source: "env_file", present: true, maskedValue: "cfk***be7", secret: true, required: true, category: "cloudflare" },
     { key: "SOP_UI_URL", aliases: ["sop_ui_url"], source: "missing", present: false, maskedValue: "", secret: false, required: false, category: "runtime" },
   ],
+};
+let mockRuntimeManagementConfig: RuntimeInheritancePreview = {
+  ...mockRuntimeInheritancePreview,
+  items: mockRuntimeInheritancePreview.items.map((item) => ({
+    ...item,
+    source: item.key === "SOP_UI_URL" ? "missing" : "management_config",
+    present: item.key === "SOP_UI_URL" ? false : item.present,
+  })),
 };
 
 function runtime(id: string): Runtime {
@@ -419,6 +428,25 @@ export const mockProvider: SopDataProvider = {
   async getRuntimeInheritance(): Promise<RuntimeInheritancePreview> {
     await delay();
     return mockRuntimeInheritancePreview;
+  },
+
+  async getRuntimeManagementConfig(): Promise<RuntimeInheritancePreview> {
+    await delay();
+    return mockRuntimeManagementConfig;
+  },
+
+  async saveRuntimeManagementConfig(_target, _instanceId, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview> {
+    await delay();
+    const savedKeys = new Set(Object.entries(input.values).filter(([, value]) => value.trim()).map(([key]) => key));
+    mockRuntimeManagementConfig = {
+      ...mockRuntimeManagementConfig,
+      updatedAt: new Date().toISOString(),
+      items: mockRuntimeManagementConfig.items.map((item) => savedKeys.has(item.key)
+        ? { ...item, source: "management_config", present: true, maskedValue: item.secret ? "new***ved" : input.values[item.key], matchedKey: item.key }
+        : item
+      ),
+    };
+    return mockRuntimeManagementConfig;
   },
 
   async triggerRun(target, _instanceId, input: TriggerInput) {

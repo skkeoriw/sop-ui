@@ -61,7 +61,7 @@ export interface RuntimeInheritanceItem {
   key: string;
   aliases?: string[];
   matchedKey?: string;
-  source: "environment" | "env_file" | "request" | "missing" | string;
+  source: "environment" | "management_config" | "env_file" | "request" | "missing" | string;
   present: boolean;
   maskedValue: string;
   secret: boolean;
@@ -76,6 +76,11 @@ export interface RuntimeInheritancePreview {
   groups: Record<string, boolean>;
   note?: string;
   updatedAt?: string;
+}
+
+export interface RuntimeManagementConfigSaveInput {
+  token: string;
+  values: Record<string, string>;
 }
 
 export interface DagNode {
@@ -370,6 +375,8 @@ export interface SopDataProvider {
   getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
   getRuntimeInheritance(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
+  getRuntimeManagementConfig(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
+  saveRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;
   retryNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
   cancelRun(runtime: Runtime, instanceId: string, pipelineId: string, reason?: string): Promise<void>;

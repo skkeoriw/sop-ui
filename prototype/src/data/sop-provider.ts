@@ -13,6 +13,7 @@ import type {
   NodeModuleDetail,
   NodeRegistryItem,
   Run,
+  RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
   Runtime,
   SopDataProvider,
@@ -589,6 +590,28 @@ export const sopProvider: SopDataProvider = {
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/config/inheritance`
     );
     return mapRuntimeInheritancePreview(raw);
+  },
+
+  async getRuntimeManagementConfig(runtime, instanceId) {
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/config/management`
+    );
+    return mapRuntimeInheritancePreview(raw);
+  },
+
+  async saveRuntimeManagementConfig(runtime, instanceId, input: RuntimeManagementConfigSaveInput) {
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/config/management`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${input.token}`,
+        },
+        body: JSON.stringify({ values: input.values }),
+      }
+    );
+    return mapRuntimeInheritancePreview((raw.config as Record<string, unknown>) || raw);
   },
 
   async triggerRun(runtime, instanceId, input: TriggerInput): Promise<TriggerResult> {

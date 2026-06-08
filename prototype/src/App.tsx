@@ -358,6 +358,8 @@ export default function App() {
   const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState(runtimeManagementDefaults.deleteSshCommand);
   const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState(runtimeManagementDefaults.deletePrivateKey);
   const [runtimeDeleteForce, setRuntimeDeleteForce] = useState(runtimeManagementDefaults.deleteForce);
+  const [managementConfigToken, setManagementConfigToken] = useState("");
+  const [managementConfigValues, setManagementConfigValues] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
@@ -460,6 +462,12 @@ export default function App() {
     queryKey: ["runtime-inheritance", mode, runtime?.id || "", managementInstance?.instanceId || ""],
     queryFn: () => provider.getRuntimeInheritance(runtime!, managementInstance!.instanceId),
     enabled: Boolean(runtime && managementInstance),
+    retry: 1,
+  });
+  const runtimeManagementConfigQuery = useQuery({
+    queryKey: ["runtime-management-config", mode, runtime?.id || "", managementInstance?.instanceId || ""],
+    queryFn: () => provider.getRuntimeManagementConfig(runtime!, managementInstance!.instanceId),
+    enabled: Boolean(runtime && managementInstance && viewMode === "settings"),
     retry: 1,
   });
   const runsQuery = useQuery({
@@ -680,6 +688,32 @@ export default function App() {
     },
     onError: (error) => {
       setToast(`Runtime 删除失败：${String((error as Error).message || error)}`);
+    },
+  });
+
+  const saveManagementConfigMutation = useMutation({
+    mutationFn: async () => {
+      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      if (!managementConfigToken.trim()) throw new Error("请填写 Management Token");
+      const values = Object.fromEntries(Object.entries(managementConfigValues).filter(([, value]) => value.trim()));
+      if (!Object.keys(values).length) throw new Error("请至少填写一个要保存的配置值");
+      const [result] = await Promise.all([
+        provider.saveRuntimeManagementConfig(runtime, managementInstance.instanceId, {
+          token: managementConfigToken.trim(),
+          values,
+        }),
+        minimumDelay(300),
+      ]);
+      return result;
+    },
+    onSuccess: async () => {
+      setManagementConfigValues({});
+      setToast("Runtime 管理配置已保存；Create Runtime 会自动继承");
+      await runtimeManagementConfigQuery.refetch();
+      await runtimeInheritanceQuery.refetch();
+    },
+    onError: (error) => {
+      setToast(`Runtime 管理配置保存失败：${String((error as Error).message || error)}`);
     },
   });
 
@@ -1227,6 +1261,18 @@ export default function App() {
             streamStatus={streamStatus}
             nodesReadyCount={nodesReadyCount}
             nodesTotal={managedNodes.length}
+            managementInstance={managementInstance}
+            managementConfig={runtimeManagementConfigQuery.data}
+            managementConfigLoading={runtimeManagementConfigQuery.isLoading}
+            managementConfigError={runtimeManagementConfigQuery.error ? String(runtimeManagementConfigQuery.error.message) : ""}
+            managementConfigToken={managementConfigToken}
+            setManagementConfigToken={setManagementConfigToken}
+            managementConfigValues={managementConfigValues}
+            setManagementConfigValues={setManagementConfigValues}
+            saveManagementConfigPending={saveManagementConfigMutation.isPending}
+            saveManagementConfigError={saveManagementConfigMutation.error ? String(saveManagementConfigMutation.error.message) : ""}
+            onRefreshManagementConfig={() => runtimeManagementConfigQuery.refetch()}
+            onSaveManagementConfig={(event) => { event.preventDefault(); saveManagementConfigMutation.mutate(); }}
           />
         )}
       </main>
@@ -2371,6 +2417,18 @@ function SettingsPage({
   streamStatus,
   nodesReadyCount,
   nodesTotal,
+  managementInstance,
+  managementConfig,
+  managementConfigLoading,
+  managementConfigError,
+  managementConfigToken,
+  setManagementConfigToken,
+  managementConfigValues,
+  setManagementConfigValues,
+  saveManagementConfigPending,
+  saveManagementConfigError,
+  onRefreshManagementConfig,
+  onSaveManagementConfig,
 }: {
   mode: DataMode;
   runtime: Runtime | undefined;
@@ -2383,7 +2441,30 @@ function SettingsPage({
   streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
   nodesReadyCount: number;
   nodesTotal: number;
+  managementInstance: Instance | undefined;
+  managementConfig: RuntimeInheritancePreview | undefined;
+  managementConfigLoading: boolean;
+  managementConfigError: string;
+  managementConfigToken: string;
+  setManagementConfigToken: (value: string) => void;
+  managementConfigValues: Record<string, string>;
+  setManagementConfigValues: (value: Record<string, string>) => void;
+  saveManagementConfigPending: boolean;
+  saveManagementConfigError: string;
+  onRefreshManagementConfig: () => void;
+  onSaveManagementConfig: (event: FormEvent) => void;
 }) {
+  const managementConfigItems = managementConfig?.items || [];
+  const groupedManagementConfig = managementConfigItems.reduce<Record<string, typeof managementConfigItems>>((groups, item) => {
+    const key = item.category || "runtime";
+    groups[key] = groups[key] || [];
+    groups[key].push(item);
+    return groups;
+  }, {});
+  const updateManagementConfigValue = (key: string, value: string) => {
+    setManagementConfigValues({ ...managementConfigValues, [key]: value });
+  };
+
   return (
     <>
       <section className="concept-hero">
@@ -2440,6 +2521,72 @@ function SettingsPage({
           <form className="settings-block manual-endpoint" onSubmit={onAddManualEndpoint}>
             <label htmlFor="settings-manual-endpoint">Endpoint</label>
             <div><input id="settings-manual-endpoint" value={manualEndpoint} onChange={(event) => setManualEndpoint(event.target.value)} placeholder="https://..." /><button>Apply</button></div>
+          </form>
+        </div>
+        <div className="flow-panel settings-wide">
+          <div className="panel-head">
+            <div><strong>Runtime Management Config</strong><span>Server-side defaults for Create Runtime</span></div>
+            <button type="button" className="ghost-btn compact" onClick={onRefreshManagementConfig} disabled={managementConfigLoading}>
+              {managementConfigLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Refresh
+            </button>
+          </div>
+          <form className="settings-block management-config-form" onSubmit={onSaveManagementConfig}>
+            <div className="drawer-note">
+              <strong>一次保存，Create Runtime 自动继承</strong>
+              <span>Secret 字段保存后不回显 raw value；输入时本地可见，保存后显示 saved / missing。写入接口需要 Management Token。</span>
+            </div>
+            <label>
+              <span>Management Token</span>
+              <input
+                type="password"
+                value={managementConfigToken}
+                onChange={(event) => setManagementConfigToken(event.target.value)}
+                placeholder="SOP_MANAGEMENT_TOKEN 或 HERMES_WEBHOOK_TOKEN"
+                disabled={saveManagementConfigPending}
+              />
+            </label>
+            {!managementInstance && <div className="inline-error">当前 Runtime 没有 runtime-management instance。</div>}
+            {managementConfigError && <div className="inline-error">{managementConfigError}</div>}
+            {saveManagementConfigError && <div className="inline-error">{saveManagementConfigError}</div>}
+            <div className="management-config-groups">
+              {Object.entries(groupedManagementConfig).map(([category, items]) => (
+                <section key={category} className="management-config-group">
+                  <h3>{category}</h3>
+                  <div className="management-config-list">
+                    {items.map((item) => {
+                      const currentValue = managementConfigValues[item.key] || "";
+                      const status = currentValue.trim()
+                        ? "editing"
+                        : item.present
+                          ? item.secret ? "saved" : "saved visible"
+                          : item.required ? "required missing" : "missing";
+                      return (
+                        <label key={item.key} className="management-config-row">
+                          <span>
+                            <code>{item.key}</code>
+                            <small>{item.source} · {status}</small>
+                          </span>
+                          <input
+                            type={item.secret ? "password" : "text"}
+                            value={currentValue}
+                            onChange={(event) => updateManagementConfigValue(item.key, event.target.value)}
+                            placeholder={item.present ? (item.secret ? "Saved. Enter a new value to replace." : item.maskedValue || "Saved") : "Missing. Enter value to save."}
+                            disabled={saveManagementConfigPending}
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+            <div className="settings-actions">
+              <button type="button" onClick={() => setManagementConfigValues({})} disabled={saveManagementConfigPending}>Clear edits</button>
+              <button type="submit" className="primary" disabled={saveManagementConfigPending || !managementInstance}>
+                {saveManagementConfigPending ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+                Save management config
+              </button>
+            </div>
           </form>
         </div>
       </section>

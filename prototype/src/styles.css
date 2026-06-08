@@ -1635,6 +1635,92 @@ pre {
   padding: 14px;
 }
 
+.settings-wide {
+  grid-column: 1 / -1;
+}
+
+.management-config-form {
+  display: grid;
+  gap: 14px;
+}
+
+.management-config-form > label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.management-config-form input {
+  width: 100%;
+  min-width: 0;
+}
+
+.management-config-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.management-config-group {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.management-config-group h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+.management-config-list {
+  display: grid;
+  gap: 8px;
+}
+
+.management-config-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, .8fr) minmax(160px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.management-config-row > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.management-config-row code {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-config-row small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .panel-head {
   min-height: 50px;
   display: flex;
