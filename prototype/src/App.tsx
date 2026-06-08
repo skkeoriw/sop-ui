@@ -131,9 +131,7 @@ function executionSortPriority(run: Run, selectedRunId: string) {
   if (run.status === "running") return 0;
   if (selectedRunId && run.pipelineId === selectedRunId) return 1;
   if (run.status === "waiting") return 2;
-  if (run.status === "failed") return 3;
-  if (run.status === "skipped") return 4;
-  return 5;
+  return 3;
 }
 
 function ensureSelectedRunVisible(runs: Run[], selectedRun: Run | undefined) {
