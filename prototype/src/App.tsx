@@ -127,6 +127,19 @@ function writeRuntimeManagementFormDefaults(value: RuntimeManagementFormDefaults
   }
 }
 
+function runtimeEnvTemplateFromPreview(preview: RuntimeInheritancePreview | undefined) {
+  if (!preview?.items?.length) return "";
+  return preview.items
+    .filter((item) => item.required || item.present || ["cloudflare", "notebooklm", "llm", "hermes", "github", "telegram"].includes(item.category))
+    .map((item) => {
+      if (item.secret) {
+        return `${item.key}= # ${item.present ? `inherited from ${item.source}; leave blank to use inherited value` : "missing; paste value only if you want this request override"}`;
+      }
+      return `${item.key}=${item.present ? item.maskedValue : ""}${item.present ? ` # inherited from ${item.source}` : " # missing"}`;
+    })
+    .join("\n");
+}
+
 function readRoute(): AppRoute {
   const parts = window.location.pathname.split("/").filter(Boolean);
   const empty = { nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
@@ -717,6 +730,29 @@ export default function App() {
     },
   });
 
+  const initializeManagementConfigMutation = useMutation({
+    mutationFn: async () => {
+      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      if (!managementConfigToken.trim()) throw new Error("请填写 Management Token");
+      const [result] = await Promise.all([
+        provider.initializeRuntimeManagementConfig(runtime, managementInstance.instanceId, {
+          token: managementConfigToken.trim(),
+          overwrite: false,
+        }),
+        minimumDelay(300),
+      ]);
+      return result;
+    },
+    onSuccess: async () => {
+      setToast("已从当前 Runtime 初始化管理配置；Create Runtime 会自动继承");
+      await runtimeManagementConfigQuery.refetch();
+      await runtimeInheritanceQuery.refetch();
+    },
+    onError: (error) => {
+      setToast(`初始化管理配置失败：${String((error as Error).message || error)}`);
+    },
+  });
+
   const retryMutation = useMutation({
     mutationFn: () => provider.retryNode(runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey),
     onSuccess: async () => {
@@ -1271,8 +1307,11 @@ export default function App() {
             setManagementConfigValues={setManagementConfigValues}
             saveManagementConfigPending={saveManagementConfigMutation.isPending}
             saveManagementConfigError={saveManagementConfigMutation.error ? String(saveManagementConfigMutation.error.message) : ""}
+            initializeManagementConfigPending={initializeManagementConfigMutation.isPending}
+            initializeManagementConfigError={initializeManagementConfigMutation.error ? String(initializeManagementConfigMutation.error.message) : ""}
             onRefreshManagementConfig={() => runtimeManagementConfigQuery.refetch()}
             onSaveManagementConfig={(event) => { event.preventDefault(); saveManagementConfigMutation.mutate(); }}
+            onInitializeManagementConfig={() => initializeManagementConfigMutation.mutate()}
           />
         )}
       </main>
@@ -1304,6 +1343,10 @@ export default function App() {
           onRefreshInheritance={() => runtimeInheritanceQuery.refetch()}
           onSaveDefaults={saveRuntimeManagementDefaults}
           onResetDefaults={resetRuntimeManagementDefaults}
+          onLoadInheritanceToEnv={() => {
+            setRuntimeCreateEnvText(runtimeEnvTemplateFromPreview(runtimeInheritanceQuery.data));
+            setToast("已把继承配置模板加载到 Runtime Env Overrides");
+          }}
           createPending={createRuntimeMutation.isPending}
           deletePending={deleteRuntimeMutation.isPending}
           error={
@@ -2427,8 +2470,11 @@ function SettingsPage({
   setManagementConfigValues,
   saveManagementConfigPending,
   saveManagementConfigError,
+  initializeManagementConfigPending,
+  initializeManagementConfigError,
   onRefreshManagementConfig,
   onSaveManagementConfig,
+  onInitializeManagementConfig,
 }: {
   mode: DataMode;
   runtime: Runtime | undefined;
@@ -2451,8 +2497,11 @@ function SettingsPage({
   setManagementConfigValues: (value: Record<string, string>) => void;
   saveManagementConfigPending: boolean;
   saveManagementConfigError: string;
+  initializeManagementConfigPending: boolean;
+  initializeManagementConfigError: string;
   onRefreshManagementConfig: () => void;
   onSaveManagementConfig: (event: FormEvent) => void;
+  onInitializeManagementConfig: () => void;
 }) {
   const managementConfigItems = managementConfig?.items || [];
   const groupedManagementConfig = managementConfigItems.reduce<Record<string, typeof managementConfigItems>>((groups, item) => {
@@ -2548,6 +2597,7 @@ function SettingsPage({
             {!managementInstance && <div className="inline-error">当前 Runtime 没有 runtime-management instance。</div>}
             {managementConfigError && <div className="inline-error">{managementConfigError}</div>}
             {saveManagementConfigError && <div className="inline-error">{saveManagementConfigError}</div>}
+            {initializeManagementConfigError && <div className="inline-error">{initializeManagementConfigError}</div>}
             <div className="management-config-groups">
               {Object.entries(groupedManagementConfig).map(([category, items]) => (
                 <section key={category} className="management-config-group">
@@ -2582,6 +2632,10 @@ function SettingsPage({
             </div>
             <div className="settings-actions">
               <button type="button" onClick={() => setManagementConfigValues({})} disabled={saveManagementConfigPending}>Clear edits</button>
+              <button type="button" onClick={onInitializeManagementConfig} disabled={saveManagementConfigPending || initializeManagementConfigPending || !managementInstance}>
+                {initializeManagementConfigPending ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
+                Initialize from current Runtime
+              </button>
               <button type="submit" className="primary" disabled={saveManagementConfigPending || !managementInstance}>
                 {saveManagementConfigPending ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
                 Save management config
@@ -3043,6 +3097,7 @@ function RuntimeManagementStartDrawer({
   onRefreshInheritance,
   onSaveDefaults,
   onResetDefaults,
+  onLoadInheritanceToEnv,
   createPending,
   deletePending,
   error,
@@ -3075,6 +3130,7 @@ function RuntimeManagementStartDrawer({
   onRefreshInheritance: () => void;
   onSaveDefaults: () => void;
   onResetDefaults: () => void;
+  onLoadInheritanceToEnv: () => void;
   createPending: boolean;
   deletePending: boolean;
   error: string;
@@ -3134,6 +3190,9 @@ function RuntimeManagementStartDrawer({
                   rows={8}
                 />
                 <span className="field-hint">可选。为空时继承当前管理 Runtime 环境；填写后作为本次创建请求传入。</span>
+                <button type="button" className="inline-tool-btn" onClick={onLoadInheritanceToEnv} disabled={pending || inheritanceLoading}>
+                  <RefreshCw size={14} />Load inherited template
+                </button>
               </label>
               <RuntimeInheritancePreviewPanel
                 preview={inheritance}

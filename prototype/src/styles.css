@@ -2474,6 +2474,27 @@ pre {
   line-height: 1.45;
 }
 
+.inline-tool-btn {
+  width: fit-content;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.inline-tool-btn:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
 .runtime-management-drawer .drawer-body {
   gap: 14px;
 }

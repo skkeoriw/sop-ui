@@ -614,6 +614,21 @@ export const sopProvider: SopDataProvider = {
     return mapRuntimeInheritancePreview((raw.config as Record<string, unknown>) || raw);
   },
 
+  async initializeRuntimeManagementConfig(runtime, instanceId, input) {
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/config/management/init`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${input.token}`,
+        },
+        body: JSON.stringify({ overwrite: Boolean(input.overwrite) }),
+      }
+    );
+    return mapRuntimeInheritancePreview((raw.config as Record<string, unknown>) || raw);
+  },
+
   async triggerRun(runtime, instanceId, input: TriggerInput): Promise<TriggerResult> {
     const payload = input.action || input.management_action
       ? { ...input, management_action: input.management_action || input.action }

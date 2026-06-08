@@ -449,6 +449,19 @@ export const mockProvider: SopDataProvider = {
     return mockRuntimeManagementConfig;
   },
 
+  async initializeRuntimeManagementConfig(): Promise<RuntimeInheritancePreview> {
+    await delay();
+    mockRuntimeManagementConfig = {
+      ...mockRuntimeInheritancePreview,
+      updatedAt: new Date().toISOString(),
+      items: mockRuntimeInheritancePreview.items.map((item) => item.present
+        ? { ...item, source: "management_config", matchedKey: item.key }
+        : item
+      ),
+    };
+    return mockRuntimeManagementConfig;
+  },
+
   async triggerRun(target, _instanceId, input: TriggerInput) {
     const now = new Date();
     const pipelineId = `mock-${now.toISOString().replace(/[-:.]/g, "").slice(0, 15)}`;

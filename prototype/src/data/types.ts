@@ -377,6 +377,7 @@ export interface SopDataProvider {
   getRuntimeInheritance(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   getRuntimeManagementConfig(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   saveRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview>;
+  initializeRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: { token: string; overwrite?: boolean }): Promise<RuntimeInheritancePreview>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;
   retryNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
   cancelRun(runtime: Runtime, instanceId: string, pipelineId: string, reason?: string): Promise<void>;
