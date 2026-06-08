@@ -2381,6 +2381,13 @@ pre {
   font-size: 12px;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
 .runtime-management-drawer .drawer-body {
   gap: 14px;
 }

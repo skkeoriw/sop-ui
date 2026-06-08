@@ -72,6 +72,56 @@ interface StageNodeData extends Record<string, unknown> {
 }
 
 const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "done"];
+const DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND = "ssh -i ~/.ssh/id_ed25519 a01020323900@34.29.222.183";
+const DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID = "runtime-34-29-222-183";
+const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
+
+type RuntimeManagementFormDefaults = {
+  createSshCommand: string;
+  createPrivateKey: string;
+  deleteRuntimeId: string;
+  deleteSshCommand: string;
+  deletePrivateKey: string;
+  deleteForce: boolean;
+};
+
+function stringFromStorage(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
+  const defaults = {
+    createSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
+    createPrivateKey: "",
+    deleteRuntimeId: DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID,
+    deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
+    deletePrivateKey: "",
+    deleteForce: false,
+  };
+  try {
+    const raw = window.localStorage.getItem(RUNTIME_MANAGEMENT_FORM_STORAGE_KEY);
+    if (!raw) return defaults;
+    const stored = JSON.parse(raw) as Partial<RuntimeManagementFormDefaults>;
+    return {
+      createSshCommand: stringFromStorage(stored.createSshCommand, defaults.createSshCommand),
+      createPrivateKey: stringFromStorage(stored.createPrivateKey, defaults.createPrivateKey),
+      deleteRuntimeId: stringFromStorage(stored.deleteRuntimeId, defaults.deleteRuntimeId),
+      deleteSshCommand: stringFromStorage(stored.deleteSshCommand, defaults.deleteSshCommand),
+      deletePrivateKey: stringFromStorage(stored.deletePrivateKey, defaults.deletePrivateKey),
+      deleteForce: Boolean(stored.deleteForce),
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+function writeRuntimeManagementFormDefaults(value: RuntimeManagementFormDefaults) {
+  try {
+    window.localStorage.setItem(RUNTIME_MANAGEMENT_FORM_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Local storage can be unavailable in locked-down browsers; the form still works.
+  }
+}
 
 function readRoute(): AppRoute {
   const parts = window.location.pathname.split("/").filter(Boolean);
@@ -281,13 +331,14 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [triggerUrl, setTriggerUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+  const runtimeManagementDefaults = useMemo(readRuntimeManagementFormDefaults, []);
   const [runtimeManagementAction, setRuntimeManagementAction] = useState<"create-runtime" | "delete-runtime">("create-runtime");
-  const [runtimeCreateSshCommand, setRuntimeCreateSshCommand] = useState("");
-  const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState("");
-  const [runtimeDeleteId, setRuntimeDeleteId] = useState("");
-  const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState("");
-  const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState("");
-  const [runtimeDeleteForce, setRuntimeDeleteForce] = useState(false);
+  const [runtimeCreateSshCommand, setRuntimeCreateSshCommand] = useState(runtimeManagementDefaults.createSshCommand);
+  const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState(runtimeManagementDefaults.createPrivateKey);
+  const [runtimeDeleteId, setRuntimeDeleteId] = useState(runtimeManagementDefaults.deleteRuntimeId);
+  const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState(runtimeManagementDefaults.deleteSshCommand);
+  const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState(runtimeManagementDefaults.deletePrivateKey);
+  const [runtimeDeleteForce, setRuntimeDeleteForce] = useState(runtimeManagementDefaults.deleteForce);
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
@@ -329,6 +380,24 @@ export default function App() {
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
   const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
   const isRuntimeManagementInstance = Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
+
+  useEffect(() => {
+    writeRuntimeManagementFormDefaults({
+      createSshCommand: runtimeCreateSshCommand,
+      createPrivateKey: runtimeCreatePrivateKey,
+      deleteRuntimeId: runtimeDeleteId,
+      deleteSshCommand: runtimeDeleteSshCommand,
+      deletePrivateKey: runtimeDeletePrivateKey,
+      deleteForce: runtimeDeleteForce,
+    });
+  }, [
+    runtimeCreateSshCommand,
+    runtimeCreatePrivateKey,
+    runtimeDeleteId,
+    runtimeDeleteSshCommand,
+    runtimeDeletePrivateKey,
+    runtimeDeleteForce,
+  ]);
 
   const dagQuery = useQuery({ queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""), queryFn: () => provider.getDag(runtime, instance.instanceId), enabled: Boolean(runtime && instance) });
   const runsQuery = useQuery({
@@ -1226,8 +1295,8 @@ function RuntimeOverview({
 }) {
   const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
   const runningCount = instances.filter((item) => item.latestExecution?.status === "running").length;
-  const createReady = Boolean(managementInstance && createSshCommand.trim() && createPrivateKey.trim());
-  const deleteReady = Boolean(managementInstance && deleteRuntimeId.trim() && deleteSshCommand.trim() && deletePrivateKey.trim());
+  const createReady = Boolean(managementInstance && createSshCommand.trim());
+  const deleteReady = Boolean(managementInstance && deleteRuntimeId.trim() && deleteSshCommand.trim());
   return (
     <section className="runtime-overview">
       <div className="concept-hero runtime-hero">
@@ -1304,7 +1373,8 @@ function RuntimeOverview({
             </label>
             <label>
               <span>Private Key</span>
-              <textarea value={createPrivateKey} onChange={(event) => onCreatePrivateKeyChange(event.target.value)} placeholder="Paste OpenSSH private key. It is sent only to the runtime-management SPI request." rows={4} />
+              <textarea value={createPrivateKey} onChange={(event) => onCreatePrivateKeyChange(event.target.value)} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={4} />
+              <span className="field-hint">可选。填过后只保存在当前浏览器；不写入源码或日志。</span>
             </label>
             <button type="submit" disabled={!createReady || creatingRuntime}>
               {creatingRuntime ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
@@ -1327,7 +1397,8 @@ function RuntimeOverview({
             </label>
             <label>
               <span>Private Key</span>
-              <textarea value={deletePrivateKey} onChange={(event) => onDeletePrivateKeyChange(event.target.value)} placeholder="Paste target SSH private key." rows={3} />
+              <textarea value={deletePrivateKey} onChange={(event) => onDeletePrivateKeyChange(event.target.value)} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={3} />
+              <span className="field-hint">可选。用于目标机器 SSH，不会提交到仓库。</span>
             </label>
             <label className="inline-check">
               <input type="checkbox" checked={deleteForce} onChange={(event) => onDeleteForceChange(event.target.checked)} />
@@ -2762,8 +2833,8 @@ function RuntimeManagementStartDrawer({
   onDelete: (event: FormEvent) => void;
 }) {
   const pending = createPending || deletePending;
-  const createReady = Boolean(createSshCommand.trim() && createPrivateKey.trim());
-  const deleteReady = Boolean(deleteRuntimeId.trim() && deleteSshCommand.trim() && deletePrivateKey.trim());
+  const createReady = Boolean(createSshCommand.trim());
+  const deleteReady = Boolean(deleteRuntimeId.trim() && deleteSshCommand.trim());
   const isCreate = action === "create-runtime";
 
   return (
@@ -2800,7 +2871,8 @@ function RuntimeManagementStartDrawer({
               </label>
               <label>
                 <span>Private Key</span>
-                <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="Paste OpenSSH private key" rows={7} />
+                <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={7} />
+                <span className="field-hint">可选。填过后只保存在当前浏览器；不写入源码或日志。</span>
               </label>
             </div>
           ) : (
@@ -2815,7 +2887,8 @@ function RuntimeManagementStartDrawer({
               </label>
               <label>
                 <span>Private Key</span>
-                <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="Paste target SSH private key" rows={6} />
+                <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={6} />
+                <span className="field-hint">可选。用于目标机器 SSH，不会提交到仓库。</span>
               </label>
               <label className="inline-check drawer-inline-check">
                 <input type="checkbox" checked={deleteForce} onChange={(event) => setDeleteForce(event.target.checked)} disabled={pending} />
