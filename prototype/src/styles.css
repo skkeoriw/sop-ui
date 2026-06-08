@@ -2381,6 +2381,56 @@ pre {
   font-size: 12px;
 }
 
+.runtime-management-drawer .drawer-body {
+  gap: 14px;
+}
+
+.runtime-action-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.runtime-action-toggle button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.runtime-action-toggle button.active {
+  background: #111827;
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, .16);
+}
+
+.runtime-drawer-form {
+  display: grid;
+  gap: 12px;
+}
+
+.runtime-drawer-form textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.drawer-inline-check {
+  justify-content: flex-start;
+}
+
+.drawer-actions .danger-action {
+  border-color: #b91c1c;
+  background: #b91c1c;
+}
+
 .schema-note {
   display: flex;
   flex-wrap: wrap;

@@ -311,10 +311,13 @@ export interface TriggerInput {
   management_action?: string;
   ssh_command?: string;
   private_key?: string;
+  private_key_b64?: string;
+  ssh_private_key_b64?: string;
   runtime_id?: string;
   target_host?: string;
   channel_url?: string;
   force?: boolean;
+  dry_run?: boolean;
   input?: Record<string, unknown>;
 }
 

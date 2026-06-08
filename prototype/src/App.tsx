@@ -137,6 +137,13 @@ function statusLabel(status: StageStatus) {
   return "Waiting";
 }
 
+function encodeSecretB64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return window.btoa(binary);
+}
+
 function statusIcon(status: StageStatus) {
   if (status === "done") return <CheckCircle2 size={15} />;
   if (status === "running") return <Loader2 size={15} className="spin" />;
@@ -274,6 +281,7 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [triggerUrl, setTriggerUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+  const [runtimeManagementAction, setRuntimeManagementAction] = useState<"create-runtime" | "delete-runtime">("create-runtime");
   const [runtimeCreateSshCommand, setRuntimeCreateSshCommand] = useState("");
   const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState("");
   const [runtimeDeleteId, setRuntimeDeleteId] = useState("");
@@ -320,6 +328,7 @@ export default function App() {
   const instances = instancesQuery.data || [];
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
   const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
+  const isRuntimeManagementInstance = Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
 
   const dagQuery = useQuery({ queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""), queryFn: () => provider.getDag(runtime, instance.instanceId), enabled: Boolean(runtime && instance) });
   const runsQuery = useQuery({
@@ -481,7 +490,7 @@ export default function App() {
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-runtime",
           ssh_command: runtimeCreateSshCommand,
-          private_key: runtimeCreatePrivateKey,
+          private_key_b64: encodeSecretB64(runtimeCreatePrivateKey),
         }),
         minimumDelay(450),
       ]);
@@ -498,6 +507,7 @@ export default function App() {
         setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
       }
       setToast(pipelineId ? `Runtime 创建任务已启动：${shortId(pipelineId)}` : "Runtime 创建任务已启动");
+      setTriggerOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
       if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
     },
@@ -514,7 +524,7 @@ export default function App() {
           action: "delete-runtime",
           runtime_id: runtimeDeleteId,
           ssh_command: runtimeDeleteSshCommand,
-          private_key: runtimeDeletePrivateKey,
+          private_key_b64: encodeSecretB64(runtimeDeletePrivateKey),
           force: runtimeDeleteForce,
         }),
         minimumDelay(450),
@@ -532,6 +542,7 @@ export default function App() {
         setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
       }
       setToast(pipelineId ? `Runtime 删除任务已启动：${shortId(pipelineId)}` : "Runtime 删除任务已启动");
+      setTriggerOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
       if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
     },
@@ -887,7 +898,9 @@ export default function App() {
             <button type="button" className={mode === "mock" ? "active" : ""} onClick={() => changeMode("mock")}>Mock</button>
           </div>
           <button type="button" onClick={refresh}><RefreshCw size={16} />Refresh</button>
-          <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => setTriggerOpen(true)}><Play size={16} />New Execution</button>
+          <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => setTriggerOpen(true)}>
+            <Play size={16} />{isRuntimeManagementInstance ? "Manage Runtime" : "New Execution"}
+          </button>
         </div>
       </header>
 
@@ -1084,7 +1097,38 @@ export default function App() {
         )}
       </main>
 
-      {triggerOpen && runtime && instance && (
+      {triggerOpen && runtime && instance && isRuntimeManagementInstance && (
+        <RuntimeManagementStartDrawer
+          mode={mode}
+          runtime={runtime}
+          instance={instance}
+          action={runtimeManagementAction}
+          setAction={setRuntimeManagementAction}
+          createSshCommand={runtimeCreateSshCommand}
+          setCreateSshCommand={setRuntimeCreateSshCommand}
+          createPrivateKey={runtimeCreatePrivateKey}
+          setCreatePrivateKey={setRuntimeCreatePrivateKey}
+          deleteRuntimeId={runtimeDeleteId}
+          setDeleteRuntimeId={setRuntimeDeleteId}
+          deleteSshCommand={runtimeDeleteSshCommand}
+          setDeleteSshCommand={setRuntimeDeleteSshCommand}
+          deletePrivateKey={runtimeDeletePrivateKey}
+          setDeletePrivateKey={setRuntimeDeletePrivateKey}
+          deleteForce={runtimeDeleteForce}
+          setDeleteForce={setRuntimeDeleteForce}
+          createPending={createRuntimeMutation.isPending}
+          deletePending={deleteRuntimeMutation.isPending}
+          error={
+            createRuntimeMutation.error ? String(createRuntimeMutation.error.message)
+            : deleteRuntimeMutation.error ? String(deleteRuntimeMutation.error.message)
+            : ""
+          }
+          onClose={() => setTriggerOpen(false)}
+          onCreate={(event) => { event.preventDefault(); createRuntimeMutation.mutate(); }}
+          onDelete={(event) => { event.preventDefault(); deleteRuntimeMutation.mutate(); }}
+        />
+      )}
+      {triggerOpen && runtime && instance && !isRuntimeManagementInstance && (
         <ExecutionStartDrawer
           mode={mode}
           runtime={runtime}
@@ -2661,6 +2705,132 @@ function ExecutionStartDrawer({
           <button type="submit" className="primary" disabled={pending || !triggerUrl.trim()}>
             {pending ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
             {pending ? "Starting..." : "Start Execution"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function RuntimeManagementStartDrawer({
+  mode,
+  runtime,
+  instance,
+  action,
+  setAction,
+  createSshCommand,
+  setCreateSshCommand,
+  createPrivateKey,
+  setCreatePrivateKey,
+  deleteRuntimeId,
+  setDeleteRuntimeId,
+  deleteSshCommand,
+  setDeleteSshCommand,
+  deletePrivateKey,
+  setDeletePrivateKey,
+  deleteForce,
+  setDeleteForce,
+  createPending,
+  deletePending,
+  error,
+  onClose,
+  onCreate,
+  onDelete,
+}: {
+  mode: DataMode;
+  runtime: Runtime;
+  instance: Instance;
+  action: "create-runtime" | "delete-runtime";
+  setAction: (value: "create-runtime" | "delete-runtime") => void;
+  createSshCommand: string;
+  setCreateSshCommand: (value: string) => void;
+  createPrivateKey: string;
+  setCreatePrivateKey: (value: string) => void;
+  deleteRuntimeId: string;
+  setDeleteRuntimeId: (value: string) => void;
+  deleteSshCommand: string;
+  setDeleteSshCommand: (value: string) => void;
+  deletePrivateKey: string;
+  setDeletePrivateKey: (value: string) => void;
+  deleteForce: boolean;
+  setDeleteForce: (value: boolean) => void;
+  createPending: boolean;
+  deletePending: boolean;
+  error: string;
+  onClose: () => void;
+  onCreate: (event: FormEvent) => void;
+  onDelete: (event: FormEvent) => void;
+}) {
+  const pending = createPending || deletePending;
+  const createReady = Boolean(createSshCommand.trim() && createPrivateKey.trim());
+  const deleteReady = Boolean(deleteRuntimeId.trim() && deleteSshCommand.trim() && deletePrivateKey.trim());
+  const isCreate = action === "create-runtime";
+
+  return (
+    <div className="drawer-backdrop" role="presentation">
+      <form className="side-drawer execution-start-drawer runtime-management-drawer" onSubmit={isCreate ? onCreate : onDelete}>
+        <div className="drawer-head">
+          <div>
+            <h2>Manage Runtime</h2>
+            <span>{mode === "real" ? "Real SOP Runtime" : "Mock Runtime"} · {instance.instanceId}</span>
+          </div>
+          <button type="button" className="icon-btn" title="关闭 Runtime 管理面板" onClick={onClose} disabled={pending}><X size={16} /></button>
+        </div>
+        <div className="drawer-body">
+          <div className="drawer-note">
+            <strong>Runtime Management SOP</strong>
+            <span>在当前 Runtime 上启动 runtime-management workflow；创建或删除目标 Runtime 的 SSH 信息在这里填写。</span>
+          </div>
+          <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />
+
+          <div className="segmented runtime-action-toggle" role="tablist" aria-label="Runtime action">
+            <button type="button" className={isCreate ? "active" : ""} onClick={() => setAction("create-runtime")} disabled={pending}>
+              Create Runtime
+            </button>
+            <button type="button" className={!isCreate ? "active" : ""} onClick={() => setAction("delete-runtime")} disabled={pending}>
+              Delete Runtime
+            </button>
+          </div>
+
+          {isCreate ? (
+            <div className="runtime-drawer-form">
+              <label>
+                <span>SSH Command</span>
+                <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+              </label>
+              <label>
+                <span>Private Key</span>
+                <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="Paste OpenSSH private key" rows={7} />
+              </label>
+            </div>
+          ) : (
+            <div className="runtime-drawer-form">
+              <label>
+                <span>Runtime ID</span>
+                <input value={deleteRuntimeId} onChange={(event) => setDeleteRuntimeId(event.target.value)} disabled={pending} placeholder="runtime-34-29-222-183" />
+              </label>
+              <label>
+                <span>SSH Command</span>
+                <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+              </label>
+              <label>
+                <span>Private Key</span>
+                <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="Paste target SSH private key" rows={6} />
+              </label>
+              <label className="inline-check drawer-inline-check">
+                <input type="checkbox" checked={deleteForce} onChange={(event) => setDeleteForce(event.target.checked)} disabled={pending} />
+                <span>Force when running executions exist</span>
+              </label>
+            </div>
+          )}
+
+          {error && <div className="inline-error">{error}</div>}
+        </div>
+        <div className="drawer-actions">
+          <button type="button" onClick={onClose} disabled={pending}>Cancel</button>
+          <button type="submit" className={isCreate ? "primary" : "primary danger-action"} disabled={pending || (isCreate ? !createReady : !deleteReady)}>
+            {pending ? <Loader2 size={16} className="spin" /> : isCreate ? <Play size={16} /> : <X size={16} />}
+            {pending ? "Starting..." : isCreate ? "Create Runtime" : "Delete Runtime"}
           </button>
         </div>
       </form>
