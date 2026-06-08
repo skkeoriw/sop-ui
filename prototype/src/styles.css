@@ -2429,6 +2429,124 @@ pre {
   line-height: 1.45;
 }
 
+.runtime-inheritance-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.inheritance-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.inheritance-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.inheritance-head strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.inheritance-head span,
+.inheritance-meta span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.inheritance-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.inheritance-groups span {
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.inheritance-groups span.ready {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.inheritance-groups span.missing {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.inheritance-meta {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.inheritance-meta code,
+.inheritance-row code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inheritance-table {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.inheritance-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.3fr) 82px minmax(86px, 1fr) 92px;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--line-2);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.inheritance-row:first-child {
+  border-top: 0;
+}
+
+.inheritance-row-head {
+  min-height: 30px;
+  background: var(--bg);
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.inheritance-row.present span:last-child {
+  color: #166534;
+  font-weight: 750;
+}
+
+.inheritance-row.absent span:last-child {
+  color: #9a3412;
+  font-weight: 750;
+}
+
 .drawer-inline-check {
   justify-content: flex-start;
 }

@@ -49,6 +49,7 @@ import type {
   NodeRegistryItem,
   Run,
   RunNodeState,
+  RuntimeInheritancePreview,
   Runtime,
   StageStatus
 } from "./data/types";
@@ -398,6 +399,41 @@ export default function App() {
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
   const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
   const isRuntimeManagementInstance = Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
+  const currentRuntimeManagementDefaults = (): RuntimeManagementFormDefaults => ({
+    createSshCommand: runtimeCreateSshCommand,
+    createPrivateKey: runtimeCreatePrivateKey,
+    createEnvText: runtimeCreateEnvText,
+    deleteRuntimeId: runtimeDeleteId,
+    deleteSshCommand: runtimeDeleteSshCommand,
+    deletePrivateKey: runtimeDeletePrivateKey,
+    deleteForce: runtimeDeleteForce,
+  });
+
+  const saveRuntimeManagementDefaults = () => {
+    writeRuntimeManagementFormDefaults(currentRuntimeManagementDefaults());
+    setToast("Runtime 管理默认参数已保存到当前浏览器");
+  };
+
+  const resetRuntimeManagementDefaults = () => {
+    const cleanDefaults: RuntimeManagementFormDefaults = {
+      createSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
+      createPrivateKey: "",
+      createEnvText: "",
+      deleteRuntimeId: DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID,
+      deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
+      deletePrivateKey: "",
+      deleteForce: false,
+    };
+    window.localStorage.removeItem(RUNTIME_MANAGEMENT_FORM_STORAGE_KEY);
+    setRuntimeCreateSshCommand(cleanDefaults.createSshCommand);
+    setRuntimeCreatePrivateKey(cleanDefaults.createPrivateKey);
+    setRuntimeCreateEnvText(cleanDefaults.createEnvText);
+    setRuntimeDeleteId(cleanDefaults.deleteRuntimeId);
+    setRuntimeDeleteSshCommand(cleanDefaults.deleteSshCommand);
+    setRuntimeDeletePrivateKey(cleanDefaults.deletePrivateKey);
+    setRuntimeDeleteForce(cleanDefaults.deleteForce);
+    setToast("Runtime 管理默认参数已重置");
+  };
 
   useEffect(() => {
     writeRuntimeManagementFormDefaults({
@@ -420,6 +456,12 @@ export default function App() {
   ]);
 
   const dagQuery = useQuery({ queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""), queryFn: () => provider.getDag(runtime, instance.instanceId), enabled: Boolean(runtime && instance) });
+  const runtimeInheritanceQuery = useQuery({
+    queryKey: ["runtime-inheritance", mode, runtime?.id || "", managementInstance?.instanceId || ""],
+    queryFn: () => provider.getRuntimeInheritance(runtime!, managementInstance!.instanceId),
+    enabled: Boolean(runtime && managementInstance),
+    retry: 1,
+  });
   const runsQuery = useQuery({
     queryKey: queryKeys.runs(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listRuns(runtime, instance.instanceId),
@@ -1210,6 +1252,12 @@ export default function App() {
           setDeletePrivateKey={setRuntimeDeletePrivateKey}
           deleteForce={runtimeDeleteForce}
           setDeleteForce={setRuntimeDeleteForce}
+          inheritance={runtimeInheritanceQuery.data}
+          inheritanceLoading={runtimeInheritanceQuery.isLoading}
+          inheritanceError={runtimeInheritanceQuery.error ? String(runtimeInheritanceQuery.error.message) : ""}
+          onRefreshInheritance={() => runtimeInheritanceQuery.refetch()}
+          onSaveDefaults={saveRuntimeManagementDefaults}
+          onResetDefaults={resetRuntimeManagementDefaults}
           createPending={createRuntimeMutation.isPending}
           deletePending={deleteRuntimeMutation.isPending}
           error={
@@ -2842,6 +2890,12 @@ function RuntimeManagementStartDrawer({
   setDeletePrivateKey,
   deleteForce,
   setDeleteForce,
+  inheritance,
+  inheritanceLoading,
+  inheritanceError,
+  onRefreshInheritance,
+  onSaveDefaults,
+  onResetDefaults,
   createPending,
   deletePending,
   error,
@@ -2868,6 +2922,12 @@ function RuntimeManagementStartDrawer({
   setDeletePrivateKey: (value: string) => void;
   deleteForce: boolean;
   setDeleteForce: (value: boolean) => void;
+  inheritance: RuntimeInheritancePreview | undefined;
+  inheritanceLoading: boolean;
+  inheritanceError: string;
+  onRefreshInheritance: () => void;
+  onSaveDefaults: () => void;
+  onResetDefaults: () => void;
   createPending: boolean;
   deletePending: boolean;
   error: string;
@@ -2928,6 +2988,12 @@ function RuntimeManagementStartDrawer({
                 />
                 <span className="field-hint">可选。为空时继承当前管理 Runtime 环境；填写后作为本次创建请求传入。</span>
               </label>
+              <RuntimeInheritancePreviewPanel
+                preview={inheritance}
+                loading={inheritanceLoading}
+                error={inheritanceError}
+                onRefresh={onRefreshInheritance}
+              />
             </div>
           ) : (
             <div className="runtime-drawer-form">
@@ -2954,6 +3020,8 @@ function RuntimeManagementStartDrawer({
           {error && <div className="inline-error">{error}</div>}
         </div>
         <div className="drawer-actions">
+          <button type="button" onClick={onResetDefaults} disabled={pending}>Reset saved</button>
+          <button type="button" onClick={onSaveDefaults} disabled={pending}>Save defaults</button>
           <button type="button" onClick={onClose} disabled={pending}>Cancel</button>
           <button type="submit" className={isCreate ? "primary" : "primary danger-action"} disabled={pending || (isCreate ? !createReady : !deleteReady)}>
             {pending ? <Loader2 size={16} className="spin" /> : isCreate ? <Play size={16} /> : <X size={16} />}
@@ -2962,6 +3030,93 @@ function RuntimeManagementStartDrawer({
         </div>
       </form>
     </div>
+  );
+}
+
+function RuntimeInheritancePreviewPanel({
+  preview,
+  loading,
+  error,
+  onRefresh,
+}: {
+  preview: RuntimeInheritancePreview | undefined;
+  loading: boolean;
+  error: string;
+  onRefresh: () => void;
+}) {
+  const items = preview?.items || [];
+  const importantKeys = new Set([
+    "GITHUB_TOKEN",
+    "DEEPSEEK_API_KEY",
+    "WIKI_LLM_PROVIDER",
+    "WIKI_DEEPSEEK_MODEL",
+    "GOOGLE_CLOUD_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_PROJECT_ID",
+    "VERTEX_LOCATION",
+    "WIKI_VERTEX_MODEL",
+    "NOTEBOOKLM_BRIDGE_URL",
+    "NOTEBOOKLM_BRIDGE_TOKEN",
+    "YOUTUBE_WIKI_TG_TOKEN",
+    "YOUTUBE_WIKI_TG_CHAT_ID",
+    "CLOUDFLARE_API_KEY",
+    "CF_API_KEY",
+    "TUNNEL_API",
+    "SOP_UI_URL",
+  ]);
+  const visibleItems = items.filter((item) => importantKeys.has(item.key) || item.required);
+  const groups = [
+    ["github", "GitHub"],
+    ["hermes", "Hermes"],
+    ["llm", "LLM"],
+    ["notebooklm", "NotebookLM"],
+    ["cloudflare", "Tunnel"],
+    ["telegram", "Telegram"],
+  ] as const;
+
+  return (
+    <section className="runtime-inheritance-panel">
+      <div className="inheritance-head">
+        <div>
+          <strong>Inherited Runtime Config</strong>
+          <span>字段名、source、是否存在都会显示；secret 类值只显示 masked value。</span>
+        </div>
+        <button type="button" className="ghost-btn compact" onClick={onRefresh} disabled={loading}>
+          {loading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+          Refresh
+        </button>
+      </div>
+      {error ? <div className="inline-error">{error}</div> : (
+        <>
+          <div className="inheritance-groups">
+            {groups.map(([key, label]) => {
+              const ready = Boolean(preview?.groups?.[key]);
+              return <span key={key} className={ready ? "ready" : "missing"}>{label}: {ready ? "ready" : "missing"}</span>;
+            })}
+          </div>
+          <div className="inheritance-meta">
+            <span>env_file</span>
+            <code>{preview?.envFile || (loading ? "loading..." : "unknown")}</code>
+          </div>
+          <div className="inheritance-table" role="table" aria-label="Inherited Runtime Config">
+            <div className="inheritance-row inheritance-row-head" role="row">
+              <span>Key</span><span>Source</span><span>Value</span><span>Status</span>
+            </div>
+            {(loading && !visibleItems.length) ? (
+              <div className="inheritance-row" role="row"><span>loading</span><span>environment</span><span>...</span><span>checking</span></div>
+            ) : visibleItems.map((item) => (
+              <div key={item.key} className={`inheritance-row ${item.present ? "present" : "absent"}`} role="row">
+                <code title={(item.aliases || []).join(", ")}>{item.key}</code>
+                <span>{item.source}</span>
+                <code>{item.maskedValue || "-"}</code>
+                <span>{item.present ? (item.secret ? "masked" : "visible") : item.required ? "required missing" : "missing"}</span>
+              </div>
+            ))}
+          </div>
+          {preview?.note && <span className="field-hint">{preview.note}</span>}
+        </>
+      )}
+    </section>
   );
 }
 

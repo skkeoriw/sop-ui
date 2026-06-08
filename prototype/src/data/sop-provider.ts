@@ -13,6 +13,7 @@ import type {
   NodeModuleDetail,
   NodeRegistryItem,
   Run,
+  RuntimeInheritancePreview,
   Runtime,
   SopDataProvider,
   StageStatus,
@@ -130,6 +131,28 @@ function mapRun(raw: Record<string, unknown>): Run {
     pageCount: Number(raw.page_count || 0),
     durationS: Number(raw.duration_s || 0),
     nodeStates,
+  };
+}
+
+function mapRuntimeInheritancePreview(raw: Record<string, unknown>): RuntimeInheritancePreview {
+  const rawItems = Array.isArray(raw.items) ? raw.items as Array<Record<string, unknown>> : [];
+  return {
+    instanceId: String(raw.instance_id || raw.instanceId || ""),
+    envFile: String(raw.env_file || raw.envFile || ""),
+    groups: (raw.groups as Record<string, boolean>) || {},
+    note: raw.note ? String(raw.note) : undefined,
+    updatedAt: raw.updated_at ? String(raw.updated_at) : raw.updatedAt ? String(raw.updatedAt) : undefined,
+    items: rawItems.map((item) => ({
+      key: String(item.key || ""),
+      aliases: Array.isArray(item.aliases) ? item.aliases.map(String) : [],
+      matchedKey: item.matched_key ? String(item.matched_key) : item.matchedKey ? String(item.matchedKey) : "",
+      source: String(item.source || "missing"),
+      present: Boolean(item.present),
+      maskedValue: String(item.masked_value || item.maskedValue || ""),
+      secret: Boolean(item.secret),
+      required: Boolean(item.required),
+      category: String(item.category || "runtime"),
+    })),
   };
 }
 
@@ -559,6 +582,13 @@ export const sopProvider: SopDataProvider = {
       input
     );
     return mapNodeDraft(raw);
+  },
+
+  async getRuntimeInheritance(runtime, instanceId) {
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/config/inheritance`
+    );
+    return mapRuntimeInheritancePreview(raw);
   },
 
   async triggerRun(runtime, instanceId, input: TriggerInput): Promise<TriggerResult> {

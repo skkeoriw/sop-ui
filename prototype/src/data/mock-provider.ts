@@ -13,6 +13,7 @@ import type {
   NodeModuleDetail,
   NodeRegistryItem,
   Run,
+  RuntimeInheritancePreview,
   Runtime,
   SopDataProvider,
   TriggerInput
@@ -43,6 +44,34 @@ const mockNodeDraftSchema: NodeDraftSchema = {
     writes: ["raw/node-drafts/{draft_id}/node.yaml", "raw/node-drafts/{draft_id}/validation.json"],
     publish_enabled: false,
   },
+};
+
+const mockRuntimeInheritancePreview: RuntimeInheritancePreview = {
+  instanceId: "runtime-management",
+  envFile: "/home/runtime/.agent-brain-plugins.env",
+  note: "Secret-like values are masked; field names, source and presence are always shown.",
+  updatedAt: "2026-06-08T00:00:00Z",
+  groups: {
+    github: true,
+    hermes: true,
+    llm: true,
+    notebooklm: true,
+    telegram: true,
+    cloudflare: true,
+    tunnel: true,
+    runtime: true,
+  },
+  items: [
+    { key: "GITHUB_TOKEN", aliases: ["github_token", "repo_token"], source: "env_file", present: true, maskedValue: "ghp***qtP", secret: true, required: true, category: "github" },
+    { key: "DEEPSEEK_API_KEY", aliases: ["deepseek_api_key"], source: "environment", present: true, maskedValue: "sk-***eek", secret: true, required: true, category: "hermes" },
+    { key: "WIKI_LLM_PROVIDER", aliases: [], source: "env_file", present: true, maskedValue: "vertex", secret: false, required: false, category: "llm" },
+    { key: "WIKI_VERTEX_MODEL", aliases: ["vertex_model"], source: "env_file", present: true, maskedValue: "gemini-1.5-pro", secret: false, required: false, category: "llm" },
+    { key: "NOTEBOOKLM_BRIDGE_URL", aliases: ["notebooklm_bridge_url"], source: "env_file", present: true, maskedValue: "https://notebooklm-bridge.example/run", secret: false, required: true, category: "notebooklm" },
+    { key: "NOTEBOOKLM_BRIDGE_TOKEN", aliases: ["notebooklm_bridge_token"], source: "env_file", present: true, maskedValue: "v7A***NG6", secret: true, required: true, category: "notebooklm" },
+    { key: "YOUTUBE_WIKI_TG_TOKEN", aliases: ["telegram_token"], source: "env_file", present: true, maskedValue: "787***JDA", secret: true, required: false, category: "telegram" },
+    { key: "CLOUDFLARE_API_KEY", aliases: ["cf_api_key"], source: "env_file", present: true, maskedValue: "cfk***be7", secret: true, required: true, category: "cloudflare" },
+    { key: "SOP_UI_URL", aliases: ["sop_ui_url"], source: "missing", present: false, maskedValue: "", secret: false, required: false, category: "runtime" },
+  ],
 };
 
 function runtime(id: string): Runtime {
@@ -385,6 +414,11 @@ export const mockProvider: SopDataProvider = {
     };
     draftByRuntime.set(target.id, [draft, ...(draftByRuntime.get(target.id) || [])]);
     return draft;
+  },
+
+  async getRuntimeInheritance(): Promise<RuntimeInheritancePreview> {
+    await delay();
+    return mockRuntimeInheritancePreview;
   },
 
   async triggerRun(target, _instanceId, input: TriggerInput) {

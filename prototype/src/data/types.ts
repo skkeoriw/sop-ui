@@ -57,6 +57,27 @@ export interface Instance {
   updatedAt?: string;
 }
 
+export interface RuntimeInheritanceItem {
+  key: string;
+  aliases?: string[];
+  matchedKey?: string;
+  source: "environment" | "env_file" | "request" | "missing" | string;
+  present: boolean;
+  maskedValue: string;
+  secret: boolean;
+  required: boolean;
+  category: string;
+}
+
+export interface RuntimeInheritancePreview {
+  instanceId: string;
+  envFile: string;
+  items: RuntimeInheritanceItem[];
+  groups: Record<string, boolean>;
+  note?: string;
+  updatedAt?: string;
+}
+
 export interface DagNode {
   id: string;
   title: string;
@@ -348,6 +369,7 @@ export interface SopDataProvider {
   listNodeDrafts(runtime: Runtime, instanceId: string): Promise<NodeDraft[]>;
   getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
+  getRuntimeInheritance(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;
   retryNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
   cancelRun(runtime: Runtime, instanceId: string, pipelineId: string, reason?: string): Promise<void>;
