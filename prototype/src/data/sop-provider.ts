@@ -615,14 +615,13 @@ export const sopProvider: SopDataProvider = {
   },
 
   async initializeRuntimeManagementConfig(runtime, instanceId, input) {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (input.token) headers.Authorization = `Bearer ${input.token}`;
     const raw = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/config/management/init`,
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${input.token}`,
-        },
+        headers,
         body: JSON.stringify({ overwrite: Boolean(input.overwrite) }),
       }
     );

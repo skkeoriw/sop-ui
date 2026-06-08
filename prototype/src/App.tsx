@@ -733,10 +733,8 @@ export default function App() {
   const initializeManagementConfigMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
-      if (!managementConfigToken.trim()) throw new Error("请填写 Management Token");
       const [result] = await Promise.all([
         provider.initializeRuntimeManagementConfig(runtime, managementInstance.instanceId, {
-          token: managementConfigToken.trim(),
           overwrite: false,
         }),
         minimumDelay(300),
@@ -2582,10 +2580,10 @@ function SettingsPage({
           <form className="settings-block management-config-form" onSubmit={onSaveManagementConfig}>
             <div className="drawer-note">
               <strong>一次保存，Create Runtime 自动继承</strong>
-              <span>Secret 字段保存后不回显 raw value；输入时本地可见，保存后显示 saved / missing。写入接口需要 Management Token。</span>
+              <span>直接加载当前 Runtime 不需要 token；手动保存或覆盖字段才需要 Management Token。Secret 保存后不回显 raw value。</span>
             </div>
             <label>
-              <span>Management Token</span>
+              <span>Management Token for manual save</span>
               <input
                 type="password"
                 value={managementConfigToken}
@@ -2634,7 +2632,7 @@ function SettingsPage({
               <button type="button" onClick={() => setManagementConfigValues({})} disabled={saveManagementConfigPending}>Clear edits</button>
               <button type="button" onClick={onInitializeManagementConfig} disabled={saveManagementConfigPending || initializeManagementConfigPending || !managementInstance}>
                 {initializeManagementConfigPending ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-                Initialize from current Runtime
+                Load current Runtime config
               </button>
               <button type="submit" className="primary" disabled={saveManagementConfigPending || !managementInstance}>
                 {saveManagementConfigPending ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
