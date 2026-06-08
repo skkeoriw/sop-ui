@@ -1383,6 +1383,20 @@ pre {
   background: var(--blue-soft);
 }
 
+.workflow-run-row.running {
+  border-color: #22c55e;
+  background: #f0fdf4;
+  box-shadow: inset 3px 0 0 #22c55e;
+}
+
+.workflow-run-row.running strong {
+  color: #166534;
+}
+
+.workflow-run-row.failed:not(.active) {
+  opacity: .72;
+}
+
 .node-config-drawer {
   width: min(620px, 100%);
 }

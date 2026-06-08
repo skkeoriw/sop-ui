@@ -72,7 +72,7 @@ interface StageNodeData extends Record<string, unknown> {
   onInfo: (id: string) => void;
 }
 
-const statusOrder: StageStatus[] = ["failed", "running", "waiting", "skipped", "done"];
+const statusOrder: StageStatus[] = ["running", "waiting", "failed", "skipped", "done"];
 const DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND = "ssh -i ~/.ssh/id_ed25519 a01020323900@34.29.222.183";
 const DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID = "runtime-34-29-222-183";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
@@ -125,6 +125,20 @@ function writeRuntimeManagementFormDefaults(value: RuntimeManagementFormDefaults
   } catch {
     // Local storage can be unavailable in locked-down browsers; the form still works.
   }
+}
+
+function executionSortPriority(run: Run, selectedRunId: string) {
+  if (run.status === "running") return 0;
+  if (selectedRunId && run.pipelineId === selectedRunId) return 1;
+  if (run.status === "waiting") return 2;
+  if (run.status === "failed") return 3;
+  if (run.status === "skipped") return 4;
+  return 5;
+}
+
+function ensureSelectedRunVisible(runs: Run[], selectedRun: Run | undefined) {
+  if (!selectedRun || runs.some((run) => run.pipelineId === selectedRun.pipelineId)) return runs;
+  return [selectedRun, ...runs];
 }
 
 function runtimeEnvTemplateFromPreview(preview: RuntimeInheritancePreview | undefined) {
@@ -920,7 +934,7 @@ export default function App() {
   ), [dag, selectedRun, selectedStageId]);
   const flowEdges = useMemo(() => buildFlowEdges(dag, selectedRun), [dag, selectedRun]);
   const sortedRuns = [...runs].sort((a, b) => {
-    const delta = statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status);
+    const delta = executionSortPriority(a, selectedRunId) - executionSortPriority(b, selectedRunId);
     return delta || b.updatedAt.localeCompare(a.updatedAt);
   });
   const visibleExecutions = sortedRuns.filter((run) => {
@@ -929,6 +943,7 @@ export default function App() {
     const searchable = [run.pipelineId, run.sourceUrl, run.repo, run.status].filter(Boolean).join(" ").toLowerCase();
     return matchedStatus && (!query || searchable.includes(query));
   });
+  const workflowExecutions = ensureSelectedRunVisible(visibleExecutions, selectedRun);
   const queryError = [runtimesQuery.error, instancesQuery.error, dagQuery.error, runsQuery.error, runQuery.error, nodeQuery.error, nodesQuery.error, nodeDraftsQuery.error, nodeModulesQuery.error, nodeModuleQuery.error, runEventsQuery.error, runArtifactsQuery.error].find(Boolean);
   const completedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "done").length : 0;
   const failedCount = selectedRun ? Object.values(selectedRun.nodes).filter((v) => v === "failed").length : 0;
@@ -1226,14 +1241,14 @@ export default function App() {
             streamStatus={streamStatus}
             nodesReadyCount={nodesReadyCount}
             managedNodeCount={managedNodes.length}
-            runs={visibleExecutions}
+            runs={workflowExecutions}
             onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "", selectedStage?.id || dag?.nodes[0]?.id || "")}
           />
         ) : viewMode === "workflow" ? (
           <WorkflowWorkspace
             runtime={runtime}
             instance={instance}
-            runs={visibleExecutions}
+            runs={workflowExecutions}
             selectedRun={selectedRun}
             selectedRunMissing={routeRunMissing}
             selectedStage={selectedStage}
@@ -1466,8 +1481,8 @@ function RuntimeOverview({
 }) {
   const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
   const runningCount = instances.filter((item) => item.latestExecution?.status === "running").length;
-  const createReady = Boolean(managementInstance && createSshCommand.trim());
-  const deleteReady = Boolean(managementInstance && deleteRuntimeId.trim() && deleteSshCommand.trim());
+  const createReady = Boolean(managementInstance);
+  const deleteReady = Boolean(managementInstance);
   return (
     <section className="runtime-overview">
       <div className="concept-hero runtime-hero">
@@ -1536,16 +1551,16 @@ function RuntimeOverview({
           <form className="runtime-action-card" onSubmit={(event) => { event.preventDefault(); if (createReady) onCreateRuntime(); }}>
             <div>
               <strong>Create Runtime</strong>
-              <span>输入 SSH 命令和私钥，系统自动生成 runtime-ip、初始化 registry、注册 channel。</span>
+              <span>默认使用管理端保存的 SSH / 私钥 / 配置；只在需要改目标时填写覆盖项。</span>
             </div>
             <label>
               <span>SSH Command</span>
-              <input value={createSshCommand} onChange={(event) => onCreateSshCommandChange(event.target.value)} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+              <input value={createSshCommand} onChange={(event) => onCreateSshCommandChange(event.target.value)} placeholder="留空时使用管理端保存的 SSH Command" />
             </label>
             <label>
               <span>Private Key</span>
-              <textarea value={createPrivateKey} onChange={(event) => onCreatePrivateKeyChange(event.target.value)} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={4} />
-              <span className="field-hint">可选。填过后只保存在当前浏览器；不写入源码或日志。</span>
+              <textarea value={createPrivateKey} onChange={(event) => onCreatePrivateKeyChange(event.target.value)} placeholder="留空时使用管理端保存的 Private Key" rows={4} />
+              <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
             </label>
             <label>
               <span>Runtime Env Overrides</span>
@@ -1566,20 +1581,20 @@ function RuntimeOverview({
           <form className="runtime-action-card danger-zone" onSubmit={(event) => { event.preventDefault(); if (deleteReady) onDeleteRuntime(); }}>
             <div>
               <strong>Delete Runtime</strong>
-              <span>先停止目标 Runtime 服务，再验证 tunnel 和 SPI 不再 active。</span>
+              <span>默认删除管理端保存的目标 Runtime；只在需要删除其他目标时填写覆盖项。</span>
             </div>
             <label>
               <span>Runtime ID</span>
-              <input value={deleteRuntimeId} onChange={(event) => onDeleteRuntimeIdChange(event.target.value)} placeholder="runtime-34-29-222-183" />
+              <input value={deleteRuntimeId} onChange={(event) => onDeleteRuntimeIdChange(event.target.value)} placeholder="留空时使用管理端保存的 Runtime ID" />
             </label>
             <label>
               <span>SSH Command</span>
-              <input value={deleteSshCommand} onChange={(event) => onDeleteSshCommandChange(event.target.value)} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+              <input value={deleteSshCommand} onChange={(event) => onDeleteSshCommandChange(event.target.value)} placeholder="留空时使用管理端保存的 SSH Command" />
             </label>
             <label>
               <span>Private Key</span>
-              <textarea value={deletePrivateKey} onChange={(event) => onDeletePrivateKeyChange(event.target.value)} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={3} />
-              <span className="field-hint">可选。用于目标机器 SSH，不会提交到仓库。</span>
+              <textarea value={deletePrivateKey} onChange={(event) => onDeletePrivateKeyChange(event.target.value)} placeholder="留空时使用管理端保存的 Private Key" rows={3} />
+              <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
             </label>
             <label className="inline-check">
               <input type="checkbox" checked={deleteForce} onChange={(event) => onDeleteForceChange(event.target.checked)} />
@@ -2001,6 +2016,11 @@ function WorkflowWorkspace({
 }) {
   const gitEvents = runEvents.filter((event) => event.event.startsWith("git."));
   const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram.") || event.event.startsWith("tg_notify"));
+  const runningExecutionCount = runs.filter((run) => run.status === "running").length;
+  const topRuns = runs.slice(0, 8);
+  const displayedRuns = selectedRun && !topRuns.some((run) => run.pipelineId === selectedRun.pipelineId)
+    ? [selectedRun, ...topRuns.filter((run) => run.pipelineId !== selectedRun.pipelineId)].slice(0, 8)
+    : topRuns;
   return (
     <section className="workflow-workspace">
       {selectedRunMissing && (
@@ -2012,14 +2032,20 @@ function WorkflowWorkspace({
       <div className="workflow-primary-grid">
         <aside className="workflow-run-panel">
           <section className="workflow-execution-list">
-            <div className="panel-head compact"><div><strong>Executions</strong><span>选择一个 run 查看 DAG</span></div><span>{runs.length}</span></div>
+            <div className="panel-head compact">
+              <div>
+                <strong>Executions</strong>
+                <span>{runningExecutionCount ? `${runningExecutionCount} running · 当前 run 置顶` : "当前 run 置顶，running 优先"}</span>
+              </div>
+              <span>{runs.length}</span>
+            </div>
             <div className="workflow-run-list">
-              {runs.slice(0, 8).map((run) => (
+              {displayedRuns.map((run) => (
                 <button
                   key={run.pipelineId}
                   type="button"
                   title={`${run.pipelineId}\n${statusLabel(run.status)} · ${run.progress ?? 0}%\n${run.sourceUrl || run.repo}\n${run.updatedAt || run.startedAt}`}
-                  className={`workflow-run-row ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`}
+                  className={`workflow-run-row ${run.status} ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`}
                   onClick={() => onSelectRun(run.pipelineId)}
                 >
                   <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
@@ -3187,8 +3213,8 @@ function RuntimeManagementStartDrawer({
   onDelete: (event: FormEvent) => void;
 }) {
   const pending = createPending || deletePending;
-  const createReady = Boolean(createSshCommand.trim());
-  const deleteReady = Boolean(deleteRuntimeId.trim() && deleteSshCommand.trim());
+  const createReady = true;
+  const deleteReady = true;
   const isCreate = action === "create-runtime";
 
   return (
@@ -3204,7 +3230,7 @@ function RuntimeManagementStartDrawer({
         <div className="drawer-body">
           <div className="drawer-note">
             <strong>Runtime Management SOP</strong>
-            <span>在当前 Runtime 上启动 runtime-management workflow；创建或删除目标 Runtime 的 SSH 信息在这里填写。</span>
+            <span>在当前 Runtime 上启动 runtime-management workflow；默认使用管理端已保存的目标 SSH 和 Runtime 配置。</span>
           </div>
           <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />
 
@@ -3221,12 +3247,12 @@ function RuntimeManagementStartDrawer({
             <div className="runtime-drawer-form">
               <label>
                 <span>SSH Command</span>
-                <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+                <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
               </label>
               <label>
                 <span>Private Key</span>
-                <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={7} />
-                <span className="field-hint">可选。填过后只保存在当前浏览器；不写入源码或日志。</span>
+                <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 Private Key" rows={7} />
+                <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
               </label>
               <RuntimeInheritancePreviewPanel
                 preview={inheritance}
@@ -3258,16 +3284,16 @@ function RuntimeManagementStartDrawer({
             <div className="runtime-drawer-form">
               <label>
                 <span>Runtime ID</span>
-                <input value={deleteRuntimeId} onChange={(event) => setDeleteRuntimeId(event.target.value)} disabled={pending} placeholder="runtime-34-29-222-183" />
+                <input value={deleteRuntimeId} onChange={(event) => setDeleteRuntimeId(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 Runtime ID" />
               </label>
               <label>
                 <span>SSH Command</span>
-                <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+                <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
               </label>
               <label>
                 <span>Private Key</span>
-                <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="Optional. Leave empty to use the key path from SSH Command on the management runtime." rows={6} />
-                <span className="field-hint">可选。用于目标机器 SSH，不会提交到仓库。</span>
+                <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 Private Key" rows={6} />
+                <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
               </label>
               <label className="inline-check drawer-inline-check">
                 <input type="checkbox" checked={deleteForce} onChange={(event) => setDeleteForce(event.target.checked)} disabled={pending} />
@@ -3327,6 +3353,11 @@ function RuntimeInheritancePreviewPanel({
     "CF_API_KEY",
     "TUNNEL_API",
     "SOP_UI_URL",
+    "RUNTIME_TARGET_SSH_COMMAND",
+    "RUNTIME_TARGET_PRIVATE_KEY",
+    "RUNTIME_TARGET_PRIVATE_KEY_B64",
+    "RUNTIME_TARGET_RUNTIME_ID",
+    "RUNTIME_TARGET_CHANNEL_URL",
   ]);
   const visibleItems = items.filter((item) => importantKeys.has(item.key) || item.required);
   const updateOverride = (key: string, value: string) => {
@@ -3361,6 +3392,7 @@ function RuntimeInheritancePreviewPanel({
     ["notebooklm", "NotebookLM"],
     ["cloudflare", "Tunnel"],
     ["telegram", "Telegram"],
+    ["target", "Target SSH"],
   ] as const;
 
   return (
