@@ -365,6 +365,7 @@ export const sopProvider: SopDataProvider = {
           channelName: String(metadata.channel_name || name),
           channelUrl: endpoint,
           spiBaseUrl: String(metadata.spi_base_url || `${endpoint}/api/sop`),
+          supportedSopTypes: Array.isArray(metadata.supported_sop_types) ? metadata.supported_sop_types.map(String) : [],
         }];
       })
       .sort((a, b) => {
@@ -551,12 +552,15 @@ export const sopProvider: SopDataProvider = {
   },
 
   async triggerRun(runtime, instanceId, input: TriggerInput): Promise<TriggerResult> {
+    const payload = input.action || input.management_action
+      ? { ...input, management_action: input.management_action || input.action }
+      : { repo: input.repo, input: { url: input.url } };
     const data = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs`,
       {
         method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({ repo: input.repo, input: { url: input.url } })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       }
     );
     return {

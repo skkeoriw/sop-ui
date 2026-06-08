@@ -390,7 +390,14 @@ export const mockProvider: SopDataProvider = {
   async triggerRun(target, _instanceId, input: TriggerInput) {
     const now = new Date();
     const pipelineId = `mock-${now.toISOString().replace(/[-:.]/g, "").slice(0, 15)}`;
-    const run: RunMock = { pipelineId, status: "running", sourceUrl: input.url, startedAt: now.toISOString(), updatedAt: now.toISOString(), profile: "initial" };
+    const run: RunMock = {
+      pipelineId,
+      status: "running",
+      sourceUrl: input.url || input.target_host || input.runtime_id || input.action || "",
+      startedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      profile: "initial"
+    };
     const items = runsByRuntime.get(target.id) || [];
     runsByRuntime.set(target.id, [run, ...items]);
     window.setTimeout(() => mutateRun(target.id, pipelineId, "running", "wiki-running"), 1600);

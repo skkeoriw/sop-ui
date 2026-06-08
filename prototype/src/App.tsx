@@ -273,6 +273,12 @@ export default function App() {
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [triggerUrl, setTriggerUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+  const [runtimeCreateSshCommand, setRuntimeCreateSshCommand] = useState("");
+  const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState("");
+  const [runtimeDeleteId, setRuntimeDeleteId] = useState("");
+  const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState("");
+  const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState("");
+  const [runtimeDeleteForce, setRuntimeDeleteForce] = useState(false);
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
@@ -312,6 +318,7 @@ export default function App() {
   const instancesQuery = useQuery({ queryKey: queryKeys.instances(mode, runtime), queryFn: () => provider.listInstances(runtime), enabled: Boolean(runtime) });
   const instances = instancesQuery.data || [];
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
+  const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
 
   const dagQuery = useQuery({ queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""), queryFn: () => provider.getDag(runtime, instance.instanceId), enabled: Boolean(runtime && instance) });
   const runsQuery = useQuery({
@@ -464,6 +471,72 @@ export default function App() {
       ));
       setToast(`Execution failed: ${String((error as Error).message || error)}`);
     }
+  });
+
+  const createRuntimeMutation = useMutation({
+    mutationFn: async () => {
+      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      const [result] = await Promise.all([
+        provider.triggerRun(runtime, managementInstance.instanceId, {
+          action: "create-runtime",
+          ssh_command: runtimeCreateSshCommand,
+          private_key: runtimeCreatePrivateKey,
+        }),
+        minimumDelay(450),
+      ]);
+      return result;
+    },
+    onSuccess: async (result) => {
+      if (managementInstance) setInstanceId(managementInstance.instanceId);
+      const pipelineId = result.pipelineId || "";
+      if (pipelineId) {
+        setSelectedRunId(pipelineId);
+        const baseRuntime = runtime?.id || runtimeId || "runtime";
+        const nextUrl = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(managementInstance!.instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}${window.location.search}`;
+        if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+        setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
+      }
+      setToast(pipelineId ? `Runtime 创建任务已启动：${shortId(pipelineId)}` : "Runtime 创建任务已启动");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
+      if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
+    },
+    onError: (error) => {
+      setToast(`Runtime 创建失败：${String((error as Error).message || error)}`);
+    },
+  });
+
+  const deleteRuntimeMutation = useMutation({
+    mutationFn: async () => {
+      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      const [result] = await Promise.all([
+        provider.triggerRun(runtime, managementInstance.instanceId, {
+          action: "delete-runtime",
+          runtime_id: runtimeDeleteId,
+          ssh_command: runtimeDeleteSshCommand,
+          private_key: runtimeDeletePrivateKey,
+          force: runtimeDeleteForce,
+        }),
+        minimumDelay(450),
+      ]);
+      return result;
+    },
+    onSuccess: async (result) => {
+      if (managementInstance) setInstanceId(managementInstance.instanceId);
+      const pipelineId = result.pipelineId || "";
+      if (pipelineId) {
+        setSelectedRunId(pipelineId);
+        const baseRuntime = runtime?.id || runtimeId || "runtime";
+        const nextUrl = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(managementInstance!.instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}${window.location.search}`;
+        if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+        setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
+      }
+      setToast(pipelineId ? `Runtime 删除任务已启动：${shortId(pipelineId)}` : "Runtime 删除任务已启动");
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
+      if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
+    },
+    onError: (error) => {
+      setToast(`Runtime 删除失败：${String((error as Error).message || error)}`);
+    },
   });
 
   const retryMutation = useMutation({
@@ -880,6 +953,23 @@ export default function App() {
             mode={mode}
             onSelectRuntime={selectRuntime}
             onOpenInstance={(id) => selectInstance(id, true)}
+            managementInstance={managementInstance}
+            createSshCommand={runtimeCreateSshCommand}
+            createPrivateKey={runtimeCreatePrivateKey}
+            deleteRuntimeId={runtimeDeleteId}
+            deleteSshCommand={runtimeDeleteSshCommand}
+            deletePrivateKey={runtimeDeletePrivateKey}
+            deleteForce={runtimeDeleteForce}
+            creatingRuntime={createRuntimeMutation.isPending}
+            deletingRuntime={deleteRuntimeMutation.isPending}
+            onCreateSshCommandChange={setRuntimeCreateSshCommand}
+            onCreatePrivateKeyChange={setRuntimeCreatePrivateKey}
+            onDeleteRuntimeIdChange={setRuntimeDeleteId}
+            onDeleteSshCommandChange={setRuntimeDeleteSshCommand}
+            onDeletePrivateKeyChange={setRuntimeDeletePrivateKey}
+            onDeleteForceChange={setRuntimeDeleteForce}
+            onCreateRuntime={() => createRuntimeMutation.mutate()}
+            onDeleteRuntime={() => deleteRuntimeMutation.mutate()}
             onOpenWorkflow={(id) => {
               setInstanceId(id);
               const baseRuntime = runtime?.id || runtimeId || "runtime";
@@ -1045,6 +1135,23 @@ function RuntimeOverview({
   onSelectRuntime,
   onOpenInstance,
   onOpenWorkflow,
+  managementInstance,
+  createSshCommand,
+  createPrivateKey,
+  deleteRuntimeId,
+  deleteSshCommand,
+  deletePrivateKey,
+  deleteForce,
+  creatingRuntime,
+  deletingRuntime,
+  onCreateSshCommandChange,
+  onCreatePrivateKeyChange,
+  onDeleteRuntimeIdChange,
+  onDeleteSshCommandChange,
+  onDeletePrivateKeyChange,
+  onDeleteForceChange,
+  onCreateRuntime,
+  onDeleteRuntime,
 }: {
   runtime: Runtime | undefined;
   runtimes: Runtime[];
@@ -1054,9 +1161,28 @@ function RuntimeOverview({
   onSelectRuntime: (runtimeId: string) => void;
   onOpenInstance: (instanceId: string) => void;
   onOpenWorkflow: (instanceId: string) => void;
+  managementInstance: Instance | undefined;
+  createSshCommand: string;
+  createPrivateKey: string;
+  deleteRuntimeId: string;
+  deleteSshCommand: string;
+  deletePrivateKey: string;
+  deleteForce: boolean;
+  creatingRuntime: boolean;
+  deletingRuntime: boolean;
+  onCreateSshCommandChange: (value: string) => void;
+  onCreatePrivateKeyChange: (value: string) => void;
+  onDeleteRuntimeIdChange: (value: string) => void;
+  onDeleteSshCommandChange: (value: string) => void;
+  onDeletePrivateKeyChange: (value: string) => void;
+  onDeleteForceChange: (value: boolean) => void;
+  onCreateRuntime: () => void;
+  onDeleteRuntime: () => void;
 }) {
   const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
   const runningCount = instances.filter((item) => item.latestExecution?.status === "running").length;
+  const createReady = Boolean(managementInstance && createSshCommand.trim() && createPrivateKey.trim());
+  const deleteReady = Boolean(managementInstance && deleteRuntimeId.trim() && deleteSshCommand.trim() && deletePrivateKey.trim());
   return (
     <section className="runtime-overview">
       <div className="concept-hero runtime-hero">
@@ -1108,6 +1234,65 @@ function RuntimeOverview({
             {instances.map((item) => <InstanceRow key={item.instanceId} instance={item} onOpen={() => onOpenInstance(item.instanceId)} onWorkflow={() => onOpenWorkflow(item.instanceId)} />)}
             {!instances.length && <LoadingOrEmpty loading={loading} text="当前 Runtime 没有 enabled Instance" />}
           </div>
+        </div>
+      </section>
+
+      <section className="flow-panel runtime-management-panel">
+        <div className="panel-head">
+          <div>
+            <strong>Runtime Management</strong>
+            <span>通过当前 Runtime 的 management instance 创建或下线机器</span>
+          </div>
+          <span className={`status-pill ${managementInstance ? "done" : "waiting"}`}>
+            {managementInstance ? "runtime-management ready" : "missing"}
+          </span>
+        </div>
+        <div className="runtime-management-grid">
+          <form className="runtime-action-card" onSubmit={(event) => { event.preventDefault(); if (createReady) onCreateRuntime(); }}>
+            <div>
+              <strong>Create Runtime</strong>
+              <span>输入 SSH 命令和私钥，系统自动生成 runtime-ip、初始化 registry、注册 channel。</span>
+            </div>
+            <label>
+              <span>SSH Command</span>
+              <input value={createSshCommand} onChange={(event) => onCreateSshCommandChange(event.target.value)} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+            </label>
+            <label>
+              <span>Private Key</span>
+              <textarea value={createPrivateKey} onChange={(event) => onCreatePrivateKeyChange(event.target.value)} placeholder="Paste OpenSSH private key. It is sent only to the runtime-management SPI request." rows={4} />
+            </label>
+            <button type="submit" disabled={!createReady || creatingRuntime}>
+              {creatingRuntime ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
+              Create Runtime
+            </button>
+          </form>
+
+          <form className="runtime-action-card danger-zone" onSubmit={(event) => { event.preventDefault(); if (deleteReady) onDeleteRuntime(); }}>
+            <div>
+              <strong>Delete Runtime</strong>
+              <span>先停止目标 Runtime 服务，再验证 tunnel 和 SPI 不再 active。</span>
+            </div>
+            <label>
+              <span>Runtime ID</span>
+              <input value={deleteRuntimeId} onChange={(event) => onDeleteRuntimeIdChange(event.target.value)} placeholder="runtime-34-29-222-183" />
+            </label>
+            <label>
+              <span>SSH Command</span>
+              <input value={deleteSshCommand} onChange={(event) => onDeleteSshCommandChange(event.target.value)} placeholder="ssh -i ~/.ssh/id_ed25519 user@34.29.222.183" />
+            </label>
+            <label>
+              <span>Private Key</span>
+              <textarea value={deletePrivateKey} onChange={(event) => onDeletePrivateKeyChange(event.target.value)} placeholder="Paste target SSH private key." rows={3} />
+            </label>
+            <label className="inline-check">
+              <input type="checkbox" checked={deleteForce} onChange={(event) => onDeleteForceChange(event.target.checked)} />
+              <span>Force when running executions exist</span>
+            </label>
+            <button type="submit" disabled={!deleteReady || deletingRuntime}>
+              {deletingRuntime ? <Loader2 size={15} className="spin" /> : <X size={15} />}
+              Delete Runtime
+            </button>
+          </form>
         </div>
       </section>
     </section>

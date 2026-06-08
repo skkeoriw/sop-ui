@@ -3286,6 +3286,102 @@ pre {
   min-height: 0;
 }
 
+.runtime-management-panel {
+  overflow: hidden;
+}
+
+.runtime-management-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+}
+
+.runtime-action-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.runtime-action-card > div strong {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.runtime-action-card > div span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.runtime-action-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.runtime-action-card input,
+.runtime-action-card textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.runtime-action-card textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.runtime-action-card button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: #111827;
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.runtime-action-card button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.runtime-action-card.danger-zone button {
+  border-color: #b91c1c;
+  background: #b91c1c;
+}
+
+.inline-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.inline-check input {
+  width: auto;
+}
+
 .runtime-list,
 .instance-table {
   display: flex;
@@ -3438,6 +3534,7 @@ pre {
 
 @media (max-width: 1180px) {
   .runtime-grid,
+  .runtime-management-grid,
   .instance-grid,
   .instance-row {
     grid-template-columns: 1fr;

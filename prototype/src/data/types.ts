@@ -295,8 +295,17 @@ export interface NodeDraft {
 }
 
 export interface TriggerInput {
-  repo: string;
-  url: string;
+  repo?: string;
+  url?: string;
+  action?: "create-runtime" | "delete-runtime" | string;
+  management_action?: string;
+  ssh_command?: string;
+  private_key?: string;
+  runtime_id?: string;
+  target_host?: string;
+  channel_url?: string;
+  force?: boolean;
+  input?: Record<string, unknown>;
 }
 
 export interface TriggerResult {
