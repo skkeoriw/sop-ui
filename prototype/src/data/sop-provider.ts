@@ -324,6 +324,60 @@ function mapNodeConfig(raw: Record<string, unknown>, nodeId: string): NodeConfig
   };
 }
 
+function mapNodeValidation(raw: unknown) {
+  const value = (raw as Record<string, unknown>) || {};
+  return {
+    status: String(value.status || "unknown"),
+    missingOutputs: (value.missing_outputs as string[]) || (value.missingOutputs as string[]) || [],
+    unexpectedOutputs: (value.unexpected_outputs as string[]) || (value.unexpectedOutputs as string[]) || []
+  };
+}
+
+function mapNodeDefinition(raw: unknown) {
+  const value = (raw as Record<string, unknown>) || {};
+  return {
+    title: value.title ? String(value.title) : undefined,
+    titleZh: value.title_zh ? String(value.title_zh) : value.titleZh ? String(value.titleZh) : undefined,
+    purpose: value.purpose ? String(value.purpose) : undefined,
+    purposeZh: value.purpose_zh ? String(value.purpose_zh) : value.purposeZh ? String(value.purposeZh) : undefined,
+    branch: value.branch ? String(value.branch) : undefined,
+    executor: (value.executor as Record<string, unknown>) || {},
+    retryable: value.retryable === undefined ? undefined : Boolean(value.retryable),
+  };
+}
+
+function mapNodeInputModel(raw: unknown) {
+  const value = (raw as Record<string, unknown>) || {};
+  return {
+    declared: (value.declared as Record<string, unknown>) || {},
+    resolved: (value.resolved as Record<string, unknown>) || {},
+    business: (value.business as Array<Record<string, unknown>>) || [],
+    environment: (value.environment as Array<Record<string, unknown>>) || [],
+    secrets: (value.secrets as Array<Record<string, unknown>>) || [],
+  };
+}
+
+function mapNodeOutputModel(raw: unknown) {
+  const value = (raw as Record<string, unknown>) || {};
+  return {
+    declared: (value.declared as Record<string, unknown>) || {},
+    actual: (value.actual as Record<string, unknown>) || {},
+    artifactExplanations: (value.artifact_explanations as Record<string, string>) || (value.artifactExplanations as Record<string, string>) || {},
+    keyResults: (value.key_results as Array<Record<string, unknown>>) || (value.keyResults as Array<Record<string, unknown>>) || [],
+  };
+}
+
+function mapNodeTroubleshooting(raw: unknown) {
+  const value = (raw as Record<string, unknown>) || {};
+  return {
+    failureHints: (value.failure_hints as string[]) || (value.failureHints as string[]) || [],
+    retryable: value.retryable === undefined ? undefined : Boolean(value.retryable),
+    safeToRetry: value.safe_to_retry === undefined ? value.safeToRetry as boolean | string | undefined : value.safe_to_retry as boolean | string,
+    error: value.error ? String(value.error) : undefined,
+    validation: value.validation as Record<string, unknown> | undefined,
+  };
+}
+
 function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
   const nodeId = String(raw.node_id || raw.nodeId || "");
   const base = mapNodeConfig(raw, nodeId);
@@ -508,15 +562,34 @@ export const sopProvider: SopDataProvider = {
       discoveredCandidates: ((raw.discovered_candidates as Array<Record<string, unknown>>) || []).map(mapArtifact),
       capabilities: (raw.capabilities as Record<string, unknown>) || {},
       plan: (raw.plan as Record<string, unknown>) || null,
-      validation: {
-        status: String((raw.validation as Record<string, unknown>)?.status || "unknown"),
-        missingOutputs: ((raw.validation as Record<string, unknown>)?.missing_outputs as string[]) || [],
-        unexpectedOutputs: ((raw.validation as Record<string, unknown>)?.unexpected_outputs as string[]) || []
-      },
+      validation: mapNodeValidation(raw.validation),
       infra: infraRaw ? {
         tgNotify: infraRaw.tg_notify !== false,
         logRecord: infraRaw.log_record !== false,
       } : undefined,
+      definition: mapNodeDefinition(raw.definition || {
+        title: raw.title,
+        purpose: raw.purpose,
+        branch: raw.branch,
+        executor: raw.executor,
+        retryable: raw.retryable,
+      }),
+      inputModel: mapNodeInputModel(raw.inputs || {
+        declared: raw.declared_inputs,
+        resolved: raw.resolved_inputs,
+      }),
+      actions: (raw.actions as string[]) || [],
+      outputModel: mapNodeOutputModel(raw.outputs || {
+        declared: raw.declared_outputs,
+        actual: raw.actual_outputs,
+      }),
+      troubleshooting: mapNodeTroubleshooting(raw.troubleshooting || {
+        failure_hints: raw.manual_fix_hint ? [raw.manual_fix_hint] : [],
+        error: raw.error,
+        validation: raw.validation,
+        retryable: raw.retryable,
+        safe_to_retry: raw.retryable,
+      }),
     };
   },
 

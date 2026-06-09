@@ -3021,6 +3021,99 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.node-step-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.node-step-list li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 8px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.node-step-list li > span {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.node-step-list li.done > span {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 36%, var(--line));
+}
+
+.node-step-list li.failed > span {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 36%, var(--line));
+}
+
+.node-step-list p {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.node-info-list {
+  display: grid;
+  gap: 8px;
+}
+
+.node-info-row {
+  display: grid;
+  grid-template-columns: minmax(88px, .42fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 8px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.node-info-row strong {
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.node-info-row code {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.troubleshooting-block {
+  display: grid;
+  gap: 10px;
+}
+
+.hint-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .action-list {
   display: grid;
   gap: 8px;

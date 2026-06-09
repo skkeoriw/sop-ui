@@ -181,6 +181,44 @@ export interface NodeDetail {
   plan?: Record<string, unknown> | null;
   validation: NodeValidation;
   infra?: { tgNotify?: boolean; logRecord?: boolean };
+  definition?: NodeDefinitionModel;
+  inputModel?: NodeInputModel;
+  actions?: string[];
+  outputModel?: NodeOutputModel;
+  troubleshooting?: NodeTroubleshootingModel;
+}
+
+export interface NodeDefinitionModel {
+  title?: string;
+  titleZh?: string;
+  purpose?: string;
+  purposeZh?: string;
+  branch?: string;
+  executor?: Record<string, unknown>;
+  retryable?: boolean;
+}
+
+export interface NodeInputModel {
+  declared?: Record<string, unknown>;
+  resolved?: Record<string, unknown>;
+  business?: Array<Record<string, unknown>>;
+  environment?: Array<Record<string, unknown>>;
+  secrets?: Array<Record<string, unknown>>;
+}
+
+export interface NodeOutputModel {
+  declared?: Record<string, unknown>;
+  actual?: Record<string, unknown>;
+  artifactExplanations?: Record<string, string>;
+  keyResults?: Array<Record<string, unknown>>;
+}
+
+export interface NodeTroubleshootingModel {
+  failureHints?: string[];
+  retryable?: boolean;
+  safeToRetry?: boolean | string;
+  error?: string;
+  validation?: NodeValidation | Record<string, unknown>;
 }
 
 export interface Artifact {

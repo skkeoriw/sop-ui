@@ -2118,16 +2118,19 @@ function WorkflowWorkspace({
                     <DetailBlock title="Node Definition">
                       <KeyValues data={{
                         stage_id: selectedStage.id,
-                        title: selectedStage.title,
-                        branch: nodeDetail?.branch || selectedStage.branch || "-",
-                        purpose: nodeDetail?.purpose || selectedStage.purpose || "-",
+                        title: nodeDetail?.definition?.titleZh || nodeDetail?.definition?.title || selectedStage.title,
+                        branch: nodeDetail?.definition?.branch || nodeDetail?.branch || selectedStage.branch || "-",
+                        purpose: nodeDetail?.definition?.purposeZh || nodeDetail?.definition?.purpose || nodeDetail?.purpose || selectedStage.purpose || "-",
                         mode: selectedStage.mode,
-                        retryable: nodeDetail?.retryable === undefined ? "-" : nodeDetail.retryable,
+                        retryable: nodeDetail?.definition?.retryable ?? nodeDetail?.retryable ?? "-",
                         summary: selectedStage.summary || "-"
                       }} />
                     </DetailBlock>
                     <DetailBlock title="Executor">
-                      {nodeDetail?.executor ? <KeyValues data={Object.fromEntries(Object.entries(nodeDetail.executor).filter(([, value]) => value))} /> : <Empty text="选择节点后加载" />}
+                      {nodeDetail?.definition?.executor || nodeDetail?.executor ? <KeyValues data={Object.fromEntries(Object.entries(nodeDetail.definition?.executor || nodeDetail.executor).filter(([, value]) => value))} /> : <Empty text="选择节点后加载" />}
+                    </DetailBlock>
+                    <DetailBlock title="Action Steps">
+                      <StepList items={nodeDetail?.actions || []} status={selectedStatus} />
                     </DetailBlock>
                     <DetailBlock title="Input Contract">
                       <KeyValues data={nodeDetail?.declaredInputs || selectedStage.inputs} />
@@ -2167,11 +2170,20 @@ function WorkflowWorkspace({
                         <ValidationSummary validation={nodeDetail.validation} />
                       </DetailBlock>
                     )}
+                    <DetailBlock title="Business Inputs">
+                      <InfoList items={nodeDetail?.inputModel?.business || []} emptyText="没有业务输入定义" />
+                    </DetailBlock>
+                    <DetailBlock title="Environment Config">
+                      <InfoList items={nodeDetail?.inputModel?.environment || []} emptyText="没有环境配置输入" />
+                    </DetailBlock>
+                    <DetailBlock title="Secrets">
+                      <InfoList items={nodeDetail?.inputModel?.secrets || []} emptyText="没有 secret 输入" />
+                    </DetailBlock>
                     <DetailBlock title="Resolved Inputs">
-                      <KeyValues data={nodeDetail?.resolvedInputs || {}} />
+                      <KeyValues data={nodeDetail?.inputModel?.resolved || nodeDetail?.resolvedInputs || {}} />
                     </DetailBlock>
                     <DetailBlock title="Recorded Outputs">
-                      <KeyValues data={nodeDetail?.actualOutputs || {}} />
+                      <KeyValues data={nodeDetail?.outputModel?.actual || nodeDetail?.actualOutputs || {}} />
                     </DetailBlock>
                     <DetailBlock title="Git / TG">
                       <div className="event-list">
@@ -2203,6 +2215,12 @@ function WorkflowWorkspace({
 
                 {inspectorTab === "artifacts" && (
                   <>
+                    <DetailBlock title="Output Meaning">
+                      <KeyValues data={nodeDetail?.outputModel?.artifactExplanations || {}} />
+                    </DetailBlock>
+                    <DetailBlock title="Key Results">
+                      <InfoList items={nodeDetail?.outputModel?.keyResults || []} emptyText="该节点暂未提取关键结果" />
+                    </DetailBlock>
                     <DetailBlock title={`Recorded Artifacts · ${nodeDetail?.artifacts?.length || 0}`}>
                       <ArtifactList artifacts={nodeDetail?.artifacts || []} />
                     </DetailBlock>
@@ -2220,6 +2238,9 @@ function WorkflowWorkspace({
 
                 {inspectorTab === "logs" && (
                   <>
+                    <DetailBlock title="Troubleshooting">
+                      <TroubleshootingBlock nodeDetail={nodeDetail} />
+                    </DetailBlock>
                     {(nodeLog?.events ?? []).length > 0 && (
                       <DetailBlock title="Events">
                         <div className="event-list">
@@ -3801,6 +3822,56 @@ function Metric({ label, value, subtext }: { label: string; value: string | numb
 
 function DetailBlock({ title, children }: { title: string | React.ReactNode; children: React.ReactNode }) {
   return <section className="detail-block"><div className="section-title"><span>{title}</span></div>{children}</section>;
+}
+
+function StepList({ items, status }: { items: string[]; status: StageStatus }) {
+  const steps = items.filter(Boolean);
+  if (!steps.length) return <Empty text="该节点暂未配置执行步骤说明" />;
+  return (
+    <ol className="node-step-list">
+      {steps.map((item, index) => (
+        <li key={`${item}-${index}`} className={status === "failed" ? "failed" : status === "done" ? "done" : ""}>
+          <span>{index + 1}</span>
+          <p>{item}</p>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function InfoList({ items, emptyText }: { items: Array<Record<string, unknown>>; emptyText: string }) {
+  if (!items.length) return <Empty text={emptyText} />;
+  return (
+    <div className="node-info-list">
+      {items.map((item, index) => (
+        <div key={`${String(item.key || item.label || index)}-${index}`} className="node-info-row">
+          <strong>{String(item.label || item.key || `item-${index + 1}`)}</strong>
+          <code>{formatValue(item.value ?? item.source ?? item)}</code>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TroubleshootingBlock({ nodeDetail }: { nodeDetail: NodeDetail | undefined }) {
+  const hints = nodeDetail?.troubleshooting?.failureHints || [];
+  const validation = nodeDetail?.troubleshooting?.validation || nodeDetail?.validation;
+  return (
+    <div className="troubleshooting-block">
+      <KeyValues data={{
+        safe_to_retry: nodeDetail?.troubleshooting?.safeToRetry ?? nodeDetail?.retryable ?? "-",
+        retryable: nodeDetail?.troubleshooting?.retryable ?? nodeDetail?.retryable ?? "-",
+        validation: validation ? formatValue(validation) : "-",
+      }} />
+      {nodeDetail?.error && <pre className="log-box error-log">{nodeDetail.error}</pre>}
+      {hints.length ? (
+        <ul className="hint-list">
+          {hints.map((hint, index) => <li key={`${hint}-${index}`}>{hint}</li>)}
+        </ul>
+      ) : <Empty text="该节点暂未配置排障建议" />}
+      {nodeDetail?.manualFixHint && <pre className="log-box">{nodeDetail.manualFixHint}</pre>}
+    </div>
+  );
 }
 
 function KeyValues({ data }: { data: Record<string, unknown> }) {
