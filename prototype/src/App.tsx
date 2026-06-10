@@ -1777,12 +1777,27 @@ function buildHermesCurlCommand(url: string, message: string) {
     source: "sop-ui",
     mode: "connectivity-check",
   });
-  return `curl -sS -X POST ${shellQuoteSingle(url)} -H 'Content-Type: application/json' -H 'Accept: application/json' --data-raw ${shellQuoteSingle(body)}`;
+  return [
+    `body=${shellQuoteSingle(body)}`,
+    `sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$HERMES_WEBHOOK_TOKEN" -hex | sed 's/^.* //')`,
+    `curl -sS -X POST ${shellQuoteSingle(url)} \\`,
+    `  -H 'Content-Type: application/json' \\`,
+    `  -H 'User-Agent: Mozilla/5.0 SOP-Runtime-Hermes-Smoke/1.0' \\`,
+    `  -H "X-Hub-Signature-256: sha256=$sig" \\`,
+    `  --data-binary "$body"`,
+  ].join("\n");
 }
 
-async function runHermesConnectivityCheck(url: string, message: string) {
+function buildRuntimeHermesSmokeProxyUrl(runtime: Runtime | undefined) {
+  const base = normalizeEndpoint(runtime?.spiBaseUrl || (runtime?.endpoint ? `${runtime.endpoint}/api/sop` : ""));
+  return base ? `${base}/runtime/hermes-smoke` : "";
+}
+
+async function runHermesConnectivityCheck(runtime: Runtime | undefined, message: string) {
+  const proxyUrl = buildRuntimeHermesSmokeProxyUrl(runtime);
+  if (!proxyUrl) throw new Error("Runtime SPI endpoint is missing");
   const startedAt = performance.now();
-  const response = await fetch(url, {
+  const response = await fetch(proxyUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1797,12 +1812,25 @@ async function runHermesConnectivityCheck(url: string, message: string) {
     }),
   });
   const body = await response.text();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = body ? JSON.parse(body) as Record<string, unknown> : {};
+  } catch {
+    payload = {};
+  }
+  const responseBody = typeof payload.response === "string" ? payload.response : body;
+  const targetUrl = typeof payload.target_url === "string" ? payload.target_url : "";
+  const curl = typeof payload.curl === "string" ? payload.curl : "";
   return {
-    ok: response.ok,
-    httpStatus: response.status,
-    latencyMs: Math.round(performance.now() - startedAt),
-    responseBody: formatHermesResponseBody(body),
-    contentType: response.headers.get("content-type") || "",
+    ok: Boolean(payload.ok ?? response.ok),
+    httpStatus: Number(payload.http_status || response.status || 0),
+    latencyMs: Number(payload.latency_ms || Math.round(performance.now() - startedAt)),
+    responseBody: formatHermesResponseBody(responseBody),
+    contentType: String(payload.content_type || response.headers.get("content-type") || ""),
+    targetUrl,
+    curl,
+    proxyUrl,
+    error: typeof payload.error === "string" ? payload.error : typeof payload.reason === "string" ? payload.reason : "",
   };
 }
 
@@ -1890,13 +1918,17 @@ function RuntimeOverview({
     }
     setHermesRunning(true);
     try {
-      const result = await runHermesConnectivityCheck(target, hermesMessage.trim() || "你好 你是谁");
+      const result = await runHermesConnectivityCheck(runtime, hermesMessage.trim() || "你好 你是谁");
       setHermesResult({
-        ...result,
-        error: result.ok ? undefined : `HTTP ${result.httpStatus}`,
+        ok: result.ok,
+        httpStatus: result.httpStatus,
+        latencyMs: result.latencyMs,
+        responseBody: result.responseBody,
+        contentType: result.contentType,
+        error: result.ok ? undefined : result.error || `HTTP ${result.httpStatus}`,
         checkedAt: new Date().toISOString(),
-        target,
-        curl: buildHermesCurlCommand(target, hermesMessage.trim() || "你好 你是谁"),
+        target: result.targetUrl || target,
+        curl: result.curl || buildHermesCurlCommand(target, hermesMessage.trim() || "你好 你是谁"),
       });
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
@@ -1981,7 +2013,7 @@ function RuntimeOverview({
         <div className="panel-head">
           <div>
             <strong>Hermes Connectivity</strong>
-            <span>手动验证当前 Runtime 到 Hermes webhook 的连通性</span>
+            <span>通过 Runtime SPI 服务端签名验证 Hermes webhook 连通性</span>
           </div>
           <button type="button" className="ghost-btn compact" onClick={handleRunHermesCheck} disabled={!runtime || hermesRunning || !hermesUrl.trim()}>
             {hermesRunning ? <Loader2 size={14} className="spin" /> : <Play size={14} />}Run Hermes Check
@@ -1992,7 +2024,7 @@ function RuntimeOverview({
             <label>
               <span>Test Message</span>
               <textarea value={hermesMessage} onChange={(event) => setHermesMessage(event.target.value)} rows={4} placeholder="请输入要发送给 Hermes 的文本" />
-              <span className="field-hint">这段文本会发送到 Hermes webhook endpoint；不会使用 Runtime SPI endpoint。</span>
+              <span className="field-hint">页面会调用当前 Runtime SPI 的 hermes-smoke 代理，由服务端签名后发送到 Hermes webhook。</span>
             </label>
             <label>
               <span>Hermes Webhook URL</span>
@@ -2010,6 +2042,7 @@ function RuntimeOverview({
               </button>
               <div className="runtime-hermes-meta">
                 <span>SPI: {runtime?.channelUrl || runtime?.endpoint || "-"}</span>
+                <span>Proxy: {buildRuntimeHermesSmokeProxyUrl(runtime) || "-"}</span>
                 <span>Hermes: {runtime?.metadata?.hermes_webhook_url || runtime?.metadata?.webhook_public_host || "missing"}</span>
               </div>
             </div>
