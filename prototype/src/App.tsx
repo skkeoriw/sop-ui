@@ -76,6 +76,7 @@ const statusOrder: StageStatus[] = ["running", "waiting", "failed", "skipped", "
 const DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND = "ssh -i ~/.ssh/id_ed25519 a01020323900@34.29.222.183";
 const DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID = "runtime-34-29-222-183";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
+type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
 
 type RuntimeManagementFormDefaults = {
   createSshCommand: string;
@@ -85,6 +86,12 @@ type RuntimeManagementFormDefaults = {
   deleteSshCommand: string;
   deletePrivateKey: string;
   deleteForce: boolean;
+  instanceId: string;
+  instanceRepo: string;
+  instanceSopType: string;
+  deleteInstanceId: string;
+  deleteInstanceRepo: string;
+  deleteInstanceForce: boolean;
 };
 
 function stringFromStorage(value: unknown, fallback = "") {
@@ -100,6 +107,12 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
     deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
     deletePrivateKey: "",
     deleteForce: false,
+    instanceId: "wiki-sop-new-instance",
+    instanceRepo: "skkeoriw/wiki-sop-new-instance",
+    instanceSopType: "youtube-research-wiki",
+    deleteInstanceId: "wiki-sop-new-instance",
+    deleteInstanceRepo: "skkeoriw/wiki-sop-new-instance",
+    deleteInstanceForce: false,
   };
   try {
     const raw = window.localStorage.getItem(RUNTIME_MANAGEMENT_FORM_STORAGE_KEY);
@@ -113,6 +126,12 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
       deleteSshCommand: stringFromStorage(stored.deleteSshCommand, defaults.deleteSshCommand),
       deletePrivateKey: stringFromStorage(stored.deletePrivateKey, defaults.deletePrivateKey),
       deleteForce: Boolean(stored.deleteForce),
+      instanceId: stringFromStorage(stored.instanceId, defaults.instanceId),
+      instanceRepo: stringFromStorage(stored.instanceRepo, defaults.instanceRepo),
+      instanceSopType: stringFromStorage(stored.instanceSopType, defaults.instanceSopType),
+      deleteInstanceId: stringFromStorage(stored.deleteInstanceId, defaults.deleteInstanceId),
+      deleteInstanceRepo: stringFromStorage(stored.deleteInstanceRepo, defaults.deleteInstanceRepo),
+      deleteInstanceForce: Boolean(stored.deleteInstanceForce),
     };
   } catch {
     return defaults;
@@ -375,7 +394,7 @@ export default function App() {
   const [triggerOpen, setTriggerOpen] = useState(false);
   const [triggerUrl, setTriggerUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   const runtimeManagementDefaults = useMemo(readRuntimeManagementFormDefaults, []);
-  const [runtimeManagementAction, setRuntimeManagementAction] = useState<"create-runtime" | "delete-runtime">("create-runtime");
+  const [runtimeManagementAction, setRuntimeManagementAction] = useState<RuntimeManagementAction>("create-runtime");
   const [runtimeCreateSshCommand, setRuntimeCreateSshCommand] = useState(runtimeManagementDefaults.createSshCommand);
   const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState(runtimeManagementDefaults.createPrivateKey);
   const [runtimeCreateEnvText, setRuntimeCreateEnvText] = useState(runtimeManagementDefaults.createEnvText);
@@ -384,6 +403,12 @@ export default function App() {
   const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState(runtimeManagementDefaults.deleteSshCommand);
   const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState(runtimeManagementDefaults.deletePrivateKey);
   const [runtimeDeleteForce, setRuntimeDeleteForce] = useState(runtimeManagementDefaults.deleteForce);
+  const [instanceCreateId, setInstanceCreateId] = useState(runtimeManagementDefaults.instanceId);
+  const [instanceCreateRepo, setInstanceCreateRepo] = useState(runtimeManagementDefaults.instanceRepo);
+  const [instanceCreateSopType, setInstanceCreateSopType] = useState(runtimeManagementDefaults.instanceSopType);
+  const [instanceDeleteId, setInstanceDeleteId] = useState(runtimeManagementDefaults.deleteInstanceId);
+  const [instanceDeleteRepo, setInstanceDeleteRepo] = useState(runtimeManagementDefaults.deleteInstanceRepo);
+  const [instanceDeleteForce, setInstanceDeleteForce] = useState(runtimeManagementDefaults.deleteInstanceForce);
   const [managementConfigToken, setManagementConfigToken] = useState("");
   const [managementConfigValues, setManagementConfigValues] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
@@ -435,6 +460,12 @@ export default function App() {
     deleteSshCommand: runtimeDeleteSshCommand,
     deletePrivateKey: runtimeDeletePrivateKey,
     deleteForce: runtimeDeleteForce,
+    instanceId: instanceCreateId,
+    instanceRepo: instanceCreateRepo,
+    instanceSopType: instanceCreateSopType,
+    deleteInstanceId: instanceDeleteId,
+    deleteInstanceRepo: instanceDeleteRepo,
+    deleteInstanceForce: instanceDeleteForce,
   });
 
   const saveRuntimeManagementDefaults = () => {
@@ -451,6 +482,12 @@ export default function App() {
       deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
       deletePrivateKey: "",
       deleteForce: false,
+      instanceId: "wiki-sop-new-instance",
+      instanceRepo: "skkeoriw/wiki-sop-new-instance",
+      instanceSopType: "youtube-research-wiki",
+      deleteInstanceId: "wiki-sop-new-instance",
+      deleteInstanceRepo: "skkeoriw/wiki-sop-new-instance",
+      deleteInstanceForce: false,
     };
     window.localStorage.removeItem(RUNTIME_MANAGEMENT_FORM_STORAGE_KEY);
     setRuntimeCreateSshCommand(cleanDefaults.createSshCommand);
@@ -460,6 +497,12 @@ export default function App() {
     setRuntimeDeleteSshCommand(cleanDefaults.deleteSshCommand);
     setRuntimeDeletePrivateKey(cleanDefaults.deletePrivateKey);
     setRuntimeDeleteForce(cleanDefaults.deleteForce);
+    setInstanceCreateId(cleanDefaults.instanceId);
+    setInstanceCreateRepo(cleanDefaults.instanceRepo);
+    setInstanceCreateSopType(cleanDefaults.instanceSopType);
+    setInstanceDeleteId(cleanDefaults.deleteInstanceId);
+    setInstanceDeleteRepo(cleanDefaults.deleteInstanceRepo);
+    setInstanceDeleteForce(cleanDefaults.deleteInstanceForce);
     setToast("Runtime 管理默认参数已重置");
   };
 
@@ -472,6 +515,12 @@ export default function App() {
       deleteSshCommand: runtimeDeleteSshCommand,
       deletePrivateKey: runtimeDeletePrivateKey,
       deleteForce: runtimeDeleteForce,
+      instanceId: instanceCreateId,
+      instanceRepo: instanceCreateRepo,
+      instanceSopType: instanceCreateSopType,
+      deleteInstanceId: instanceDeleteId,
+      deleteInstanceRepo: instanceDeleteRepo,
+      deleteInstanceForce: instanceDeleteForce,
     });
   }, [
     runtimeCreateSshCommand,
@@ -481,6 +530,12 @@ export default function App() {
     runtimeDeleteSshCommand,
     runtimeDeletePrivateKey,
     runtimeDeleteForce,
+    instanceCreateId,
+    instanceCreateRepo,
+    instanceCreateSopType,
+    instanceDeleteId,
+    instanceDeleteRepo,
+    instanceDeleteForce,
   ]);
 
   const dagQuery = useQuery({ queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""), queryFn: () => provider.getDag(runtime, instance.instanceId), enabled: Boolean(runtime && instance) });
@@ -715,6 +770,98 @@ export default function App() {
     },
     onError: (error) => {
       setToast(`Runtime 删除失败：${String((error as Error).message || error)}`);
+    },
+  });
+
+  const createInstanceMutation = useMutation({
+    mutationFn: async () => {
+      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      const instancePayload = {
+        instance_id: instanceCreateId.trim(),
+        repo: instanceCreateRepo.trim(),
+        sop_type: instanceCreateSopType.trim() || "youtube-research-wiki",
+        enabled: true,
+      };
+      if (!instancePayload.instance_id) throw new Error("请填写 Instance ID");
+      if (!instancePayload.repo) throw new Error("请填写 Instance Repo");
+      const [result] = await Promise.all([
+        provider.triggerRun(runtime, managementInstance.instanceId, {
+          action: "create-instance",
+          runtime_id: runtime?.id || runtimeId,
+          channel_url: runtime?.channelUrl || runtime?.endpoint,
+          ssh_command: runtimeCreateSshCommand,
+          private_key_b64: encodeSecretB64(runtimeCreatePrivateKey),
+          instance_id: instancePayload.instance_id,
+          repo: instancePayload.repo,
+          instance_repo: instancePayload.repo,
+          instance_sop_type: instancePayload.sop_type,
+          instances: [instancePayload],
+          ...parseRuntimeEnvOverrides(runtimeCreateEnvText),
+          ...Object.fromEntries(Object.entries(runtimeCreateConfigOverrides).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()])),
+        }),
+        minimumDelay(450),
+      ]);
+      return result;
+    },
+    onSuccess: async (result) => {
+      if (managementInstance) setInstanceId(managementInstance.instanceId);
+      const pipelineId = result.pipelineId || "";
+      if (pipelineId) {
+        setSelectedRunId(pipelineId);
+        const baseRuntime = runtime?.id || runtimeId || "runtime";
+        const nextUrl = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(managementInstance!.instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}${window.location.search}`;
+        if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+        setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
+      }
+      setToast(pipelineId ? `Instance 创建任务已启动：${shortId(pipelineId)}` : "Instance 创建任务已启动");
+      setTriggerOpen(false);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
+      if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
+    },
+    onError: (error) => {
+      setToast(`Instance 创建失败：${String((error as Error).message || error)}`);
+    },
+  });
+
+  const deleteInstanceMutation = useMutation({
+    mutationFn: async () => {
+      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      const targetId = instanceDeleteId.trim();
+      if (!targetId) throw new Error("请填写 Instance ID");
+      const targetRepo = instanceDeleteRepo.trim() || `skkeoriw/${targetId}`;
+      const [result] = await Promise.all([
+        provider.triggerRun(runtime, managementInstance.instanceId, {
+          action: "delete-instance",
+          runtime_id: runtime?.id || runtimeId,
+          channel_url: runtime?.channelUrl || runtime?.endpoint,
+          ssh_command: runtimeDeleteSshCommand,
+          private_key_b64: encodeSecretB64(runtimeDeletePrivateKey),
+          instance_id: targetId,
+          repo: targetRepo,
+          instance_repo: targetRepo,
+          force: instanceDeleteForce,
+        }),
+        minimumDelay(450),
+      ]);
+      return result;
+    },
+    onSuccess: async (result) => {
+      if (managementInstance) setInstanceId(managementInstance.instanceId);
+      const pipelineId = result.pipelineId || "";
+      if (pipelineId) {
+        setSelectedRunId(pipelineId);
+        const baseRuntime = runtime?.id || runtimeId || "runtime";
+        const nextUrl = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(managementInstance!.instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}${window.location.search}`;
+        if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+        setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
+      }
+      setToast(pipelineId ? `Instance 删除任务已启动：${shortId(pipelineId)}` : "Instance 删除任务已启动");
+      setTriggerOpen(false);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
+      if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
+    },
+    onError: (error) => {
+      setToast(`Instance 删除失败：${String((error as Error).message || error)}`);
     },
   });
 
@@ -1355,6 +1502,18 @@ export default function App() {
           setDeletePrivateKey={setRuntimeDeletePrivateKey}
           deleteForce={runtimeDeleteForce}
           setDeleteForce={setRuntimeDeleteForce}
+          instanceCreateId={instanceCreateId}
+          setInstanceCreateId={setInstanceCreateId}
+          instanceCreateRepo={instanceCreateRepo}
+          setInstanceCreateRepo={setInstanceCreateRepo}
+          instanceCreateSopType={instanceCreateSopType}
+          setInstanceCreateSopType={setInstanceCreateSopType}
+          instanceDeleteId={instanceDeleteId}
+          setInstanceDeleteId={setInstanceDeleteId}
+          instanceDeleteRepo={instanceDeleteRepo}
+          setInstanceDeleteRepo={setInstanceDeleteRepo}
+          instanceDeleteForce={instanceDeleteForce}
+          setInstanceDeleteForce={setInstanceDeleteForce}
           inheritance={runtimeInheritanceQuery.data}
           inheritanceLoading={runtimeInheritanceQuery.isLoading}
           inheritanceError={runtimeInheritanceQuery.error ? String(runtimeInheritanceQuery.error.message) : ""}
@@ -1365,16 +1524,26 @@ export default function App() {
             setRuntimeCreateEnvText(runtimeEnvTemplateFromPreview(runtimeInheritanceQuery.data));
             setToast("已把继承配置模板加载到 Runtime Env Overrides");
           }}
-          createPending={createRuntimeMutation.isPending}
-          deletePending={deleteRuntimeMutation.isPending}
+          createPending={createRuntimeMutation.isPending || createInstanceMutation.isPending}
+          deletePending={deleteRuntimeMutation.isPending || deleteInstanceMutation.isPending}
           error={
             createRuntimeMutation.error ? String(createRuntimeMutation.error.message)
             : deleteRuntimeMutation.error ? String(deleteRuntimeMutation.error.message)
+            : createInstanceMutation.error ? String(createInstanceMutation.error.message)
+            : deleteInstanceMutation.error ? String(deleteInstanceMutation.error.message)
             : ""
           }
           onClose={() => setTriggerOpen(false)}
-          onCreate={(event) => { event.preventDefault(); createRuntimeMutation.mutate(); }}
-          onDelete={(event) => { event.preventDefault(); deleteRuntimeMutation.mutate(); }}
+          onCreate={(event) => {
+            event.preventDefault();
+            if (runtimeManagementAction === "create-instance") createInstanceMutation.mutate();
+            else createRuntimeMutation.mutate();
+          }}
+          onDelete={(event) => {
+            event.preventDefault();
+            if (runtimeManagementAction === "delete-instance") deleteInstanceMutation.mutate();
+            else deleteRuntimeMutation.mutate();
+          }}
         />
       )}
       {triggerOpen && runtime && instance && !isRuntimeManagementInstance && (
@@ -3182,6 +3351,18 @@ function RuntimeManagementStartDrawer({
   setDeletePrivateKey,
   deleteForce,
   setDeleteForce,
+  instanceCreateId,
+  setInstanceCreateId,
+  instanceCreateRepo,
+  setInstanceCreateRepo,
+  instanceCreateSopType,
+  setInstanceCreateSopType,
+  instanceDeleteId,
+  setInstanceDeleteId,
+  instanceDeleteRepo,
+  setInstanceDeleteRepo,
+  instanceDeleteForce,
+  setInstanceDeleteForce,
   inheritance,
   inheritanceLoading,
   inheritanceError,
@@ -3199,8 +3380,8 @@ function RuntimeManagementStartDrawer({
   mode: DataMode;
   runtime: Runtime;
   instance: Instance;
-  action: "create-runtime" | "delete-runtime";
-  setAction: (value: "create-runtime" | "delete-runtime") => void;
+  action: RuntimeManagementAction;
+  setAction: (value: RuntimeManagementAction) => void;
   createSshCommand: string;
   setCreateSshCommand: (value: string) => void;
   createPrivateKey: string;
@@ -3217,6 +3398,18 @@ function RuntimeManagementStartDrawer({
   setDeletePrivateKey: (value: string) => void;
   deleteForce: boolean;
   setDeleteForce: (value: boolean) => void;
+  instanceCreateId: string;
+  setInstanceCreateId: (value: string) => void;
+  instanceCreateRepo: string;
+  setInstanceCreateRepo: (value: string) => void;
+  instanceCreateSopType: string;
+  setInstanceCreateSopType: (value: string) => void;
+  instanceDeleteId: string;
+  setInstanceDeleteId: (value: string) => void;
+  instanceDeleteRepo: string;
+  setInstanceDeleteRepo: (value: string) => void;
+  instanceDeleteForce: boolean;
+  setInstanceDeleteForce: (value: boolean) => void;
   inheritance: RuntimeInheritancePreview | undefined;
   inheritanceLoading: boolean;
   inheritanceError: string;
@@ -3234,7 +3427,12 @@ function RuntimeManagementStartDrawer({
   const pending = createPending || deletePending;
   const createReady = true;
   const deleteReady = true;
-  const isCreate = action === "create-runtime";
+  const isCreateRuntime = action === "create-runtime";
+  const isDeleteRuntime = action === "delete-runtime";
+  const isCreateInstance = action === "create-instance";
+  const isDeleteInstance = action === "delete-instance";
+  const isCreate = isCreateRuntime || isCreateInstance;
+  const submitLabel = isCreateRuntime ? "Create Runtime" : isDeleteRuntime ? "Delete Runtime" : isCreateInstance ? "Create Instance" : "Delete Instance";
 
   return (
     <div className="drawer-backdrop" role="presentation">
@@ -3254,15 +3452,21 @@ function RuntimeManagementStartDrawer({
           <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />
 
           <div className="segmented runtime-action-toggle" role="tablist" aria-label="Runtime action">
-            <button type="button" className={isCreate ? "active" : ""} onClick={() => setAction("create-runtime")} disabled={pending}>
+            <button type="button" className={isCreateRuntime ? "active" : ""} onClick={() => setAction("create-runtime")} disabled={pending}>
               Create Runtime
             </button>
-            <button type="button" className={!isCreate ? "active" : ""} onClick={() => setAction("delete-runtime")} disabled={pending}>
+            <button type="button" className={isDeleteRuntime ? "active" : ""} onClick={() => setAction("delete-runtime")} disabled={pending}>
               Delete Runtime
+            </button>
+            <button type="button" className={isCreateInstance ? "active" : ""} onClick={() => setAction("create-instance")} disabled={pending}>
+              Create Instance
+            </button>
+            <button type="button" className={isDeleteInstance ? "active" : ""} onClick={() => setAction("delete-instance")} disabled={pending}>
+              Delete Instance
             </button>
           </div>
 
-          {isCreate ? (
+          {isCreateRuntime ? (
             <div className="runtime-drawer-form">
               <label>
                 <span>SSH Command</span>
@@ -3299,7 +3503,7 @@ function RuntimeManagementStartDrawer({
                 </label>
               </details>
             </div>
-          ) : (
+          ) : isDeleteRuntime ? (
             <div className="runtime-drawer-form">
               <label>
                 <span>Runtime ID</span>
@@ -3319,6 +3523,52 @@ function RuntimeManagementStartDrawer({
                 <span>Force when running executions exist</span>
               </label>
             </div>
+          ) : isCreateInstance ? (
+            <div className="runtime-drawer-form">
+              <label>
+                <span>Instance ID</span>
+                <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder="wiki-sop-new-instance" />
+              </label>
+              <label>
+                <span>Instance Repo</span>
+                <input value={instanceCreateRepo} onChange={(event) => setInstanceCreateRepo(event.target.value)} disabled={pending} placeholder="skkeoriw/wiki-sop-new-instance" />
+              </label>
+              <label>
+                <span>SOP Type</span>
+                <input value={instanceCreateSopType} onChange={(event) => setInstanceCreateSopType(event.target.value)} disabled={pending} placeholder="youtube-research-wiki" />
+              </label>
+              <label>
+                <span>SSH Command</span>
+                <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
+              </label>
+              <RuntimeInheritancePreviewPanel
+                preview={inheritance}
+                loading={inheritanceLoading}
+                error={inheritanceError}
+                overrides={createConfigOverrides}
+                onOverridesChange={setCreateConfigOverrides}
+                onRefresh={onRefreshInheritance}
+              />
+            </div>
+          ) : (
+            <div className="runtime-drawer-form">
+              <label>
+                <span>Instance ID</span>
+                <input value={instanceDeleteId} onChange={(event) => setInstanceDeleteId(event.target.value)} disabled={pending} placeholder="wiki-sop-old-instance" />
+              </label>
+              <label>
+                <span>Instance Repo</span>
+                <input value={instanceDeleteRepo} onChange={(event) => setInstanceDeleteRepo(event.target.value)} disabled={pending} placeholder="skkeoriw/wiki-sop-old-instance" />
+              </label>
+              <label>
+                <span>SSH Command</span>
+                <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
+              </label>
+              <label className="inline-check drawer-inline-check">
+                <input type="checkbox" checked={instanceDeleteForce} onChange={(event) => setInstanceDeleteForce(event.target.checked)} disabled={pending} />
+                <span>Force when running executions exist</span>
+              </label>
+            </div>
           )}
 
           {error && <div className="inline-error">{error}</div>}
@@ -3329,7 +3579,7 @@ function RuntimeManagementStartDrawer({
           <button type="button" onClick={onClose} disabled={pending}>Cancel</button>
           <button type="submit" className={isCreate ? "primary" : "primary danger-action"} disabled={pending || (isCreate ? !createReady : !deleteReady)}>
             {pending ? <Loader2 size={16} className="spin" /> : isCreate ? <Play size={16} /> : <X size={16} />}
-            {pending ? "Starting..." : isCreate ? "Create Runtime" : "Delete Runtime"}
+            {pending ? "Starting..." : submitLabel}
           </button>
         </div>
       </form>
