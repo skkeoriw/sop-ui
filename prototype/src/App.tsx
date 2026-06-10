@@ -63,6 +63,16 @@ type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
   nodes?: Record<string, StageStatus>;
   nodeStates?: Record<string, RunNodeState>;
 };
+type RuntimeProbeStatus = "ok" | "failed" | "unknown";
+type RuntimeProbeResult = {
+  id: string;
+  label: string;
+  target: string;
+  status: RuntimeProbeStatus;
+  latencyMs?: number;
+  summary: string;
+  checkedAt: string;
+};
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -233,6 +243,120 @@ function statusLabel(status: StageStatus) {
   if (status === "skipped") return "Skipped";
   if (status === "cancelled") return "Cancelled";
   return "Waiting";
+}
+
+async function fetchProbe(
+  id: string,
+  label: string,
+  target: string,
+  options: RequestInit = {},
+  summarize?: (data: unknown, response: Response) => string
+): Promise<RuntimeProbeResult> {
+  const startedAt = performance.now();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(target, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        ...(options.headers || {}),
+      },
+    });
+    const latencyMs = Math.round(performance.now() - startedAt);
+    const contentType = response.headers.get("content-type") || "";
+    let data: unknown = null;
+    if (options.method !== "OPTIONS" && contentType.includes("application/json")) {
+      data = await response.json();
+    } else if (options.method !== "OPTIONS") {
+      data = await response.text();
+    }
+    if (!response.ok) {
+      return {
+        id,
+        label,
+        target,
+        status: "failed",
+        latencyMs,
+        summary: `HTTP ${response.status} ${response.statusText}`.trim(),
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    return {
+      id,
+      label,
+      target,
+      status: "ok",
+      latencyMs,
+      summary: summarize ? summarize(data, response) : `HTTP ${response.status}`,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      id,
+      label,
+      target,
+      status: "failed",
+      latencyMs: Math.round(performance.now() - startedAt),
+      summary: error instanceof Error ? error.message : String(error),
+      checkedAt: new Date().toISOString(),
+    };
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function summarizeSopIndex(data: unknown) {
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const runtime = record.runtime as Record<string, unknown> | undefined;
+  const runtimeId = String(runtime?.runtime_id || record.runtime_id || "runtime");
+  const sops = Array.isArray(record.sops) ? record.sops.length : Array.isArray(record.instances) ? record.instances.length : 0;
+  return `${runtimeId} · ${sops} instances`;
+}
+
+function summarizeInstances(data: unknown) {
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const instances = Array.isArray(record.instances) ? record.instances : Array.isArray(record.sops) ? record.sops : [];
+  return `${instances.length} registered instances`;
+}
+
+function summarizeDag(data: unknown) {
+  const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
+  const nodes = Array.isArray(record.nodes) ? record.nodes.length : 0;
+  const edges = Array.isArray(record.edges) ? record.edges.length : 0;
+  return `${nodes} nodes · ${edges} edges`;
+}
+
+async function runRuntimeProbeChecks(runtime: Runtime, managementInstance: Instance | undefined) {
+  const endpoint = normalizeEndpoint(runtime.endpoint);
+  const spiBase = runtime.spiBaseUrl || `${endpoint}/api/sop`;
+  const checks = [
+    fetchProbe("spi-index", "SPI Index", spiBase, {}, summarizeSopIndex),
+    fetchProbe("instance-registry", "Instance Registry", `${endpoint}/api/sop/instances`, {}, summarizeInstances),
+    fetchProbe("cors-options", "CORS OPTIONS", spiBase, { method: "OPTIONS" }, (_data, response) => `HTTP ${response.status}`),
+  ];
+  if (managementInstance) {
+    checks.push(fetchProbe(
+      "management-dag",
+      "Management DAG",
+      `${endpoint}/api/sop/${encodeURIComponent(managementInstance.instanceId)}/dag`,
+      {},
+      summarizeDag
+    ));
+  }
+  const results = await Promise.all(checks);
+  if (!managementInstance) {
+    results.push({
+      id: "management-dag",
+      label: "Management DAG",
+      target: `${endpoint}/api/sop/runtime-management/dag`,
+      status: "unknown",
+      summary: "runtime-management instance missing",
+      checkedAt: new Date().toISOString(),
+    });
+  }
+  return results;
 }
 
 function encodeSecretB64(value: string) {
@@ -1603,6 +1727,24 @@ function RuntimeOverview({
   const failedCount = instances.filter((item) => item.status === "failed").length;
   const runtimeStatus = runtime?.localStatus === "ok" ? "done" : runtime?.status === "active" ? "running" : "waiting";
   const supportedTypes = runtime?.supportedSopTypes?.length ? runtime.supportedSopTypes.join(", ") : "-";
+  const [probeResults, setProbeResults] = useState<RuntimeProbeResult[]>([]);
+  const [probeRunning, setProbeRunning] = useState(false);
+
+  useEffect(() => {
+    setProbeResults([]);
+    setProbeRunning(false);
+  }, [runtime?.id]);
+
+  const handleRunProbe = async () => {
+    if (!runtime) return;
+    setProbeRunning(true);
+    try {
+      setProbeResults(await runRuntimeProbeChecks(runtime, managementInstance));
+    } finally {
+      setProbeRunning(false);
+    }
+  };
+
   return (
     <section className="runtime-overview">
       <div className="concept-hero runtime-hero">
@@ -1648,6 +1790,9 @@ function RuntimeOverview({
         <div className="flow-panel runtime-health-panel">
           <div className="panel-head">
             <div><strong>Runtime Health</strong><span>面向控制台的可用性摘要</span></div>
+            <button type="button" className="ghost-btn compact" onClick={handleRunProbe} disabled={!runtime || probeRunning}>
+              {probeRunning ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}Run Checks
+            </button>
           </div>
           <div className="runtime-health-grid">
             <RuntimeHealthItem label="Tunnel" value={runtime?.status || "unknown"} ok={runtime?.status === "active"} />
@@ -1655,6 +1800,7 @@ function RuntimeOverview({
             <RuntimeHealthItem label="SPI" value={runtime?.spiBaseUrl ? "configured" : "missing"} ok={Boolean(runtime?.spiBaseUrl || runtime?.endpoint)} />
             <RuntimeHealthItem label="Management" value={managementInstance ? "ready" : "missing"} ok={Boolean(managementInstance)} />
           </div>
+          <RuntimeProbeList results={probeResults} running={probeRunning} />
         </div>
       </section>
 
@@ -1735,6 +1881,35 @@ function RuntimeOverview({
         </div>
       </section>
     </section>
+  );
+}
+
+function RuntimeProbeList({ results, running }: { results: RuntimeProbeResult[]; running: boolean }) {
+  if (!results.length && !running) {
+    return (
+      <div className="runtime-probe-empty">
+        <Info size={14} />
+        <span>点击 Run Checks 验证 SPI、Instance Registry、CORS 和 runtime-management DAG。</span>
+      </div>
+    );
+  }
+  return (
+    <div className="runtime-probe-list" aria-live="polite">
+      {running && !results.length && <Skeleton />}
+      {results.map((item) => (
+        <div key={item.id} className={`runtime-probe-row ${item.status}`}>
+          <div>
+            <strong>{item.label}</strong>
+            <span title={item.target}>{item.target}</span>
+          </div>
+          <div>
+            <span className={`status-pill ${item.status === "ok" ? "done" : item.status === "failed" ? "failed" : "waiting"}`}>{item.status}</span>
+            <small>{item.latencyMs === undefined ? "-" : `${item.latencyMs}ms`}</small>
+            <p>{item.summary}</p>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
