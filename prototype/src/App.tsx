@@ -85,6 +85,9 @@ interface StageNodeData extends Record<string, unknown> {
 const statusOrder: StageStatus[] = ["running", "waiting", "failed", "skipped", "done"];
 const DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND = "ssh -i ~/.ssh/id_ed25519 a01020323900@34.29.222.183";
 const DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID = "runtime-34-29-222-183";
+const GLOBAL_TUNNEL_API_URL = "https://tunnel-api.chxyka.ccwu.cc";
+const GLOBAL_TUNNEL_ADMIN_URL = "https://tunnel-admin-9vt.pages.dev";
+const DEFAULT_HERMES_SMOKE_ROUTE = "sop-runtime-hermes-smoke";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
 type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
 
@@ -1454,7 +1457,6 @@ export default function App() {
             instances={instances}
             loading={runtimesQuery.isLoading || instancesQuery.isLoading}
             mode={mode}
-            onSelectRuntime={selectRuntime}
             onOpenInstance={(id) => selectInstance(id, true)}
             managementInstance={managementInstance}
             onOpenWorkflow={(id) => {
@@ -1585,6 +1587,8 @@ export default function App() {
             onRefreshManagementConfig={() => runtimeManagementConfigQuery.refetch()}
             onSaveManagementConfig={(event) => { event.preventDefault(); initializeManagementConfigMutation.reset(); saveManagementConfigMutation.mutate(); }}
             onInitializeManagementConfig={() => { saveManagementConfigMutation.reset(); setManagementConfigValues({}); initializeManagementConfigMutation.mutate(); }}
+            globalTunnelApiUrl={GLOBAL_TUNNEL_API_URL}
+            globalTunnelAdminUrl={GLOBAL_TUNNEL_ADMIN_URL}
           />
         )}
       </main>
@@ -1699,13 +1703,115 @@ export default function App() {
   );
 }
 
+function buildRuntimeMetadataRows(runtime: Runtime | undefined) {
+  const metadata = runtime?.metadata || {};
+  const rows: Record<string, string> = {};
+  const keyOrder = [
+    "runtime_id",
+    "display_name",
+    "channel_name",
+    "channel_url",
+    "public",
+    "spi_base_url",
+    "ui_url",
+    "runtime_target_host",
+    "hermes",
+    "webhook_public_host",
+    "hermes_webhook_url",
+    "hermes_webhook_port",
+    "hermes_smoke_route",
+    "wiki_repo",
+    "title",
+    "type",
+    "auto_domain_source",
+  ];
+  const seen = new Set<string>();
+  keyOrder.forEach((key) => {
+    const value = metadata[key];
+    if (value === undefined || value === "") return;
+    rows[key] = value;
+    seen.add(key);
+  });
+  Object.entries(metadata)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([key, value]) => {
+      if (!seen.has(key)) rows[key] = value;
+  });
+  return rows;
+}
+
+function shellQuoteSingle(value: string) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function formatHermesResponseBody(body: string) {
+  const text = body.trim();
+  if (!text) return "(empty response)";
+  try {
+    return `${JSON.stringify(JSON.parse(text), null, 2)}\n`;
+  } catch {
+    return body;
+  }
+}
+
+function buildHermesWebhookUrl(runtime: Runtime | undefined) {
+  const route = runtime?.metadata?.hermes_smoke_route || DEFAULT_HERMES_SMOKE_ROUTE;
+  const explicitUrl = runtime?.metadata?.hermes_webhook_url || runtime?.metadata?.webhook_public_host || runtime?.metadata?.hermes_public_host;
+  if (explicitUrl) {
+    const trimmed = explicitUrl.trim().replace(/\/+$/, "");
+    if (/^https?:\/\//i.test(trimmed)) {
+      return trimmed.includes("/webhooks/") ? trimmed : `${trimmed}/webhooks/${route}`;
+    }
+    const host = trimmed.replace(/^\/+/, "");
+    return host.includes("/webhooks/") ? `https://${host}` : `https://${host}/webhooks/${route}`;
+  }
+  return "";
+}
+
+function buildHermesCurlCommand(url: string, message: string) {
+  if (!url.trim()) return "Hermes webhook endpoint is missing in runtime metadata.";
+  const body = JSON.stringify({
+    message,
+    text: message,
+    prompt: message,
+    source: "sop-ui",
+    mode: "connectivity-check",
+  });
+  return `curl -sS -X POST ${shellQuoteSingle(url)} -H 'Content-Type: application/json' -H 'Accept: application/json' --data-raw ${shellQuoteSingle(body)}`;
+}
+
+async function runHermesConnectivityCheck(url: string, message: string) {
+  const startedAt = performance.now();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      message,
+      text: message,
+      prompt: message,
+      source: "sop-ui",
+      mode: "connectivity-check",
+    }),
+  });
+  const body = await response.text();
+  return {
+    ok: response.ok,
+    httpStatus: response.status,
+    latencyMs: Math.round(performance.now() - startedAt),
+    responseBody: formatHermesResponseBody(body),
+    contentType: response.headers.get("content-type") || "",
+  };
+}
+
 function RuntimeOverview({
   runtime,
   runtimes,
   instances,
   loading,
   mode,
-  onSelectRuntime,
   onOpenInstance,
   onOpenWorkflow,
   managementInstance,
@@ -1716,12 +1822,12 @@ function RuntimeOverview({
   instances: Instance[];
   loading: boolean;
   mode: DataMode;
-  onSelectRuntime: (runtimeId: string) => void;
   onOpenInstance: (instanceId: string) => void;
   onOpenWorkflow: (instanceId: string) => void;
   managementInstance: Instance | undefined;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
+  const runtimeMetadataRows = buildRuntimeMetadataRows(runtime);
   const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
   const runningCount = instances.filter((item) => item.latestExecution?.status === "running").length;
   const failedCount = instances.filter((item) => item.status === "failed").length;
@@ -1729,10 +1835,30 @@ function RuntimeOverview({
   const supportedTypes = runtime?.supportedSopTypes?.length ? runtime.supportedSopTypes.join(", ") : "-";
   const [probeResults, setProbeResults] = useState<RuntimeProbeResult[]>([]);
   const [probeRunning, setProbeRunning] = useState(false);
+  const [hermesMessage, setHermesMessage] = useState("你好 你是谁");
+  const [hermesUrl, setHermesUrl] = useState(buildHermesWebhookUrl(runtime));
+  const [hermesRunning, setHermesRunning] = useState(false);
+  const [hermesResult, setHermesResult] = useState<{
+    ok: boolean;
+    httpStatus: number;
+    latencyMs: number;
+    responseBody: string;
+    contentType: string;
+    error?: string;
+    checkedAt: string;
+    target: string;
+    curl: string;
+  } | null>(null);
 
   useEffect(() => {
     setProbeResults([]);
     setProbeRunning(false);
+  }, [runtime?.id]);
+
+  useEffect(() => {
+    setHermesUrl(buildHermesWebhookUrl(runtime));
+    setHermesResult(null);
+    setHermesRunning(false);
   }, [runtime?.id]);
 
   const handleRunProbe = async () => {
@@ -1742,6 +1868,51 @@ function RuntimeOverview({
       setProbeResults(await runRuntimeProbeChecks(runtime, managementInstance));
     } finally {
       setProbeRunning(false);
+    }
+  };
+
+  const handleRunHermesCheck = async () => {
+    if (!runtime) return;
+    const target = hermesUrl.trim();
+    if (!target) {
+      setHermesResult({
+        ok: false,
+        httpStatus: 0,
+        latencyMs: 0,
+        responseBody: "",
+        contentType: "",
+        error: "Webhook URL is empty",
+        checkedAt: new Date().toISOString(),
+        target,
+        curl: "",
+      });
+      return;
+    }
+    setHermesRunning(true);
+    try {
+      const result = await runHermesConnectivityCheck(target, hermesMessage.trim() || "你好 你是谁");
+      setHermesResult({
+        ...result,
+        error: result.ok ? undefined : `HTTP ${result.httpStatus}`,
+        checkedAt: new Date().toISOString(),
+        target,
+        curl: buildHermesCurlCommand(target, hermesMessage.trim() || "你好 你是谁"),
+      });
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      setHermesResult({
+        ok: false,
+        httpStatus: 0,
+        latencyMs: 0,
+        responseBody: "",
+        contentType: "",
+        error: errorText,
+        checkedAt: new Date().toISOString(),
+        target,
+        curl: buildHermesCurlCommand(target, hermesMessage.trim() || "你好 你是谁"),
+      });
+    } finally {
+      setHermesRunning(false);
     }
   };
 
@@ -1777,8 +1948,10 @@ function RuntimeOverview({
             <KeyValues data={{
               runtime_id: runtime?.id || "-",
               display_name: runtime?.displayName || runtime?.name || "-",
-              channel_url: runtime?.channelUrl || runtime?.endpoint || "-",
+              endpoint: runtime?.channelUrl || runtime?.endpoint || "-",
+              public_endpoint: runtimeMetadataRows.public || "-",
               spi_base_url: runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`,
+              ...runtimeMetadataRows,
               client_ip: runtime?.clientIp || runtime?.machine || "-",
               local_port: runtime?.localPort || "-",
               supported_sop_types: supportedTypes,
@@ -1804,27 +1977,74 @@ function RuntimeOverview({
         </div>
       </section>
 
-      <section className="runtime-main-grid">
-        <div className="flow-panel runtime-list-panel">
-          <div className="panel-head">
-            <div><strong>Runtime Fleet</strong><span>可切换的 SOP 执行机器</span></div>
-            <span>{runtimes.length}</span>
+      <section className="flow-panel runtime-hermes-panel">
+        <div className="panel-head">
+          <div>
+            <strong>Hermes Connectivity</strong>
+            <span>手动验证当前 Runtime 到 Hermes webhook 的连通性</span>
           </div>
-          <div className="runtime-list">
-            {runtimes.map((item) => (
-              <button key={item.id} type="button" className={`runtime-select-card ${runtime?.id === item.id ? "active" : ""}`} onClick={() => onSelectRuntime(item.id)}>
-                <div>
-                  <strong>{item.displayName || item.name}</strong>
-                  <span>{item.endpoint}</span>
-                  <small>{item.clientIp || item.machine || "-"} · {item.localPort ? `:${item.localPort}` : item.localStatus || "unknown"}</small>
-                </div>
-                <span className={`status-pill ${item.localStatus === "ok" ? "done" : "waiting"}`}>{item.localStatus || item.status}</span>
+          <button type="button" className="ghost-btn compact" onClick={handleRunHermesCheck} disabled={!runtime || hermesRunning || !hermesUrl.trim()}>
+            {hermesRunning ? <Loader2 size={14} className="spin" /> : <Play size={14} />}Run Hermes Check
+          </button>
+        </div>
+        <div className="runtime-hermes-grid">
+          <div className="runtime-hermes-form">
+            <label>
+              <span>Test Message</span>
+              <textarea value={hermesMessage} onChange={(event) => setHermesMessage(event.target.value)} rows={4} placeholder="请输入要发送给 Hermes 的文本" />
+              <span className="field-hint">这段文本会发送到 Hermes webhook endpoint；不会使用 Runtime SPI endpoint。</span>
+            </label>
+            <label>
+              <span>Hermes Webhook URL</span>
+              <input value={hermesUrl} onChange={(event) => setHermesUrl(event.target.value)} placeholder="Missing in runtime metadata" />
+              <span className="field-hint">权威来源是 Runtime metadata 的 hermes_webhook_url / webhook_public_host；缺失时需要 create-runtime 初始化补齐。</span>
+            </label>
+            <div className={`runtime-hermes-endpoint-state ${hermesUrl.trim() ? "ok" : "missing"}`}>
+              <strong>{hermesUrl.trim() ? "Hermes endpoint configured" : "Hermes endpoint missing"}</strong>
+              <span>{hermesUrl.trim() ? "Ready for webhook smoke check" : "Runtime metadata 没有 Hermes 公网入口，不能用 SPI 域名代替。"}</span>
+            </div>
+            <div className="runtime-hermes-actions">
+              <button type="button" className="primary" onClick={handleRunHermesCheck} disabled={!runtime || hermesRunning || !hermesUrl.trim()}>
+                {hermesRunning ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
+                {hermesRunning ? "Checking..." : "Run check"}
               </button>
-            ))}
-            {!runtimes.length && <LoadingOrEmpty loading={loading} text="没有发现 active SOP Runtime" />}
+              <div className="runtime-hermes-meta">
+                <span>SPI: {runtime?.channelUrl || runtime?.endpoint || "-"}</span>
+                <span>Hermes: {runtime?.metadata?.hermes_webhook_url || runtime?.metadata?.webhook_public_host || "missing"}</span>
+              </div>
+            </div>
+          </div>
+          <div className="runtime-hermes-output">
+            <div className="runtime-hermes-command">
+              <div className="section-title"><span>curl</span><span>copy and run manually</span></div>
+              <pre>{buildHermesCurlCommand(hermesUrl.trim() || buildHermesWebhookUrl(runtime), hermesMessage.trim() || "你好 你是谁")}</pre>
+            </div>
+            {hermesResult ? (
+              <div className={`runtime-hermes-result ${hermesResult.ok ? "ok" : "failed"}`}>
+                <div className="runtime-hermes-summary">
+                  <strong>{hermesResult.ok ? "Connected" : "Failed"}</strong>
+                  <span>{hermesResult.error || `HTTP ${hermesResult.httpStatus}`}</span>
+                  <small>{hermesResult.latencyMs}ms · {hermesResult.checkedAt}</small>
+                </div>
+                <KeyValues data={{
+                  target_url: hermesResult.target,
+                  http_status: hermesResult.httpStatus || "-",
+                  content_type: hermesResult.contentType || "-",
+                  latency_ms: `${hermesResult.latencyMs}ms`,
+                }} />
+                <div className="runtime-hermes-response">
+                  <div className="section-title"><span>Response</span><span>{hermesResult.responseBody === "(empty response)" ? "empty" : "body"}</span></div>
+                  <pre>{hermesResult.responseBody}</pre>
+                </div>
+              </div>
+            ) : (
+              <Empty text="先点击 Run check，或直接复制上方 curl 在终端里执行。" />
+            )}
           </div>
         </div>
+      </section>
 
+      <section className="runtime-main-grid runtime-main-grid-single">
         <div className="flow-panel instance-list-panel">
           <div className="panel-head">
             <div><strong>Instance Registry</strong><span>当前 Runtime 下的业务隔离单元</span></div>
@@ -2862,6 +3082,8 @@ function SettingsPage({
   onRefreshManagementConfig,
   onSaveManagementConfig,
   onInitializeManagementConfig,
+  globalTunnelApiUrl,
+  globalTunnelAdminUrl,
 }: {
   mode: DataMode;
   runtime: Runtime | undefined;
@@ -2889,184 +3111,38 @@ function SettingsPage({
   onRefreshManagementConfig: () => void;
   onSaveManagementConfig: (event: FormEvent) => void;
   onInitializeManagementConfig: () => void;
+  globalTunnelApiUrl: string;
+  globalTunnelAdminUrl: string;
 }) {
-  const managementConfigItems = managementConfig?.items || [];
-  const groupedManagementConfig = managementConfigItems.reduce<Record<string, typeof managementConfigItems>>((groups, item) => {
-    const key = item.category || "runtime";
-    groups[key] = groups[key] || [];
-    groups[key].push(item);
-    return groups;
-  }, {});
-  const hasManagementConfigEdits = Object.values(managementConfigValues).some((value) => value.trim());
-  const canSaveManualConfig = Boolean(managementInstance && managementConfigToken.trim() && hasManagementConfigEdits && !saveManagementConfigPending);
-  const updateManagementConfigValue = (key: string, value: string) => {
-    setManagementConfigValues({ ...managementConfigValues, [key]: value });
-  };
-  const displayManagementConfigValue = (item: RuntimeInheritancePreview["items"][number]) => {
-    if (!item.present) return item.required ? "Missing - load current Runtime or override manually" : "Missing optional";
-    if (item.secret) return `Loaded from ${item.source}${item.maskedValue ? ` (${item.maskedValue})` : ""}`;
-    return item.maskedValue || "Loaded";
-  };
-
   return (
     <>
       <section className="concept-hero">
         <div>
-          <span className="status-pill waiting"><Settings size={14} />Runtime Settings</span>
-          <h1>Runtime / Endpoint / Registry config</h1>
-          <p>当前页面只读为主，用于确认 SPI、Registry、Mode 和 SSE/CORS 相关状态。</p>
+          <span className="status-pill waiting"><Settings size={14} />Global Settings</span>
+          <h1>全局运维配置（不绑定任意 Runtime）</h1>
+          <p>本页展示与项目级别相关的配置入口，Runtime 级别配置保持在 Runtime Overview / Runtime Management 内。</p>
         </div>
         <div className="context-card">
-          <strong>{runtime?.name || "Runtime"}</strong>
-          <span>{mode} · {runtime?.localStatus || "unknown"}</span>
-          <code>{runtime?.endpoint || "-"}</code>
+          <strong>Global</strong>
+          <span>{mode} · global scope</span>
+          <code>{globalTunnelAdminUrl}</code>
         </div>
       </section>
       <section className="settings-grid">
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Runtime endpoint</strong><span>SPI consumer context</span></div></div>
+          <div className="panel-head"><div><strong>Global Configuration</strong><span>全局配置源</span></div></div>
           <div className="settings-block">
             <KeyValues data={{
               mode,
-              endpoint: runtime?.endpoint || "-",
-              runtime_id: runtime?.id || "-",
-              local_status: runtime?.localStatus || "-",
-              machine: runtime?.machine || "-",
-              available_runtimes: runtimes.length,
+              tunnel_admin: globalTunnelAdminUrl,
+              tunnel_api: globalTunnelApiUrl,
+              ui_origin: window.location.origin,
+              mode_status: streamStatus,
+              runtime_count: runtimes.length,
             }} />
-          </div>
-        </div>
-        <div className="flow-panel">
-          <div className="panel-head"><div><strong>Registry instance</strong><span>Enabled workspace</span></div></div>
-          <div className="settings-block">
-            <KeyValues data={{
-              instance: instance?.instanceId || "-",
-              title: instance?.title || "-",
-              repo: instance?.repo || "-",
-              enabled_workspaces: instances.length,
-              nodes_ready: `${nodesReadyCount}/${nodesTotal || 0}`,
-            }} />
-          </div>
-        </div>
-        <div className="flow-panel">
-          <div className="panel-head"><div><strong>SSE / CORS / Health</strong><span>Read-only checks</span></div></div>
-          <div className="settings-block">
-            <KeyValues data={{
-              sse_status: streamStatus,
-              cors_options: "public endpoint expected",
-              post_trigger_auth: "not configured in UI",
-              data_source: "SOP SPI",
-            }} />
-          </div>
-        </div>
-        <div className="flow-panel">
-          <div className="panel-head"><div><strong>Manual endpoint</strong><span>Real mode helper</span></div></div>
-          <form className="settings-block manual-endpoint" onSubmit={onAddManualEndpoint}>
-            <label htmlFor="settings-manual-endpoint">Endpoint</label>
-            <div><input id="settings-manual-endpoint" value={manualEndpoint} onChange={(event) => setManualEndpoint(event.target.value)} placeholder="https://..." /><button>Apply</button></div>
-          </form>
-        </div>
-        <div className="flow-panel settings-wide">
-          <div className="panel-head">
-            <div><strong>Runtime Management Config</strong><span>Server-side defaults for Create Runtime</span></div>
-            <button type="button" className="ghost-btn compact" onClick={onRefreshManagementConfig} disabled={managementConfigLoading}>
-              {managementConfigLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}Refresh
-            </button>
-          </div>
-          <div className="settings-block management-config-form">
-            <div className="drawer-note">
-              <strong>一次保存，Create Runtime 自动继承</strong>
-              <span>点击下面按钮会直接把当前 Runtime 已有配置加载到 server-side config；不需要 token，不需要再点保存。</span>
+            <div className="settings-actions">
+              <button type="button" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>打开 Tunnel Admin</button>
             </div>
-            {!managementInstance && <div className="inline-error">当前 Runtime 没有 runtime-management instance。</div>}
-            {managementConfigError && <div className="inline-error">{managementConfigError}</div>}
-            {initializeManagementConfigError && <div className="inline-error">{initializeManagementConfigError}</div>}
-            <div className="settings-actions primary-load-actions">
-              <button type="button" className="primary" onClick={onInitializeManagementConfig} disabled={initializeManagementConfigPending || !managementInstance}>
-                {initializeManagementConfigPending ? <Loader2 size={16} className="spin" /> : <RefreshCw size={16} />}
-                Load current Runtime config
-              </button>
-            </div>
-            <div className="management-config-groups">
-              {Object.entries(groupedManagementConfig).map(([category, items]) => (
-                <section key={category} className="management-config-group">
-                  <h3>{category}</h3>
-                  <div className="management-config-list">
-                    {items.map((item) => {
-                      const status = item.present
-                        ? item.secret ? "saved" : "saved visible"
-                        : item.required ? "required missing" : "missing";
-                      return (
-                        <label key={item.key} className="management-config-row">
-                          <span>
-                            <code>{item.key}</code>
-                            <small>{item.source} · {status}</small>
-                          </span>
-                          <input
-                            type="text"
-                            value={displayManagementConfigValue(item)}
-                            readOnly
-                            disabled
-                          />
-                        </label>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
-            </div>
-            <details className="advanced-config-save">
-              <summary>Advanced manual override</summary>
-              <form className="advanced-config-form" onSubmit={onSaveManagementConfig}>
-                <div className="drawer-note">
-                  <strong>手动覆盖保存</strong>
-                  <span>只有手动填写或覆盖字段才需要 Management Token。Secret 输入时本地可见，保存后不回显 raw value。</span>
-                </div>
-                <label>
-                  <span>Management Token</span>
-                  <input
-                    type="password"
-                    value={managementConfigToken}
-                    onChange={(event) => setManagementConfigToken(event.target.value)}
-                    placeholder="SOP_MANAGEMENT_TOKEN 或 HERMES_WEBHOOK_TOKEN"
-                    disabled={saveManagementConfigPending}
-                  />
-                </label>
-                {saveManagementConfigError && <div className="inline-error">{saveManagementConfigError}</div>}
-                {!managementConfigToken.trim() && hasManagementConfigEdits && <span className="field-hint">填写 Management Token 后才能保存手动覆盖。</span>}
-                <div className="manual-config-groups">
-                  {Object.entries(groupedManagementConfig).map(([category, items]) => (
-                    <section key={category} className="management-config-group">
-                      <h3>{category}</h3>
-                      <div className="management-config-list">
-                        {items.map((item) => (
-                          <label key={item.key} className="management-config-row">
-                            <span>
-                              <code>{item.key}</code>
-                              <small>{item.present ? `current: ${item.source}` : item.required ? "required missing" : "optional missing"}</small>
-                            </span>
-                            <input
-                              type={item.secret ? "password" : "text"}
-                              value={managementConfigValues[item.key] || ""}
-                              onChange={(event) => updateManagementConfigValue(item.key, event.target.value)}
-                              placeholder={item.present ? (item.secret ? "Leave blank to keep loaded secret" : item.maskedValue || "Current value") : "Enter value to save"}
-                              disabled={saveManagementConfigPending}
-                            />
-                          </label>
-                        ))}
-                      </div>
-                    </section>
-                  ))}
-                </div>
-                <div className="settings-actions">
-                  <button type="button" onClick={() => setManagementConfigValues({})} disabled={saveManagementConfigPending}>Clear edits</button>
-                  <button type="submit" className="primary" disabled={!canSaveManualConfig}>
-                    {saveManagementConfigPending ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-                    Save manual edits
-                  </button>
-                </div>
-              </form>
-            </details>
           </div>
         </div>
       </section>

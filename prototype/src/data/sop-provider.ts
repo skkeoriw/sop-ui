@@ -90,6 +90,25 @@ function parseMetadata(value: unknown): Record<string, unknown> | undefined {
   }
 }
 
+function normalizeMetadata(value: unknown): Record<string, string> {
+  const metadata = typeof value === "object" && value ? value as Record<string, unknown> : parseMetadata(value);
+  if (!metadata) return {};
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(metadata)) {
+    if (item === undefined || item === null) continue;
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+      result[key] = String(item);
+    } else {
+      try {
+        result[key] = JSON.stringify(item);
+      } catch {
+        result[key] = String(item);
+      }
+    }
+  }
+  return result;
+}
+
 function mapRun(raw: Record<string, unknown>): Run {
   const nodes: Record<string, StageStatus> = {};
   for (const [key, value] of Object.entries((raw.nodes as Record<string, string>) || {})) nodes[key] = status(value);
@@ -450,6 +469,7 @@ export const sopProvider: SopDataProvider = {
           channelName: String(metadata.channel_name || name),
           channelUrl: endpoint,
           spiBaseUrl: String(metadata.spi_base_url || `${endpoint}/api/sop`),
+          metadata: normalizeMetadata(metadata),
           supportedSopTypes: Array.isArray(metadata.supported_sop_types) ? metadata.supported_sop_types.map(String) : [],
         }];
       })

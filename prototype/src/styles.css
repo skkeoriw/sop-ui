@@ -3832,6 +3832,10 @@ pre {
   min-height: 0;
 }
 
+.runtime-main-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .runtime-detail-body {
   padding: 14px;
 }
@@ -3970,6 +3974,201 @@ pre {
   color: var(--text);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.runtime-hermes-panel {
+  overflow: hidden;
+}
+
+.runtime-hermes-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+  gap: 14px;
+  padding: 14px;
+}
+
+.runtime-hermes-form,
+.runtime-hermes-output {
+  min-width: 0;
+}
+
+.runtime-hermes-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.runtime-hermes-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.runtime-hermes-form input,
+.runtime-hermes-form textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  padding: 9px 10px;
+}
+
+.runtime-hermes-form textarea {
+  min-height: 112px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.runtime-hermes-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.runtime-hermes-endpoint-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.runtime-hermes-endpoint-state.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.runtime-hermes-endpoint-state.missing {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.runtime-hermes-endpoint-state strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.runtime-hermes-endpoint-state span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.runtime-hermes-actions .primary {
+  min-height: 40px;
+}
+
+.runtime-hermes-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.runtime-hermes-meta span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.runtime-hermes-command,
+.runtime-hermes-result {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.runtime-hermes-command {
+  overflow: hidden;
+}
+
+.runtime-hermes-command pre,
+.runtime-hermes-response pre {
+  margin: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.runtime-hermes-command .section-title {
+  margin: 0;
+  padding: 12px 14px 0;
+}
+
+.runtime-hermes-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.runtime-hermes-result.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.runtime-hermes-result.failed {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.runtime-hermes-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.runtime-hermes-summary strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.runtime-hermes-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.runtime-hermes-summary small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.runtime-hermes-response {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.runtime-hermes-response .section-title {
+  margin: 0;
+  padding: 10px 12px 0;
+}
+
+.runtime-hermes-response pre {
+  background: transparent;
+  color: var(--text);
+  max-height: 320px;
 }
 
 .runtime-management-panel {
@@ -4291,6 +4490,7 @@ pre {
 @media (max-width: 1180px) {
   .runtime-detail-grid,
   .runtime-main-grid,
+  .runtime-hermes-grid,
   .runtime-management-grid,
   .runtime-management-actions,
   .instance-grid,
@@ -4311,6 +4511,7 @@ pre {
   .instance-meta,
   .capability-grid,
   .runtime-health-grid,
+  .runtime-hermes-actions,
   .runtime-probe-row,
   .stage-map.compact {
     grid-template-columns: 1fr;

@@ -16,6 +16,7 @@ export interface Runtime {
   channelUrl?: string;
   spiBaseUrl?: string;
   supportedSopTypes?: string[];
+  metadata?: Record<string, string>;
   instanceCount?: number;
   health?: Record<string, unknown>;
   updatedAt?: string;
