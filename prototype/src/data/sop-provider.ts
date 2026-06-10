@@ -445,6 +445,8 @@ export const sopProvider: SopDataProvider = {
           status: String(tunnel.status || "unknown"),
           localStatus: String(tunnel.local_status || "unknown"),
           displayName: String(metadata.display_name || metadata.runtime_id || name),
+          clientIp: String(tunnel.client_ip || metadata.client_ip || ""),
+          localPort: String(tunnel.local_port || metadata.local_port || ""),
           channelName: String(metadata.channel_name || name),
           channelUrl: endpoint,
           spiBaseUrl: String(metadata.spi_base_url || `${endpoint}/api/sop`),

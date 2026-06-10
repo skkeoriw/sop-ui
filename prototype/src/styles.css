@@ -3809,19 +3809,150 @@ pre {
   gap: 18px;
 }
 
+.runtime-overview .flow-panel,
+.instance-overview .flow-panel {
+  min-height: 0;
+}
+
 .runtime-hero h1 {
   max-width: 780px;
 }
 
-.runtime-grid {
+.runtime-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(260px, .8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.runtime-main-grid {
   display: grid;
   grid-template-columns: minmax(260px, .72fr) minmax(0, 1.58fr);
   gap: 16px;
   min-height: 0;
 }
 
+.runtime-detail-body {
+  padding: 14px;
+}
+
+.runtime-detail-body .kv-row {
+  grid-template-columns: 136px minmax(0, 1fr);
+}
+
+.runtime-health-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.runtime-health-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 74px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 12px;
+}
+
+.runtime-health-item span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.runtime-health-item strong {
+  color: var(--text);
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-health-item.ok {
+  border-color: #a6e4c1;
+  background: var(--green-soft);
+}
+
+.runtime-health-item.warn {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
 .runtime-management-panel {
   overflow: hidden;
+}
+
+.runtime-management-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.management-action-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 3px 10px;
+  min-height: 92px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.management-action-card > span {
+  grid-row: span 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: #eef5ff;
+  color: var(--blue);
+}
+
+.management-action-card strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.management-action-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.management-action-card:hover {
+  border-color: var(--blue);
+  box-shadow: 0 10px 24px rgba(37, 99, 235, .08);
+}
+
+.management-action-card.danger > span {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.management-action-card.danger:hover {
+  border-color: #b91c1c;
+}
+
+.management-action-card:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+  box-shadow: none;
 }
 
 .runtime-management-grid {
@@ -3954,6 +4085,7 @@ pre {
 }
 
 .runtime-select-card span,
+.runtime-select-card small,
 .instance-main span,
 .instance-meta span {
   display: block;
@@ -4067,8 +4199,10 @@ pre {
 }
 
 @media (max-width: 1180px) {
-  .runtime-grid,
+  .runtime-detail-grid,
+  .runtime-main-grid,
   .runtime-management-grid,
+  .runtime-management-actions,
   .instance-grid,
   .instance-row {
     grid-template-columns: 1fr;
@@ -4086,6 +4220,7 @@ pre {
 @media (max-width: 680px) {
   .instance-meta,
   .capability-grid,
+  .runtime-health-grid,
   .stage-map.compact {
     grid-template-columns: 1fr;
   }

@@ -10,6 +10,8 @@ export interface Runtime {
   localStatus: string;
   manual?: boolean;
   displayName?: string;
+  clientIp?: string;
+  localPort?: string;
   channelName?: string;
   channelUrl?: string;
   spiBaseUrl?: string;

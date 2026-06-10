@@ -1,4 +1,4 @@
-import { FormEvent, memo, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, memo, useEffect, useMemo, useState } from "react";
 import { Background, Controls, Edge, Handle, MiniMap, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -1333,24 +1333,6 @@ export default function App() {
             onSelectRuntime={selectRuntime}
             onOpenInstance={(id) => selectInstance(id, true)}
             managementInstance={managementInstance}
-            createSshCommand={runtimeCreateSshCommand}
-            createPrivateKey={runtimeCreatePrivateKey}
-            createEnvText={runtimeCreateEnvText}
-            deleteRuntimeId={runtimeDeleteId}
-            deleteSshCommand={runtimeDeleteSshCommand}
-            deletePrivateKey={runtimeDeletePrivateKey}
-            deleteForce={runtimeDeleteForce}
-            creatingRuntime={createRuntimeMutation.isPending}
-            deletingRuntime={deleteRuntimeMutation.isPending}
-            onCreateSshCommandChange={setRuntimeCreateSshCommand}
-            onCreatePrivateKeyChange={setRuntimeCreatePrivateKey}
-            onCreateEnvTextChange={setRuntimeCreateEnvText}
-            onDeleteRuntimeIdChange={setRuntimeDeleteId}
-            onDeleteSshCommandChange={setRuntimeDeleteSshCommand}
-            onDeletePrivateKeyChange={setRuntimeDeletePrivateKey}
-            onDeleteForceChange={setRuntimeDeleteForce}
-            onCreateRuntime={() => createRuntimeMutation.mutate()}
-            onDeleteRuntime={() => deleteRuntimeMutation.mutate()}
             onOpenWorkflow={(id) => {
               setInstanceId(id);
               const baseRuntime = runtime?.id || runtimeId || "runtime";
@@ -1359,6 +1341,10 @@ export default function App() {
               setRoute({ view: "workflow", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
               setSelectedRunId("");
               setSelectedStageId("");
+            }}
+            onOpenManagement={(action) => {
+              setRuntimeManagementAction(action);
+              setTriggerOpen(true);
             }}
           />
         ) : viewMode === "instance" ? (
@@ -1599,24 +1585,7 @@ function RuntimeOverview({
   onOpenInstance,
   onOpenWorkflow,
   managementInstance,
-  createSshCommand,
-  createPrivateKey,
-  createEnvText,
-  deleteRuntimeId,
-  deleteSshCommand,
-  deletePrivateKey,
-  deleteForce,
-  creatingRuntime,
-  deletingRuntime,
-  onCreateSshCommandChange,
-  onCreatePrivateKeyChange,
-  onCreateEnvTextChange,
-  onDeleteRuntimeIdChange,
-  onDeleteSshCommandChange,
-  onDeletePrivateKeyChange,
-  onDeleteForceChange,
-  onCreateRuntime,
-  onDeleteRuntime,
+  onOpenManagement,
 }: {
   runtime: Runtime | undefined;
   runtimes: Runtime[];
@@ -1627,36 +1596,20 @@ function RuntimeOverview({
   onOpenInstance: (instanceId: string) => void;
   onOpenWorkflow: (instanceId: string) => void;
   managementInstance: Instance | undefined;
-  createSshCommand: string;
-  createPrivateKey: string;
-  createEnvText: string;
-  deleteRuntimeId: string;
-  deleteSshCommand: string;
-  deletePrivateKey: string;
-  deleteForce: boolean;
-  creatingRuntime: boolean;
-  deletingRuntime: boolean;
-  onCreateSshCommandChange: (value: string) => void;
-  onCreatePrivateKeyChange: (value: string) => void;
-  onCreateEnvTextChange: (value: string) => void;
-  onDeleteRuntimeIdChange: (value: string) => void;
-  onDeleteSshCommandChange: (value: string) => void;
-  onDeletePrivateKeyChange: (value: string) => void;
-  onDeleteForceChange: (value: boolean) => void;
-  onCreateRuntime: () => void;
-  onDeleteRuntime: () => void;
+  onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
   const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
   const runningCount = instances.filter((item) => item.latestExecution?.status === "running").length;
-  const createReady = Boolean(managementInstance);
-  const deleteReady = Boolean(managementInstance);
+  const failedCount = instances.filter((item) => item.status === "failed").length;
+  const runtimeStatus = runtime?.localStatus === "ok" ? "done" : runtime?.status === "active" ? "running" : "waiting";
+  const supportedTypes = runtime?.supportedSopTypes?.length ? runtime.supportedSopTypes.join(", ") : "-";
   return (
     <section className="runtime-overview">
       <div className="concept-hero runtime-hero">
         <div>
           <span className="status-pill running"><Server size={14} />Runtime Overview</span>
-          <h1>先选择业务工作区，再进入 Workflow。</h1>
-          <p>Runtime 是执行服务环境；Instance 才是 repo、RunIndex、Workflow Binding 和 Execution 历史的隔离边界。</p>
+          <h1>Runtime 承载执行能力，Instance 承载业务隔离。</h1>
+          <p>先确认机器、通道、SPI 和 Hermes 所在的运行环境，再进入某个 Instance 查看 Workflow、Executions、Nodes 和 Artifacts。</p>
         </div>
         <div className="context-card">
           <strong>{runtime?.displayName || runtime?.name || "No runtime"}</strong>
@@ -1668,14 +1621,47 @@ function RuntimeOverview({
       <section className="console-metrics">
         <Metric label="Runtimes" value={runtimes.length} subtext="discovered channels" />
         <Metric label="Instances" value={instances.length} subtext={`${readyCount} ready`} />
-        <Metric label="Running" value={runningCount} subtext="active executions" />
+        <Metric label="Running" value={runningCount} subtext={`${failedCount} failed workspace`} />
         <Metric label="SPI" value={runtime?.localStatus || runtime?.status || "-"} subtext={runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`} />
       </section>
 
-      <section className="runtime-grid">
+      <section className="runtime-detail-grid">
+        <div className="flow-panel runtime-identity-panel">
+          <div className="panel-head">
+            <div><strong>Runtime Detail</strong><span>机器、通道和 SPI 的当前状态</span></div>
+            <span className={`status-pill ${runtimeStatus}`}>{runtime?.localStatus || runtime?.status || "unknown"}</span>
+          </div>
+          <div className="runtime-detail-body">
+            <KeyValues data={{
+              runtime_id: runtime?.id || "-",
+              display_name: runtime?.displayName || runtime?.name || "-",
+              channel_url: runtime?.channelUrl || runtime?.endpoint || "-",
+              spi_base_url: runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`,
+              client_ip: runtime?.clientIp || runtime?.machine || "-",
+              local_port: runtime?.localPort || "-",
+              supported_sop_types: supportedTypes,
+              updated_at: runtime?.updatedAt || "-",
+            }} />
+          </div>
+        </div>
+
+        <div className="flow-panel runtime-health-panel">
+          <div className="panel-head">
+            <div><strong>Runtime Health</strong><span>面向控制台的可用性摘要</span></div>
+          </div>
+          <div className="runtime-health-grid">
+            <RuntimeHealthItem label="Tunnel" value={runtime?.status || "unknown"} ok={runtime?.status === "active"} />
+            <RuntimeHealthItem label="Local" value={runtime?.localStatus || "unknown"} ok={runtime?.localStatus === "ok"} />
+            <RuntimeHealthItem label="SPI" value={runtime?.spiBaseUrl ? "configured" : "missing"} ok={Boolean(runtime?.spiBaseUrl || runtime?.endpoint)} />
+            <RuntimeHealthItem label="Management" value={managementInstance ? "ready" : "missing"} ok={Boolean(managementInstance)} />
+          </div>
+        </div>
+      </section>
+
+      <section className="runtime-main-grid">
         <div className="flow-panel runtime-list-panel">
           <div className="panel-head">
-            <div><strong>Runtime Fleet</strong><span>公网 Channel 背后的执行服务</span></div>
+            <div><strong>Runtime Fleet</strong><span>可切换的 SOP 执行机器</span></div>
             <span>{runtimes.length}</span>
           </div>
           <div className="runtime-list">
@@ -1684,6 +1670,7 @@ function RuntimeOverview({
                 <div>
                   <strong>{item.displayName || item.name}</strong>
                   <span>{item.endpoint}</span>
+                  <small>{item.clientIp || item.machine || "-"} · {item.localPort ? `:${item.localPort}` : item.localStatus || "unknown"}</small>
                 </div>
                 <span className={`status-pill ${item.localStatus === "ok" ? "done" : "waiting"}`}>{item.localStatus || item.status}</span>
               </button>
@@ -1694,7 +1681,7 @@ function RuntimeOverview({
 
         <div className="flow-panel instance-list-panel">
           <div className="panel-head">
-            <div><strong>Instances / Workspaces</strong><span>当前 Runtime 下的业务工作区</span></div>
+            <div><strong>Instance Registry</strong><span>当前 Runtime 下的业务隔离单元</span></div>
             <span>{instances.length}</span>
           </div>
           <div className="instance-table">
@@ -1708,73 +1695,79 @@ function RuntimeOverview({
         <div className="panel-head">
           <div>
             <strong>Runtime Management</strong>
-            <span>通过当前 Runtime 的 management instance 创建或下线机器</span>
+            <span>所有动作都通过 runtime-management workflow 执行和记录</span>
           </div>
           <span className={`status-pill ${managementInstance ? "done" : "waiting"}`}>
             {managementInstance ? "runtime-management ready" : "missing"}
           </span>
         </div>
-        <div className="runtime-management-grid">
-          <form className="runtime-action-card" onSubmit={(event) => { event.preventDefault(); if (createReady) onCreateRuntime(); }}>
-            <div>
-              <strong>Create Runtime</strong>
-              <span>默认使用管理端保存的 SSH / 私钥 / 配置；只在需要改目标时填写覆盖项。</span>
-            </div>
-            <label>
-              <span>SSH Command</span>
-              <input value={createSshCommand} onChange={(event) => onCreateSshCommandChange(event.target.value)} placeholder="留空时使用管理端保存的 SSH Command" />
-            </label>
-            <label>
-              <span>Private Key</span>
-              <textarea value={createPrivateKey} onChange={(event) => onCreatePrivateKeyChange(event.target.value)} placeholder="留空时使用管理端保存的 Private Key" rows={4} />
-              <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
-            </label>
-            <label>
-              <span>Runtime Env Overrides</span>
-              <textarea
-                value={createEnvText}
-                onChange={(event) => onCreateEnvTextChange(event.target.value)}
-                placeholder={"GITHUB_TOKEN=\nDEEPSEEK_API_KEY=\nGOOGLE_CLOUD_API_KEY=\nNOTEBOOKLM_BRIDGE_URL=\nNOTEBOOKLM_BRIDGE_TOKEN=\nYOUTUBE_WIKI_TG_TOKEN=\nCLOUDFLARE_API_KEY="}
-                rows={7}
-              />
-              <span className="field-hint">可选。为空时从当前管理 Runtime 环境继承；填写后作为本次创建请求的能力配置。</span>
-            </label>
-            <button type="submit" disabled={!createReady || creatingRuntime}>
-              {creatingRuntime ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
-              Create Runtime
-            </button>
-          </form>
-
-          <form className="runtime-action-card danger-zone" onSubmit={(event) => { event.preventDefault(); if (deleteReady) onDeleteRuntime(); }}>
-            <div>
-              <strong>Delete Runtime</strong>
-              <span>默认删除管理端保存的目标 Runtime；只在需要删除其他目标时填写覆盖项。</span>
-            </div>
-            <label>
-              <span>Runtime ID</span>
-              <input value={deleteRuntimeId} onChange={(event) => onDeleteRuntimeIdChange(event.target.value)} placeholder="留空时使用管理端保存的 Runtime ID" />
-            </label>
-            <label>
-              <span>SSH Command</span>
-              <input value={deleteSshCommand} onChange={(event) => onDeleteSshCommandChange(event.target.value)} placeholder="留空时使用管理端保存的 SSH Command" />
-            </label>
-            <label>
-              <span>Private Key</span>
-              <textarea value={deletePrivateKey} onChange={(event) => onDeletePrivateKeyChange(event.target.value)} placeholder="留空时使用管理端保存的 Private Key" rows={3} />
-              <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
-            </label>
-            <label className="inline-check">
-              <input type="checkbox" checked={deleteForce} onChange={(event) => onDeleteForceChange(event.target.checked)} />
-              <span>Force when running executions exist</span>
-            </label>
-            <button type="submit" disabled={!deleteReady || deletingRuntime}>
-              {deletingRuntime ? <Loader2 size={15} className="spin" /> : <X size={15} />}
-              Delete Runtime
-            </button>
-          </form>
+        <div className="runtime-management-actions">
+          <ManagementActionCard
+            title="Create Runtime"
+            description="用管理 Runtime 的默认配置初始化一台新机器。"
+            icon={<Server size={16} />}
+            disabled={!managementInstance}
+            onClick={() => onOpenManagement("create-runtime")}
+          />
+          <ManagementActionCard
+            title="Create Instance"
+            description="在选中 Runtime 下新增业务工作区。"
+            icon={<LayoutDashboard size={16} />}
+            disabled={!managementInstance}
+            onClick={() => onOpenManagement("create-instance")}
+          />
+          <ManagementActionCard
+            title="Delete Instance"
+            description="清理指定业务工作区，不删除 Runtime。"
+            icon={<X size={16} />}
+            danger
+            disabled={!managementInstance}
+            onClick={() => onOpenManagement("delete-instance")}
+          />
+          <ManagementActionCard
+            title="Delete Runtime"
+            description="下线目标机器并清理服务、通道和残留。"
+            icon={<AlertTriangle size={16} />}
+            danger
+            disabled={!managementInstance}
+            onClick={() => onOpenManagement("delete-runtime")}
+          />
         </div>
       </section>
     </section>
+  );
+}
+
+function RuntimeHealthItem({ label, value, ok }: { label: string; value: string; ok: boolean }) {
+  return (
+    <div className={`runtime-health-item ${ok ? "ok" : "warn"}`}>
+      <span>{label}</span>
+      <strong>{value || "-"}</strong>
+    </div>
+  );
+}
+
+function ManagementActionCard({
+  title,
+  description,
+  icon,
+  danger,
+  disabled,
+  onClick,
+}: {
+  title: string;
+  description: string;
+  icon: ReactNode;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className={`management-action-card ${danger ? "danger" : ""}`} disabled={disabled} onClick={onClick}>
+      <span>{icon}</span>
+      <strong>{title}</strong>
+      <small>{description}</small>
+    </button>
   );
 }
 
