@@ -1814,6 +1814,11 @@ pre {
   font-size: 13px;
 }
 
+.settings-summary-card .kv-row {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
 .management-token-field {
   display: grid;
   gap: 8px;
