@@ -94,6 +94,15 @@ const GLOBAL_TUNNEL_ADMIN_URL = "https://tunnel-admin-9vt.pages.dev";
 const DEFAULT_HERMES_SMOKE_ROUTE = "sop-runtime-hermes-smoke";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
 type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
+type RuntimeManagementConfigPreview = RuntimeInheritancePreview & {
+  backend?: string;
+  d1?: {
+    enabled?: boolean;
+    account_id?: string;
+    database_id?: string;
+    database_name?: string;
+  };
+};
 
 type RuntimeManagementFormDefaults = {
   createSshCommand: string;
@@ -3134,7 +3143,7 @@ function SettingsPage({
   nodesReadyCount: number;
   nodesTotal: number;
   managementInstance: Instance | undefined;
-  managementConfig: RuntimeInheritancePreview | undefined;
+  managementConfig: RuntimeManagementConfigPreview | undefined;
   managementConfigLoading: boolean;
   managementConfigError: string;
   managementConfigToken: string;
@@ -3293,6 +3302,8 @@ function SettingsPage({
               mode,
               runtime: runtime?.id || "unknown",
               runtime_management: managementInstance?.instanceId || "missing",
+              settings_backend: managementConfig?.backend || "file",
+              settings_store: managementConfig?.d1?.enabled ? managementConfig.d1.database_name || "d1" : "local file",
               tunnel_admin: globalTunnelAdminUrl,
               tunnel_api: globalTunnelApiUrl,
               runtime_count: runtimes.length,
