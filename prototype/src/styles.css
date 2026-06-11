@@ -1931,6 +1931,29 @@ pre {
   white-space: nowrap;
 }
 
+.global-config-field-current {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.global-config-field-current strong {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.global-config-field-current code {
+  color: var(--text);
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .global-config-field input {
   width: 100%;
   min-width: 0;

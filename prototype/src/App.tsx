@@ -3224,8 +3224,11 @@ function SettingsPage({
     const item = itemByKey.get(field.key);
     const edited = Boolean(managementConfigValues[field.key]?.trim());
     const present = Boolean(item?.present);
-    const placeholder = present
-      ? `已配置：${item?.source || "management_config"}${item?.maskedValue ? ` (${item.maskedValue})` : ""}；填写则覆盖`
+    const currentValue = item?.present
+      ? item?.maskedValue || "已配置"
+      : "未配置";
+    const currentHint = item?.present
+      ? `${item?.source || "management_config"} · ${item?.secret ? "secret" : "plain"}`
       : field.placeholder;
     return (
       <label key={field.key} className={`global-config-field ${present ? "present" : "absent"} ${edited ? "edited" : ""}`}>
@@ -3233,14 +3236,19 @@ function SettingsPage({
           <strong>{field.label}</strong>
           <code>{field.key}</code>
         </span>
+        <div className="global-config-field-current">
+          <strong>{item?.present ? "当前值" : "当前状态"}</strong>
+          <code title={item?.maskedValue || field.placeholder}>{currentValue}</code>
+        </div>
+        <small>{currentHint}</small>
         <input
           type={item?.secret || /TOKEN|KEY|SECRET|PRIVATE/.test(field.key) ? "password" : "text"}
           value={managementConfigValues[field.key] || ""}
           onChange={(event) => updateConfigValue(field.key, event.target.value)}
-          placeholder={placeholder}
+          placeholder={field.placeholder}
           autoComplete="off"
         />
-        <small>{edited ? "将保存覆盖值" : present ? "已在全局 Settings 中保存" : "未配置"}</small>
+        <small>{edited ? "将保存覆盖值" : present ? "留空则保留当前值" : "输入后保存为全局配置"}</small>
       </label>
     );
   };
