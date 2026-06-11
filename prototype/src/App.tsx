@@ -10,8 +10,11 @@ import {
   ChevronDown,
   CircleDot,
   Clock,
+  Cloud,
+  Github,
   GitBranch,
   Info,
+  KeyRound,
   LayoutDashboard,
   ListChecks,
   Loader2,
@@ -25,6 +28,7 @@ import {
   Search,
   Server,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Workflow,
   X
@@ -3147,6 +3151,99 @@ function SettingsPage({
   globalTunnelApiUrl: string;
   globalTunnelAdminUrl: string;
 }) {
+  const itemByKey = useMemo(() => {
+    const items = new Map<string, RuntimeInheritancePreview["items"][number]>();
+    (managementConfig?.items || []).forEach((item) => {
+      items.set(item.key, item);
+      (item.aliases || []).forEach((alias) => items.set(alias, item));
+    });
+    return items;
+  }, [managementConfig]);
+  const updateConfigValue = (key: string, value: string) => {
+    setManagementConfigValues({ ...managementConfigValues, [key]: value });
+  };
+  const editedCount = Object.values(managementConfigValues).filter((value) => value.trim()).length;
+  const configCards = [
+    {
+      id: "cloudflare",
+      title: "Cloudflare",
+      subtitle: "全局 DNS / tunnel 路由认证",
+      icon: <Cloud size={18} />,
+      keys: [
+        { key: "CLOUDFLARE_EMAIL", label: "Cloudflare Email", placeholder: "name@example.com" },
+        { key: "CLOUDFLARE_API_KEY", label: "Global API Key", placeholder: "已保存时会显示 masked；填写则覆盖" },
+        { key: "CF_EMAIL", label: "CF Email Alias", placeholder: "通常与 Cloudflare Email 相同" },
+        { key: "CF_API_KEY", label: "CF API Key Alias", placeholder: "通常与 Global API Key 相同" },
+        { key: "TUNNEL_API", label: "Tunnel API", placeholder: globalTunnelApiUrl },
+      ],
+    },
+    {
+      id: "github",
+      title: "GitHub",
+      subtitle: "全局代码访问凭据和 owner 级 token",
+      icon: <Github size={18} />,
+      keys: [
+        { key: "GITHUB_TOKEN", label: "Default GitHub Token", placeholder: "默认 GitHub token" },
+        { key: "GITHUB_CHANGFENGHU_TOKEN", label: "ChangfengHU Token", placeholder: "用于 ChangfengHU 下的基础设施仓库" },
+        { key: "GITHUB_SKKEORIW_TOKEN", label: "skkeoriw Token", placeholder: "用于 skkeoriw 下的 runtime brain 仓库" },
+      ],
+    },
+    {
+      id: "core-repos",
+      title: "Core Repositories",
+      subtitle: "创建 runtime 时需要继承的核心源码地址",
+      icon: <GitBranch size={18} />,
+      keys: [
+        { key: "AGENT_REPO", label: "Brain Repo", placeholder: "https://github.com/skkeoriw/agent-brain-plugins" },
+        { key: "SKILL_REPO", label: "Runtime Skill Repo", placeholder: "https://github.com/skkeoriw/auto-youtube-wiki-skill" },
+      ],
+    },
+    {
+      id: "infra-repos",
+      title: "Tunnel / Skill Infrastructure",
+      subtitle: "非核心但必须可追踪的发布与隧道基础设施",
+      icon: <PackageSearch size={18} />,
+      keys: [
+        { key: "AUTO_DOMAIN_REPO", label: "Auto Domain CLI", placeholder: "https://github.com/ChangfengHU/auto-domain-cli" },
+        { key: "AUTO_DOMAIN_TUNNEL_REPO", label: "Auto Domain Tunnel", placeholder: "https://github.com/ChangfengHU/cloudflare-youtube-pipeline/tree/main/auto-domain-tunnel" },
+        { key: "SKILL_PUBLISHER_REPO", label: "Skill Publisher", placeholder: "https://github.com/ChangfengHU/skill-publisher" },
+      ],
+    },
+    {
+      id: "runtime-control",
+      title: "Control Plane",
+      subtitle: "SOP UI 和当前控制面状态",
+      icon: <ShieldCheck size={18} />,
+      keys: [
+        { key: "SOP_UI_URL", label: "SOP UI URL", placeholder: window.location.origin },
+        { key: "BRIDGE_PORT", label: "Bridge Port", placeholder: "18121" },
+      ],
+    },
+  ];
+  const renderConfigField = (field: { key: string; label: string; placeholder: string }) => {
+    const item = itemByKey.get(field.key);
+    const edited = Boolean(managementConfigValues[field.key]?.trim());
+    const present = Boolean(item?.present);
+    const placeholder = present
+      ? `已配置：${item?.source || "management_config"}${item?.maskedValue ? ` (${item.maskedValue})` : ""}；填写则覆盖`
+      : field.placeholder;
+    return (
+      <label key={field.key} className={`global-config-field ${present ? "present" : "absent"} ${edited ? "edited" : ""}`}>
+        <span>
+          <strong>{field.label}</strong>
+          <code>{field.key}</code>
+        </span>
+        <input
+          type={item?.secret || /TOKEN|KEY|SECRET|PRIVATE/.test(field.key) ? "password" : "text"}
+          value={managementConfigValues[field.key] || ""}
+          onChange={(event) => updateConfigValue(field.key, event.target.value)}
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+        <small>{edited ? "将保存覆盖值" : present ? "已在全局 Settings 中保存" : "未配置"}</small>
+      </label>
+    );
+  };
   return (
     <>
       <section className="concept-hero">
@@ -3161,23 +3258,82 @@ function SettingsPage({
           <code>{globalTunnelAdminUrl}</code>
         </div>
       </section>
-      <section className="settings-grid">
-        <div className="flow-panel">
-          <div className="panel-head"><div><strong>Global Configuration</strong><span>全局配置源</span></div></div>
-          <div className="settings-block">
+      <section className="global-settings-toolbar">
+        <div>
+          <strong>Global Runtime Management Config</strong>
+          <span>{managementConfig?.updatedAt ? `updated ${managementConfig.updatedAt}` : "server-side config"} · {editedCount} edited</span>
+        </div>
+        <div className="settings-actions">
+          <button type="button" className="ghost-btn compact" onClick={onRefreshManagementConfig} disabled={managementConfigLoading}>
+            {managementConfigLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+            Refresh
+          </button>
+          <button type="button" className="ghost-btn compact" onClick={onInitializeManagementConfig} disabled={initializeManagementConfigPending || !managementInstance}>
+            {initializeManagementConfigPending ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />}
+            Init from Runtime
+          </button>
+        </div>
+      </section>
+      {(managementConfigError || initializeManagementConfigError || saveManagementConfigError) && (
+        <div className="inline-error">{managementConfigError || initializeManagementConfigError || saveManagementConfigError}</div>
+      )}
+      <form className="global-settings-layout" onSubmit={onSaveManagementConfig}>
+        <aside className="global-settings-summary">
+          <div className="settings-summary-card">
+            <strong>Scope</strong>
             <KeyValues data={{
               mode,
+              runtime: runtime?.id || "unknown",
+              runtime_management: managementInstance?.instanceId || "missing",
               tunnel_admin: globalTunnelAdminUrl,
               tunnel_api: globalTunnelApiUrl,
-              ui_origin: window.location.origin,
-              mode_status: streamStatus,
               runtime_count: runtimes.length,
+              instance_count: instances.length,
+              mode_status: streamStatus,
+              nodes_ready: `${nodesReadyCount}/${nodesTotal}`,
             }} />
-            <div className="settings-actions">
-              <button type="button" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>打开 Tunnel Admin</button>
-            </div>
+            <button type="button" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>打开 Tunnel Admin</button>
           </div>
-        </div>
+          <label className="management-token-field">
+            <span><KeyRound size={14} />Management Token</span>
+            <input
+              type="password"
+              value={managementConfigToken}
+              onChange={(event) => setManagementConfigToken(event.target.value)}
+              placeholder="保存配置需要 token"
+              autoComplete="off"
+            />
+          </label>
+          <button type="submit" disabled={saveManagementConfigPending || !editedCount || !managementInstance}>
+            {saveManagementConfigPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
+            Save Global Config
+          </button>
+          {editedCount > 0 && <button type="button" className="ghost-btn" onClick={() => setManagementConfigValues({})}>Clear edits</button>}
+        </aside>
+        <section className="global-config-card-grid">
+          {configCards.map((card) => {
+            const readyCount = card.keys.filter((field) => itemByKey.get(field.key)?.present).length;
+            return (
+              <article key={card.id} className="global-config-card">
+                <div className="global-config-card-head">
+                  <span>{card.icon}</span>
+                  <div>
+                    <strong>{card.title}</strong>
+                    <small>{card.subtitle}</small>
+                  </div>
+                  <em>{readyCount}/{card.keys.length}</em>
+                </div>
+                <div className="global-config-fields">
+                  {card.keys.map(renderConfigField)}
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      </form>
+      <section className="settings-note-panel">
+        <Info size={15} />
+        <span>Secret 字段不会从后端返回明文；输入框留空会保留当前值，填写内容才会覆盖保存。</span>
       </section>
     </>
   );

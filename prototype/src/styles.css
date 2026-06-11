@@ -1749,6 +1749,205 @@ pre {
   gap: 8px;
 }
 
+.global-settings-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.global-settings-toolbar > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.global-settings-toolbar strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.global-settings-toolbar span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.global-settings-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, .36fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.global-settings-summary {
+  display: grid;
+  gap: 10px;
+  position: sticky;
+  top: 14px;
+  min-width: 0;
+}
+
+.settings-summary-card,
+.management-token-field,
+.global-config-card,
+.settings-note-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.settings-summary-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.settings-summary-card > strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.management-token-field {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.management-token-field > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.management-token-field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.global-config-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+
+.global-config-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.global-config-card-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.global-config-card-head > span {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--blue);
+}
+
+.global-config-card-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.global-config-card-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.global-config-card-head small,
+.global-config-field small,
+.settings-note-panel {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.global-config-card-head em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.global-config-fields {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.global-config-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.global-config-field > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.global-config-field strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.global-config-field code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.global-config-field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.global-config-field.present input {
+  border-color: #bbf7d0;
+}
+
+.global-config-field.edited input {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-soft);
+}
+
+.settings-note-panel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px 14px;
+}
+
 .primary-load-actions {
   justify-content: flex-start;
 }
@@ -4493,9 +4692,15 @@ pre {
   .runtime-hermes-grid,
   .runtime-management-grid,
   .runtime-management-actions,
+  .global-settings-layout,
+  .global-config-card-grid,
   .instance-grid,
   .instance-row {
     grid-template-columns: 1fr;
+  }
+
+  .global-settings-summary {
+    position: static;
   }
 
   .wide-panel {
@@ -4513,8 +4718,19 @@ pre {
   .runtime-health-grid,
   .runtime-hermes-actions,
   .runtime-probe-row,
+  .global-settings-toolbar,
   .stage-map.compact {
     grid-template-columns: 1fr;
+  }
+
+  .global-settings-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .global-settings-toolbar .settings-actions,
+  .global-config-field > span {
+    flex-direction: column;
   }
 
   .runtime-probe-row > div:last-child {
