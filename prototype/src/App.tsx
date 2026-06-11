@@ -14,7 +14,6 @@ import {
   Github,
   GitBranch,
   Info,
-  KeyRound,
   LayoutDashboard,
   ListChecks,
   Loader2,
@@ -549,7 +548,6 @@ export default function App() {
   const [instanceDeleteId, setInstanceDeleteId] = useState(runtimeManagementDefaults.deleteInstanceId);
   const [instanceDeleteRepo, setInstanceDeleteRepo] = useState(runtimeManagementDefaults.deleteInstanceRepo);
   const [instanceDeleteForce, setInstanceDeleteForce] = useState(runtimeManagementDefaults.deleteInstanceForce);
-  const [managementConfigToken, setManagementConfigToken] = useState("");
   const [managementConfigValues, setManagementConfigValues] = useState<Record<string, string>>({});
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
@@ -1008,12 +1006,10 @@ export default function App() {
   const saveManagementConfigMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
-      if (!managementConfigToken.trim()) throw new Error("请填写 Management Token");
       const values = Object.fromEntries(Object.entries(managementConfigValues).filter(([, value]) => value.trim()));
       if (!Object.keys(values).length) throw new Error("请至少填写一个要保存的配置值");
       const [result] = await Promise.all([
         provider.saveRuntimeManagementConfig(runtime, managementInstance.instanceId, {
-          token: managementConfigToken.trim(),
           values,
         }),
         minimumDelay(300),
@@ -1589,8 +1585,6 @@ export default function App() {
             managementConfig={runtimeManagementConfigQuery.data}
             managementConfigLoading={runtimeManagementConfigQuery.isLoading}
             managementConfigError={runtimeManagementConfigQuery.error ? String(runtimeManagementConfigQuery.error.message) : ""}
-            managementConfigToken={managementConfigToken}
-            setManagementConfigToken={setManagementConfigToken}
             managementConfigValues={managementConfigValues}
             setManagementConfigValues={setManagementConfigValues}
             saveManagementConfigPending={saveManagementConfigMutation.isPending}
@@ -3117,8 +3111,6 @@ function SettingsPage({
   managementConfig,
   managementConfigLoading,
   managementConfigError,
-  managementConfigToken,
-  setManagementConfigToken,
   managementConfigValues,
   setManagementConfigValues,
   saveManagementConfigPending,
@@ -3146,8 +3138,6 @@ function SettingsPage({
   managementConfig: RuntimeManagementConfigPreview | undefined;
   managementConfigLoading: boolean;
   managementConfigError: string;
-  managementConfigToken: string;
-  setManagementConfigToken: (value: string) => void;
   managementConfigValues: Record<string, string>;
   setManagementConfigValues: (value: Record<string, string>) => void;
   saveManagementConfigPending: boolean;
@@ -3313,16 +3303,6 @@ function SettingsPage({
             }} />
             <button type="button" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>打开 Tunnel Admin</button>
           </div>
-          <label className="management-token-field">
-            <span><KeyRound size={14} />Management Token</span>
-            <input
-              type="password"
-              value={managementConfigToken}
-              onChange={(event) => setManagementConfigToken(event.target.value)}
-              placeholder="保存配置需要 token"
-              autoComplete="off"
-            />
-          </label>
           <button type="submit" disabled={saveManagementConfigPending || !editedCount || !managementInstance}>
             {saveManagementConfigPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
             Save Global Config
