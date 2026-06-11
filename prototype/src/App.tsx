@@ -3171,8 +3171,6 @@ function SettingsPage({
       keys: [
         { key: "CLOUDFLARE_EMAIL", label: "Cloudflare Email", placeholder: "name@example.com" },
         { key: "CLOUDFLARE_API_KEY", label: "Global API Key", placeholder: "已保存时会显示 masked；填写则覆盖" },
-        { key: "CF_EMAIL", label: "CF Email Alias", placeholder: "通常与 Cloudflare Email 相同" },
-        { key: "CF_API_KEY", label: "CF API Key Alias", placeholder: "通常与 Global API Key 相同" },
         { key: "TUNNEL_API", label: "Tunnel API", placeholder: globalTunnelApiUrl },
       ],
     },
@@ -4051,7 +4049,6 @@ function RuntimeInheritancePreviewPanel({
     "YOUTUBE_WIKI_TG_TOKEN",
     "YOUTUBE_WIKI_TG_CHAT_ID",
     "CLOUDFLARE_API_KEY",
-    "CF_API_KEY",
     "TUNNEL_API",
     "SOP_UI_URL",
     "RUNTIME_TARGET_SSH_COMMAND",
