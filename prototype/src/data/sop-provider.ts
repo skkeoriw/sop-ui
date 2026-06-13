@@ -12,6 +12,10 @@ import type {
   NodeModule,
   NodeModuleDetail,
   NodeRegistryItem,
+  NodeClassification,
+  NodeContract,
+  NodeTestInput,
+  NodeTestResult,
   Run,
   RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
@@ -397,6 +401,33 @@ function mapNodeTroubleshooting(raw: unknown) {
   };
 }
 
+function mapClassification(raw: Record<string, unknown> | undefined | null): NodeClassification | undefined {
+  if (!raw || typeof raw !== "object" || Object.keys(raw).length === 0) return undefined;
+  const r = raw as Record<string, unknown>;
+  return {
+    depClass: (r.dep_class ?? r.depClass) as NodeClassification["depClass"],
+    sideEffect: (r.side_effect ?? r.sideEffect) as NodeClassification["sideEffect"],
+    testableStandalone: Boolean(r.testable_standalone ?? r.testableStandalone),
+    requestInputs: ((r.request_inputs ?? r.requestInputs) as string[]) || [],
+    artifactDeps: ((r.artifact_deps ?? r.artifactDeps) as NodeClassification["artifactDeps"]) || [],
+    statePreconditions: ((r.state_preconditions ?? r.statePreconditions) as NodeClassification["statePreconditions"]) || [],
+  };
+}
+
+function mapNodeContract(raw: Record<string, unknown>): NodeContract | null {
+  const contract = (raw.contract as Record<string, unknown>) || raw;
+  const nodeId = String(raw.node_id || raw.nodeId || contract.node_id || contract.nodeId || "");
+  if (!nodeId) return null;
+  const cls = mapClassification(contract) || {};
+  return {
+    nodeId,
+    title: contract.title ? String(contract.title) : undefined,
+    purpose: contract.purpose ? String(contract.purpose) : undefined,
+    branch: contract.branch ? String(contract.branch) : undefined,
+    ...cls,
+  };
+}
+
 function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
   const nodeId = String(raw.node_id || raw.nodeId || "");
   const base = mapNodeConfig(raw, nodeId);
@@ -413,6 +444,21 @@ function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
     publishEnabled: Boolean(raw.publish_enabled ?? raw.publishEnabled),
     missingFields: ((raw.missing_fields || raw.missingFields) as string[]) || [],
     ui: mapUi(raw.ui || (raw.manifest as Record<string, unknown> | undefined)?.ui),
+    classification: mapClassification(raw.classification as Record<string, unknown>),
+  };
+}
+
+function mapNodeTestResult(raw: Record<string, unknown>): NodeTestResult {
+  return {
+    status: String(raw.status || ""),
+    mode: raw.mode ? String(raw.mode) : undefined,
+    nodeId: raw.node_id ? String(raw.node_id) : undefined,
+    pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : undefined,
+    namespace: raw.namespace ? String(raw.namespace) : undefined,
+    depClass: (raw.dep_class as NodeTestResult["depClass"]) || undefined,
+    sideEffect: (raw.side_effect as NodeTestResult["sideEffect"]) || undefined,
+    reportPath: raw.report_path ? String(raw.report_path) : undefined,
+    reason: raw.reason ? String(raw.reason) : undefined,
   };
 }
 
@@ -633,6 +679,44 @@ export const sopProvider: SopDataProvider = {
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}`
     );
     return mapNodeConfig(raw, nodeId);
+  },
+
+  async getNodeContract(runtime, instanceId, nodeId): Promise<NodeContract | null> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/contract`;
+    const response = await fetch(url);
+    if (response.status === 404) return null; // node has no engine contract
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 200)}`);
+    try {
+      return mapNodeContract(JSON.parse(text) as Record<string, unknown>);
+    } catch {
+      return null;
+    }
+  },
+
+  async triggerNodeTest(runtime, instanceId, nodeId, input: NodeTestInput): Promise<NodeTestResult> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/actions/trigger`;
+    const body = {
+      request_overrides: input.requestOverrides || {},
+      seed_from_run_id: input.seedFromRunId || "",
+      confirm_mutating: Boolean(input.confirmMutating),
+      dry_run: Boolean(input.dryRun),
+    };
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+    // 202 = triggered, 409 = guard-blocked (both carry a structured body the UI surfaces).
+    if (response.ok || response.status === 409) {
+      try {
+        return mapNodeTestResult(JSON.parse(text) as Record<string, unknown>);
+      } catch {
+        return { status: "error", reason: text.slice(0, 200) };
+      }
+    }
+    throw new Error(`${response.status}: ${text.slice(0, 200)}`);
   },
 
   async listNodes(runtime, instanceId) {

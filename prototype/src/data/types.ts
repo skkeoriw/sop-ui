@@ -295,6 +295,37 @@ export interface NodeConfig {
   manifest?: Record<string, unknown>;
 }
 
+export type NodeDepClass = "independent" | "state_dependent" | "artifact_dependent";
+export type NodeSideEffect = "read_only" | "mutating";
+
+export interface NodeArtifactDep {
+  file: string;
+  produced_by?: string;
+}
+
+export interface NodeStatePrecondition {
+  node: string;
+  why?: string;
+}
+
+/** Engine-sourced classification axes (P1) used to render dependency badges and
+ *  decide how a single-node test can be launched from either entry. */
+export interface NodeClassification {
+  depClass?: NodeDepClass;
+  sideEffect?: NodeSideEffect;
+  testableStandalone?: boolean;
+  requestInputs?: string[];
+  artifactDeps?: NodeArtifactDep[];
+  statePreconditions?: NodeStatePrecondition[];
+}
+
+export interface NodeContract extends NodeClassification {
+  nodeId: string;
+  title?: string;
+  purpose?: string;
+  branch?: string;
+}
+
 export interface NodeRegistryItem extends NodeConfig {
   description?: string;
   case?: string;
@@ -307,6 +338,27 @@ export interface NodeRegistryItem extends NodeConfig {
   publishEnabled?: boolean;
   missingFields?: string[];
   ui?: NodeUi;
+  classification?: NodeClassification;
+}
+
+/** Input for a single-node isolated test (asset center or Run panel). */
+export interface NodeTestInput {
+  requestOverrides?: Record<string, unknown>;
+  seedFromRunId?: string;
+  confirmMutating?: boolean;
+  dryRun?: boolean;
+}
+
+export interface NodeTestResult {
+  status: string;
+  mode?: string;
+  nodeId?: string;
+  pipelineId?: string;
+  namespace?: string;
+  depClass?: NodeDepClass;
+  sideEffect?: NodeSideEffect;
+  reportPath?: string;
+  reason?: string;
 }
 
 export interface NodeModule {
@@ -408,6 +460,8 @@ export interface SopDataProvider {
   getNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeDetail>;
   getNodeLog(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeLog>;
   getNodeConfig(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeConfig>;
+  getNodeContract(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeContract | null>;
+  triggerNodeTest(runtime: Runtime, instanceId: string, nodeId: string, input: NodeTestInput): Promise<NodeTestResult>;
   listNodes(runtime: Runtime, instanceId: string): Promise<NodeRegistryItem[]>;
   listNodeModules(runtime: Runtime, instanceId: string, nodeId: string, pipelineId?: string): Promise<NodeModule[]>;
   getNodeModule(runtime: Runtime, instanceId: string, nodeId: string, moduleId: string, pipelineId?: string): Promise<NodeModuleDetail>;

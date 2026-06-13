@@ -51,10 +51,13 @@ import type {
   NodeModule,
   NodeModuleDetail,
   NodeRegistryItem,
+  NodeContract,
+  NodeTestResult,
   Run,
   RunNodeState,
   RuntimeInheritancePreview,
   Runtime,
+  SopDataProvider,
   StageStatus
 } from "./data/types";
 
@@ -432,6 +435,128 @@ function fallbackNodeModules(node: NodeRegistryItem | undefined, runScoped: bool
     status: (node.missingFields || []).length && ["basic", "executor", "outputs"].includes(id) ? "warning" : "ready",
     runScoped,
   }));
+}
+
+function depClassLabel(dep?: string): string {
+  if (dep === "independent") return "独立 action";
+  if (dep === "state_dependent") return "依赖目标机状态";
+  if (dep === "artifact_dependent") return "依赖上游产物";
+  return dep || "";
+}
+
+function NodeDepBadges({ contract }: { contract?: NodeContract | null }) {
+  if (!contract) return null;
+  return (
+    <div className="node-test-badges">
+      {contract.depClass ? (
+        <span className={`pill dep-${contract.depClass}`}>{depClassLabel(contract.depClass)}</span>
+      ) : null}
+      {contract.sideEffect ? (
+        <span className={`pill side-${contract.sideEffect}`}>
+          {contract.sideEffect === "mutating" ? "会改目标机" : "只读"}
+        </span>
+      ) : null}
+      {contract.testableStandalone ? <span className="pill ok">可独立测试</span> : null}
+    </div>
+  );
+}
+
+/** Self-contained single-node test surface, mounted in BOTH the asset center
+ *  node panel and a Run's node panel. Reads the engine contract for dependency
+ *  badges + guards, and launches an isolated --test run via the SPI trigger. */
+function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
+  provider: SopDataProvider;
+  runtime?: Runtime;
+  instanceId: string;
+  mode: DataMode;
+  nodeId: string;
+  runs: Run[];
+}) {
+  const [targetHost, setTargetHost] = useState("");
+  const [seedRunId, setSeedRunId] = useState("");
+  const [confirmMutating, setConfirmMutating] = useState(false);
+  const [dryRun, setDryRun] = useState(true);
+  const [result, setResult] = useState<NodeTestResult | null>(null);
+  const [error, setError] = useState("");
+
+  const contractQuery = useQuery({
+    queryKey: queryKeys.nodeContract(mode, runtime, instanceId, nodeId),
+    queryFn: () => provider.getNodeContract(runtime!, instanceId, nodeId),
+    enabled: Boolean(runtime && instanceId && nodeId),
+  });
+  const contract = contractQuery.data;
+
+  const testMutation = useMutation({
+    mutationFn: () => provider.triggerNodeTest(runtime!, instanceId, nodeId, {
+      requestOverrides: targetHost ? { target_host: targetHost } : {},
+      seedFromRunId: seedRunId || undefined,
+      confirmMutating,
+      dryRun,
+    }),
+    onSuccess: (r) => { setResult(r); setError(""); },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  });
+
+  if (contractQuery.isLoading) return <div className="node-test-panel muted">加载节点契约…</div>;
+  if (!contract) return <div className="node-test-panel muted">该节点没有引擎契约，暂不支持独立测试。</div>;
+
+  const isMutating = contract.sideEffect === "mutating";
+  const needsSeed = contract.depClass === "artifact_dependent";
+  const blockedByConfirm = isMutating && !confirmMutating;
+  const blockedBySeed = needsSeed && !seedRunId;
+
+  return (
+    <div className="node-test-panel">
+      <NodeDepBadges contract={contract} />
+      {contract.statePreconditions && contract.statePreconditions.length ? (
+        <div className="node-test-pre">前置节点：{contract.statePreconditions.map((p) => p.node).join("、")}</div>
+      ) : null}
+      {contract.artifactDeps && contract.artifactDeps.length ? (
+        <div className="node-test-pre">回读产物：{contract.artifactDeps.map((a) => a.file).join("、")}</div>
+      ) : null}
+      <div className="node-test-form">
+        <label>目标机 target_host
+          <input value={targetHost} onChange={(e) => setTargetHost(e.target.value)} placeholder="sandbox 机 IP / host" />
+        </label>
+        {needsSeed ? (
+          <label>Seed 来源 Run
+            <select value={seedRunId} onChange={(e) => setSeedRunId(e.target.value)}>
+              <option value="">选择历史 Run 作为产物来源</option>
+              {runs.map((r) => (
+                <option key={r.pipelineId} value={r.pipelineId}>{r.pipelineId}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <label className="inline">
+          <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} /> dry-run（不真正执行远程操作）
+        </label>
+        {isMutating ? (
+          <label className="inline danger">
+            <input type="checkbox" checked={confirmMutating} onChange={(e) => setConfirmMutating(e.target.checked)} />
+            确认：该节点会改动目标机，仅对 sandbox 机执行
+          </label>
+        ) : null}
+      </div>
+      <button
+        className="btn primary"
+        disabled={testMutation.isPending || blockedByConfirm || blockedBySeed}
+        onClick={() => testMutation.mutate()}
+      >
+        <Play size={14} /> 测试此节点
+      </button>
+      {blockedByConfirm ? <span className="node-test-hint">需勾选确认后才能测试会改动目标机的节点</span> : null}
+      {blockedBySeed ? <span className="node-test-hint">需选择 seed 来源 Run</span> : null}
+      {result ? (
+        <div className={`node-test-result ${result.status === "triggered" ? "ok" : "warn"}`}>
+          {result.status === "triggered"
+            ? <>已启动隔离测试 <code>{result.pipelineId}</code>（namespace: {result.namespace}）</>
+            : <>未启动：{result.reason || result.status}</>}
+        </div>
+      ) : null}
+      {error ? <div className="node-test-result err">{error}</div> : null}
+    </div>
+  );
 }
 
 const EVENT_META: Record<string, { icon: string; label: string }> = {
@@ -1515,6 +1640,8 @@ export default function App() {
           <WorkflowWorkspace
             runtime={runtime}
             instance={instance}
+            provider={provider}
+            mode={mode}
             runs={workflowExecutions}
             selectedRun={selectedRun}
             selectedRunMissing={routeRunMissing}
@@ -1547,6 +1674,9 @@ export default function App() {
           <NodesWorkspace
             instance={instance}
             runtime={runtime}
+            provider={provider}
+            mode={mode}
+            runs={runs}
             nodes={managedNodes}
             drafts={nodeDraftsQuery.data || []}
             loading={nodesQuery.isLoading}
@@ -2552,6 +2682,8 @@ function WorkflowHome({
 function WorkflowWorkspace({
   runtime,
   instance,
+  provider,
+  mode,
   runs,
   selectedRun,
   selectedRunMissing,
@@ -2582,6 +2714,8 @@ function WorkflowWorkspace({
 }: {
   runtime: Runtime | undefined;
   instance: Instance | undefined;
+  provider: SopDataProvider;
+  mode: DataMode;
   runs: Run[];
   selectedRun: Run | undefined;
   selectedRunMissing: boolean;
@@ -2745,6 +2879,16 @@ function WorkflowWorkspace({
                       }} />
                     </DetailBlock>
                     {nodeDetail?.plan && <DetailBlock title="Wiki Build Plan"><KeyValues data={nodeDetail.plan} /></DetailBlock>}
+                    <DetailBlock title="Test this node">
+                      <NodeTestPanel
+                        provider={provider}
+                        runtime={runtime}
+                        instanceId={instance.instanceId}
+                        mode={mode}
+                        nodeId={selectedStage.id}
+                        runs={runs}
+                      />
+                    </DetailBlock>
                   </>
                 )}
 
@@ -3352,6 +3496,9 @@ function SettingsPage({
 function NodesWorkspace({
   instance,
   runtime,
+  provider,
+  mode,
+  runs,
   nodes,
   visibleNodes,
   selectedNode,
@@ -3373,6 +3520,9 @@ function NodesWorkspace({
 }: {
   instance: Instance | undefined;
   runtime: Runtime | undefined;
+  provider: SopDataProvider;
+  mode: DataMode;
+  runs: Run[];
   nodes: NodeRegistryItem[];
   visibleNodes: NodeRegistryItem[];
   selectedNode: NodeRegistryItem | undefined;
@@ -3457,6 +3607,19 @@ function NodesWorkspace({
             ))}
             {!modules.length && <Empty text="该节点暂未返回 modules" />}
           </div>
+          {selectedNode && instance ? (
+            <div className="node-test-strip">
+              <div className="section-title"><span>Test this node</span><span>独立测试</span></div>
+              <NodeTestPanel
+                provider={provider}
+                runtime={runtime}
+                instanceId={instance.instanceId}
+                mode={mode}
+                nodeId={selectedNode.nodeId}
+                runs={runs}
+              />
+            </div>
+          ) : null}
           <div className="draft-strip">
             <div className="section-title"><span>Drafts</span><span>{drafts.length}</span></div>
             {drafts.slice(0, 3).map((draft) => <article key={draft.draftId} className="draft-item"><strong>{draft.draftId}</strong><code>{formatValue(draft.validation)}</code></article>)}

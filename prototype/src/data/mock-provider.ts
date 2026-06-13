@@ -5,6 +5,9 @@ import type {
   Artifact,
   Instance,
   NodeConfig,
+  NodeContract,
+  NodeTestInput,
+  NodeTestResult,
   NodeDraft,
   NodeDraftInput,
   NodeDraftSchema,
@@ -373,6 +376,30 @@ export const mockProvider: SopDataProvider = {
   async getNodeConfig(_target, _instanceId, nodeId): Promise<NodeConfig> {
     await delay();
     return nodeConfigFromStage(nodeId);
+  },
+
+  async getNodeContract(_target, _instanceId, nodeId): Promise<NodeContract | null> {
+    await delay();
+    return {
+      nodeId,
+      depClass: "independent",
+      sideEffect: "read_only",
+      testableStandalone: true,
+      requestInputs: [],
+      artifactDeps: [],
+      statePreconditions: [],
+    };
+  },
+
+  async triggerNodeTest(_target, _instanceId, nodeId, _input: NodeTestInput): Promise<NodeTestResult> {
+    await delay();
+    return {
+      status: "triggered",
+      mode: "node-test",
+      nodeId,
+      pipelineId: `nodetest-${nodeId}-MOCK`,
+      namespace: "nodetest",
+    };
   },
 
   async listNodes(target): Promise<NodeRegistryItem[]> {
