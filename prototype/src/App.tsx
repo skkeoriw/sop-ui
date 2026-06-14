@@ -3830,9 +3830,9 @@ function MachineTestResult({ result }: { result: Record<string, unknown> }) {
   const isAccepted = status === "accepted" || Boolean(result.ok);
   const tone = isExecutorRequired ? "warning" : isAccepted ? "ok" : "failed";
   const title = isExecutorRequired ? "SSH 测试执行器未接入" : isAccepted ? "测试请求已接收" : "测试未通过";
-  const reason = String(result.reason || (isExecutorRequired
+  const reason = isExecutorRequired
     ? "Control Plane 已收到测试请求，但 Cloudflare Worker 不能直接打开 SSH 连接，需要开发机或 Runtime agent 执行真实 SSH 检测。"
-    : "查看原始返回确认状态。"));
+    : String(result.reason || "查看原始返回确认状态。");
 
   return (
     <section className={`machine-test-result ${tone}`}>
