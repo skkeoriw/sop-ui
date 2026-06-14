@@ -3785,9 +3785,7 @@ function MachinesPage({
               updated: selectedMachine.updatedAt || "",
             }} />
           ) : <Empty text="选择机器或创建新机器" />}
-          {testResult && (
-            <pre className="node-test-stdout">{JSON.stringify(testResult, null, 2)}</pre>
-          )}
+          {testResult && <MachineTestResult result={testResult} />}
           <form className="machine-editor" onSubmit={onSaveMachine}>
             <label>
               <span>Name</span>
@@ -3823,6 +3821,37 @@ function MachinesPage({
         </section>
       </section>
     </>
+  );
+}
+
+function MachineTestResult({ result }: { result: Record<string, unknown> }) {
+  const status = String(result.status || result.check_status || "unknown");
+  const isExecutorRequired = status === "not_implemented" || status === "executor_required";
+  const isAccepted = status === "accepted" || Boolean(result.ok);
+  const tone = isExecutorRequired ? "warning" : isAccepted ? "ok" : "failed";
+  const title = isExecutorRequired ? "SSH 测试执行器未接入" : isAccepted ? "测试请求已接收" : "测试未通过";
+  const reason = String(result.reason || (isExecutorRequired
+    ? "Control Plane 已收到测试请求，但 Cloudflare Worker 不能直接打开 SSH 连接，需要开发机或 Runtime agent 执行真实 SSH 检测。"
+    : "查看原始返回确认状态。"));
+
+  return (
+    <section className={`machine-test-result ${tone}`}>
+      <div className="machine-test-title">
+        {tone === "ok" ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+        <strong>{title}</strong>
+        <span>{status}</span>
+      </div>
+      <p>{reason}</p>
+      <KeyValues data={{
+        machine_id: result.machine_id || "-",
+        control_plane: isExecutorRequired ? "reachable" : String(result.ok ? "reachable" : "unknown"),
+        ssh_check: isExecutorRequired ? "waiting for executor" : status,
+      }} />
+      <details>
+        <summary>Raw response</summary>
+        <pre className="node-test-stdout">{JSON.stringify(result, null, 2)}</pre>
+      </details>
+    </section>
   );
 }
 
