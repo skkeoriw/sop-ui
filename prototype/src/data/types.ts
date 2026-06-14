@@ -345,6 +345,7 @@ export interface NodeRegistryItem extends NodeConfig {
 export interface NodeTestInput {
   requestOverrides?: Record<string, unknown>;
   seedFromRunId?: string;
+  fromRunId?: string;
   confirmMutating?: boolean;
   dryRun?: boolean;
 }

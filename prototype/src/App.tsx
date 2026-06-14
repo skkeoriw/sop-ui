@@ -464,18 +464,23 @@ function NodeDepBadges({ contract }: { contract?: NodeContract | null }) {
 /** Self-contained single-node test surface, mounted in BOTH the asset center
  *  node panel and a Run's node panel. Reads the engine contract for dependency
  *  badges + guards, and launches an isolated --test run via the SPI trigger. */
-function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
+function isSecretField(name: string): boolean {
+  return /key|token|secret|password|private/i.test(name);
+}
+
+function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runId }: {
   provider: SopDataProvider;
   runtime?: Runtime;
   instanceId: string;
   mode: DataMode;
   nodeId: string;
   runs: Run[];
+  runId?: string;
 }) {
-  const [targetHost, setTargetHost] = useState("");
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [seedRunId, setSeedRunId] = useState("");
   const [confirmMutating, setConfirmMutating] = useState(false);
-  const [dryRun, setDryRun] = useState(true);
+  const [dryRun, setDryRun] = useState(false);
   const [result, setResult] = useState<NodeTestResult | null>(null);
   const [testPipelineId, setTestPipelineId] = useState("");
   const [error, setError] = useState("");
@@ -488,12 +493,19 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
   const contract = contractQuery.data;
 
   const testMutation = useMutation({
-    mutationFn: () => provider.triggerNodeTest(runtime!, instanceId, nodeId, {
-      requestOverrides: targetHost ? { target_host: targetHost } : {},
-      seedFromRunId: seedRunId || undefined,
-      confirmMutating,
-      dryRun,
-    }),
+    mutationFn: () => {
+      const overrides: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fieldValues)) {
+        if (v.trim()) overrides[k] = v.trim();
+      }
+      return provider.triggerNodeTest(runtime!, instanceId, nodeId, {
+        requestOverrides: overrides,
+        seedFromRunId: seedRunId || undefined,
+        fromRunId: runId || undefined,
+        confirmMutating,
+        dryRun,
+      });
+    },
     onSuccess: (r) => {
       setResult(r);
       setError("");
@@ -519,7 +531,10 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
 
   const isMutating = contract.sideEffect === "mutating";
   const needsSeed = contract.depClass === "artifact_dependent";
-  const blockedByConfirm = isMutating && !confirmMutating;
+  const requestInputs = contract.requestInputs || [];
+  // confirm is only required for a REAL run of a mutating node (dry-run is exempt).
+  const needsConfirm = isMutating && !dryRun;
+  const blockedByConfirm = needsConfirm && !confirmMutating;
   const blockedBySeed = needsSeed && !seedRunId;
 
   return (
@@ -531,10 +546,23 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
       {contract.artifactDeps && contract.artifactDeps.length ? (
         <div className="node-test-pre">回读产物：{contract.artifactDeps.map((a) => a.file).join("、")}</div>
       ) : null}
+      {runId ? (
+        <div className="node-test-pre">基于本 Run 的请求执行（目标机 / SSH 凭据沿用 <code>{runId}</code>）</div>
+      ) : null}
       <div className="node-test-form">
-        <label>目标机 target_host
-          <input value={targetHost} onChange={(e) => setTargetHost(e.target.value)} placeholder="sandbox 机 IP / host" />
-        </label>
+        {requestInputs.length ? requestInputs.map((field) => (
+          <label key={field}>{field}
+            <input
+              type={isSecretField(field) ? "password" : "text"}
+              value={fieldValues[field] || ""}
+              onChange={(e) => setFieldValues((prev) => ({ ...prev, [field]: e.target.value }))}
+              placeholder={isSecretField(field) ? "留空 = 沿用当前配置；填写 = 覆盖本次" : "留空 = 沿用当前配置"}
+              autoComplete="off"
+            />
+          </label>
+        )) : (
+          <div className="node-test-pre muted">该节点无需额外入参（沿用当前配置 / 本 Run 请求）。</div>
+        )}
         {needsSeed ? (
           <label>Seed 来源 Run
             <select value={seedRunId} onChange={(e) => setSeedRunId(e.target.value)}>
@@ -546,12 +574,12 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
           </label>
         ) : null}
         <label className="inline">
-          <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} /> dry-run（不真正执行远程操作）
+          <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} /> dry-run 演练（不真正改动目标机）
         </label>
-        {isMutating ? (
+        {needsConfirm ? (
           <label className="inline danger">
             <input type="checkbox" checked={confirmMutating} onChange={(e) => setConfirmMutating(e.target.checked)} />
-            确认：该节点会改动目标机，仅对 sandbox 机执行
+            确认：真实执行，该节点会改动目标机
           </label>
         ) : null}
       </div>
@@ -560,9 +588,9 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
         disabled={testMutation.isPending || blockedByConfirm || blockedBySeed}
         onClick={() => testMutation.mutate()}
       >
-        <Play size={14} /> 测试此节点
+        <Play size={14} /> {dryRun ? "演练此节点" : "执行此节点"}
       </button>
-      {blockedByConfirm ? <span className="node-test-hint">需勾选确认后才能测试会改动目标机的节点</span> : null}
+      {blockedByConfirm ? <span className="node-test-hint">真实执行 mutating 节点前需勾选确认（或改用 dry-run 演练）</span> : null}
       {blockedBySeed ? <span className="node-test-hint">需选择 seed 来源 Run</span> : null}
       {result && result.status !== "triggered" ? (
         <div className="node-test-result warn">未启动：{result.reason || result.status}</div>
@@ -2923,6 +2951,7 @@ function WorkflowWorkspace({
                         mode={mode}
                         nodeId={selectedStage.id}
                         runs={runs}
+                        runId={selectedRun.pipelineId}
                       />
                     </DetailBlock>
                   </>

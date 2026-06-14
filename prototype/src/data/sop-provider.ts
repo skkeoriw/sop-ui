@@ -700,6 +700,7 @@ export const sopProvider: SopDataProvider = {
     const body = {
       request_overrides: input.requestOverrides || {},
       seed_from_run_id: input.seedFromRunId || "",
+      from_run_id: input.fromRunId || "",
       confirm_mutating: Boolean(input.confirmMutating),
       dry_run: Boolean(input.dryRun),
     };
