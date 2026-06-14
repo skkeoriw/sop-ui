@@ -894,7 +894,7 @@ export default function App() {
   const machinesQuery = useQuery({
     queryKey: ["control-plane-machines", mode],
     queryFn: () => controlPlaneProvider.listMachines(),
-    enabled: viewMode === "settings" || triggerOpen,
+    enabled: viewMode === "settings" || viewMode === "machines" || triggerOpen,
     retry: 1,
   });
   const runsQuery = useQuery({
