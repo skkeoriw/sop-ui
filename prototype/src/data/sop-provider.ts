@@ -16,6 +16,7 @@ import type {
   NodeContract,
   NodeTestInput,
   NodeTestResult,
+  NodeTestRunResult,
   Run,
   RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
@@ -717,6 +718,21 @@ export const sopProvider: SopDataProvider = {
       }
     }
     throw new Error(`${response.status}: ${text.slice(0, 200)}`);
+  },
+
+  async getNodeTestResult(runtime, instanceId, nodeId, pipelineId): Promise<NodeTestRunResult> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/test-result/${encodeURIComponent(pipelineId)}`;
+    const raw = await requestJson<Record<string, unknown>>(url);
+    return {
+      pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : pipelineId,
+      nodeId: raw.node_id ? String(raw.node_id) : nodeId,
+      status: raw.status ? String(raw.status) : undefined,
+      pending: Boolean(raw.pending),
+      startedAt: raw.started_at ? String(raw.started_at) : undefined,
+      finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
+      reason: raw.reason ? String(raw.reason) : undefined,
+      detail: (raw.detail as Record<string, unknown>) || {},
+    };
   },
 
   async listNodes(runtime, instanceId) {

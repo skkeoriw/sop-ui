@@ -8,6 +8,7 @@ import type {
   NodeContract,
   NodeTestInput,
   NodeTestResult,
+  NodeTestRunResult,
   NodeDraft,
   NodeDraftInput,
   NodeDraftSchema,
@@ -399,6 +400,17 @@ export const mockProvider: SopDataProvider = {
       nodeId,
       pipelineId: `nodetest-${nodeId}-MOCK`,
       namespace: "nodetest",
+    };
+  },
+
+  async getNodeTestResult(_target, _instanceId, nodeId, pipelineId): Promise<NodeTestRunResult> {
+    await delay();
+    return {
+      pipelineId,
+      nodeId,
+      status: "done",
+      pending: false,
+      detail: { ok: true, ssh_ok: true, disk_ok: true, stdout: "mock-host\nmock-user" },
     };
   },
 

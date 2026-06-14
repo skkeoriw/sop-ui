@@ -29,6 +29,8 @@ export const queryKeys = {
     ["sop", mode, ...runtimeKey(runtime), instanceId, "nodeConfig", nodeId] as const,
   nodeContract: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId: string) =>
     ["sop", mode, ...runtimeKey(runtime), instanceId, "nodeContract", nodeId] as const,
+  nodeTestResult: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId: string, pipelineId: string) =>
+    ["sop", mode, ...runtimeKey(runtime), instanceId, "nodeTestResult", nodeId, pipelineId] as const,
   nodes: (mode: DataMode, runtime: Runtime | undefined, instanceId: string) =>
     ["sop", mode, ...runtimeKey(runtime), instanceId, "nodes"] as const,
   nodeModules: (mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId: string, pipelineId = "") =>

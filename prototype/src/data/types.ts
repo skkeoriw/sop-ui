@@ -361,6 +361,18 @@ export interface NodeTestResult {
   reason?: string;
 }
 
+/** Polled outcome of an isolated single-node test run (nodetest namespace). */
+export interface NodeTestRunResult {
+  pipelineId?: string;
+  nodeId?: string;
+  status?: string;
+  pending?: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+  reason?: string;
+  detail?: Record<string, unknown>;
+}
+
 export interface NodeModule {
   id: string;
   title: string;
@@ -462,6 +474,7 @@ export interface SopDataProvider {
   getNodeConfig(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeConfig>;
   getNodeContract(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeContract | null>;
   triggerNodeTest(runtime: Runtime, instanceId: string, nodeId: string, input: NodeTestInput): Promise<NodeTestResult>;
+  getNodeTestResult(runtime: Runtime, instanceId: string, nodeId: string, pipelineId: string): Promise<NodeTestRunResult>;
   listNodes(runtime: Runtime, instanceId: string): Promise<NodeRegistryItem[]>;
   listNodeModules(runtime: Runtime, instanceId: string, nodeId: string, pipelineId?: string): Promise<NodeModule[]>;
   getNodeModule(runtime: Runtime, instanceId: string, nodeId: string, moduleId: string, pipelineId?: string): Promise<NodeModuleDetail>;

@@ -477,6 +477,7 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
   const [confirmMutating, setConfirmMutating] = useState(false);
   const [dryRun, setDryRun] = useState(true);
   const [result, setResult] = useState<NodeTestResult | null>(null);
+  const [testPipelineId, setTestPipelineId] = useState("");
   const [error, setError] = useState("");
 
   const contractQuery = useQuery({
@@ -493,9 +494,25 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
       confirmMutating,
       dryRun,
     }),
-    onSuccess: (r) => { setResult(r); setError(""); },
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+    onSuccess: (r) => {
+      setResult(r);
+      setError("");
+      setTestPipelineId(r.status === "triggered" && r.pipelineId ? r.pipelineId : "");
+    },
+    onError: (e: unknown) => { setError(e instanceof Error ? e.message : String(e)); setTestPipelineId(""); },
   });
+
+  // Poll the isolated test's outcome until it reaches a terminal status.
+  const testResultQuery = useQuery({
+    queryKey: queryKeys.nodeTestResult(mode, runtime, instanceId, nodeId, testPipelineId),
+    queryFn: () => provider.getNodeTestResult(runtime!, instanceId, nodeId, testPipelineId),
+    enabled: Boolean(runtime && instanceId && testPipelineId),
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      return !s || s === "running" ? 1500 : false;
+    },
+  });
+  const testRun = testResultQuery.data;
 
   if (contractQuery.isLoading) return <div className="node-test-panel muted">加载节点契约…</div>;
   if (!contract) return <div className="node-test-panel muted">该节点没有引擎契约，暂不支持独立测试。</div>;
@@ -547,11 +564,30 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs }: {
       </button>
       {blockedByConfirm ? <span className="node-test-hint">需勾选确认后才能测试会改动目标机的节点</span> : null}
       {blockedBySeed ? <span className="node-test-hint">需选择 seed 来源 Run</span> : null}
-      {result ? (
-        <div className={`node-test-result ${result.status === "triggered" ? "ok" : "warn"}`}>
-          {result.status === "triggered"
-            ? <>已启动隔离测试 <code>{result.pipelineId}</code>（namespace: {result.namespace}）</>
-            : <>未启动：{result.reason || result.status}</>}
+      {result && result.status !== "triggered" ? (
+        <div className="node-test-result warn">未启动：{result.reason || result.status}</div>
+      ) : null}
+      {testPipelineId ? (
+        <div className={`node-test-result ${testRun?.status === "done" ? "ok" : testRun?.status && testRun.status !== "running" ? "err" : "warn"}`}>
+          <div>
+            隔离测试 <code>{testPipelineId}</code> ·{" "}
+            {!testRun || testRun.status === "running"
+              ? "执行中…"
+              : <strong>{testRun.status}</strong>}
+          </div>
+          {testRun && testRun.status && testRun.status !== "running" ? (
+            <div className="node-test-detail">
+              {Object.entries(testRun.detail || {})
+                .filter(([k]) => ["ok", "ssh_ok", "permission_ok", "disk_ok", "http_status", "accepted", "target_url", "route"].includes(k))
+                .map(([k, v]) => (
+                  <span key={k} className={`kv ${v === true ? "good" : v === false ? "bad" : ""}`}>{k}: {String(v)}</span>
+                ))}
+              {typeof testRun.detail?.stdout === "string" && testRun.detail.stdout ? (
+                <pre className="node-test-stdout">{String(testRun.detail.stdout).slice(0, 600)}</pre>
+              ) : null}
+              {testRun.reason ? <div className="node-test-reason">原因：{testRun.reason}</div> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {error ? <div className="node-test-result err">{error}</div> : null}

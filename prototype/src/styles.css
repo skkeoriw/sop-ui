@@ -4841,3 +4841,36 @@ pre {
 .node-test-result.ok { background: #103a2a; color: #7fe3a1; }
 .node-test-result.warn { background: #3a2e10; color: #e3c25f; }
 .node-test-result.err { background: #3a1414; color: #e36f6f; }
+
+/* node test result detail (P4 follow-up) */
+.node-test-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+.node-test-detail .kv {
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 2px 7px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border, #2a2f3a);
+}
+.node-test-detail .kv.good { background: #103a2a; color: #7fe3a1; }
+.node-test-detail .kv.bad { background: #3a1414; color: #e36f6f; }
+.node-test-stdout {
+  width: 100%;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: #0b0e13;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 160px;
+  overflow: auto;
+}
+.node-test-reason { font-size: 12px; color: #e3c25f; margin-top: 4px; }
