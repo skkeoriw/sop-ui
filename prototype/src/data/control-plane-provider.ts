@@ -124,10 +124,30 @@ export const controlPlaneProvider = {
   },
 
   async testMachine(id: string): Promise<Record<string, unknown>> {
-    return requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/test`, {
+    const created = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
+    const job = created.job as Record<string, unknown> | undefined;
+    const jobId = job?.id ? String(job.id) : "";
+    if (!jobId) return created;
+
+    let latest = created;
+    for (let attempt = 0; attempt < 24; attempt += 1) {
+      await delay(attempt < 4 ? 1000 : 2000);
+      latest = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machine-check-jobs/${encodeURIComponent(jobId)}`);
+      const status = String(latest.status || (latest.job as Record<string, unknown> | undefined)?.status || "");
+      if (status === "succeeded" || status === "failed") return latest;
+    }
+    return {
+      ...latest,
+      status: "running",
+      reason: "SSH check is still running. Refresh or test again to fetch the latest result.",
+    };
   },
 };
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}

@@ -3825,14 +3825,20 @@ function MachinesPage({
 }
 
 function MachineTestResult({ result }: { result: Record<string, unknown> }) {
-  const status = String(result.status || result.check_status || "unknown");
+  const job = (result.job && typeof result.job === "object" ? result.job : {}) as Record<string, unknown>;
+  const status = String(result.status || job.status || result.check_status || "unknown");
   const isExecutorRequired = status === "not_implemented" || status === "executor_required";
-  const isAccepted = status === "accepted" || Boolean(result.ok);
-  const tone = isExecutorRequired ? "warning" : isAccepted ? "ok" : "failed";
-  const title = isExecutorRequired ? "SSH 测试执行器未接入" : isAccepted ? "测试请求已接收" : "测试未通过";
-  const reason = isExecutorRequired
+  const isRunning = status === "queued" || status === "running";
+  const isAccepted = status === "accepted" || status === "succeeded" || Boolean(result.ok);
+  const tone = isExecutorRequired || isRunning ? "warning" : isAccepted ? "ok" : "failed";
+  const title = isExecutorRequired ? "SSH 测试执行器未接入" : status === "succeeded" ? "SSH 测试通过" : isRunning ? "SSH 测试执行中" : isAccepted ? "测试请求已接收" : "SSH 测试未通过";
+  const reason = isRunning
+    ? "测试任务已进入 Control Plane，正在等待 SSH Executor 领取或回写结果。"
+    : isExecutorRequired
     ? "Control Plane 已收到测试请求，但 Cloudflare Worker 不能直接打开 SSH 连接，需要开发机或 Runtime agent 执行真实 SSH 检测。"
     : String(result.reason || "查看原始返回确认状态。");
+  const stdout = String(job.stdout || "");
+  const stderr = String(job.stderr || job.error || "");
 
   return (
     <section className={`machine-test-result ${tone}`}>
@@ -3843,10 +3849,20 @@ function MachineTestResult({ result }: { result: Record<string, unknown> }) {
       </div>
       <p>{reason}</p>
       <KeyValues data={{
-        machine_id: result.machine_id || "-",
-        control_plane: isExecutorRequired ? "reachable" : String(result.ok ? "reachable" : "unknown"),
-        ssh_check: isExecutorRequired ? "waiting for executor" : status,
+        machine_id: result.machine_id || job.machine_id || "-",
+        control_plane: "reachable",
+        ssh_check: status,
+        executor: job.executor_id || "-",
+        latency_ms: job.latency_ms || 0,
+        exit_code: job.exit_code ?? "-",
+        finished_at: job.finished_at || "-",
       }} />
+      {(stdout || stderr) && (
+        <div className="machine-test-output">
+          {stdout && <pre className="node-test-stdout">{stdout}</pre>}
+          {stderr && <pre className="node-test-stdout">{stderr}</pre>}
+        </div>
+      )}
       <details>
         <summary>Raw response</summary>
         <pre className="node-test-stdout">{JSON.stringify(result, null, 2)}</pre>

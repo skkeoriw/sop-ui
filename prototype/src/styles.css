@@ -5055,6 +5055,11 @@ pre {
   gap: 8px;
 }
 
+.machine-test-output {
+  display: grid;
+  gap: 8px;
+}
+
 .machine-test-result summary {
   color: #075985;
   cursor: pointer;
