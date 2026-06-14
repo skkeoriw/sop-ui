@@ -63,7 +63,7 @@ import type {
 } from "./data/types";
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
-type AppView = "runtime" | "instance" | "workflow" | "nodes" | "settings";
+type AppView = "runtime" | "instance" | "workflow" | "nodes" | "machines" | "settings";
 type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string };
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
 type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
@@ -221,6 +221,7 @@ function readRoute(): AppRoute {
     return { view: "nodes", ...empty, nodeId: decodeURIComponent(parts[1] || ""), moduleId: parts[2] === "modules" ? decodeURIComponent(parts[3] || "") : "" };
   }
   if (parts[0] === "artifacts") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), artifactId: decodeURIComponent(parts[2] || "") };
+  if (parts[0] === "machines") return { view: "machines", ...empty };
   if (parts[0] === "settings") return { view: "settings", ...empty };
   return { view: "workflow", ...empty };
 }
@@ -230,6 +231,7 @@ function routePath(view: AppView, entityId = "", secondaryId = "") {
   if (view === "instance") return "/instances";
   if (view === "nodes") return entityId ? `/nodes/${encodeURIComponent(entityId)}${secondaryId ? `/modules/${encodeURIComponent(secondaryId)}` : ""}` : "/nodes";
   if (view === "workflow") return entityId ? `/workflow/runs/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/workflow";
+  if (view === "machines") return "/machines";
   return "/settings";
 }
 
@@ -747,6 +749,8 @@ export default function App() {
   const [machineAuthType, setMachineAuthType] = useState<"private_key" | "password">("private_key");
   const [machinePrivateKey, setMachinePrivateKey] = useState("");
   const [machinePassword, setMachinePassword] = useState("");
+  const [selectedMachineId, setSelectedMachineId] = useState("");
+  const [machineTestResult, setMachineTestResult] = useState<Record<string, unknown> | null>(null);
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
@@ -1276,6 +1280,22 @@ export default function App() {
       setToast(`机器节点保存失败：${String((error as Error).message || error)}`);
     },
   });
+  const testMachineMutation = useMutation({
+    mutationFn: async (machineId: string) => {
+      const [result] = await Promise.all([
+        controlPlaneProvider.testMachine(machineId),
+        minimumDelay(300),
+      ]);
+      return result;
+    },
+    onSuccess: (result) => {
+      setMachineTestResult(result);
+      setToast("机器测试请求已提交");
+    },
+    onError: (error) => {
+      setToast(`机器测试失败：${String((error as Error).message || error)}`);
+    },
+  });
 
   const retryMutation = useMutation({
     mutationFn: () => provider.retryNode(runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey),
@@ -1315,7 +1335,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/nodes", "/artifacts", "/settings"];
+    const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/nodes", "/artifacts", "/machines", "/settings"];
     if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
       window.history.replaceState(null, "", `${routePath("runtime")}${window.location.search}`);
       setRoute(readRoute());
@@ -1594,6 +1614,9 @@ export default function App() {
           <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
             <Boxes size={17} /><span>Nodes</span><small>{managedNodes.length || "-"} modules</small>
           </button>
+          <button type="button" className={viewMode === "machines" ? "active" : ""} onClick={() => navigateTo("machines")}>
+            <Server size={17} /><span>Machines</span><small>{machinesQuery.data?.total ?? "-"}</small>
+          </button>
           <button type="button" className={viewMode === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
             <Settings size={17} /><span>Settings</span><small>{mode}</small>
           </button>
@@ -1799,6 +1822,31 @@ export default function App() {
             }}
             onOpenDraft={() => setDraftOpen(true)}
           />
+        ) : viewMode === "machines" ? (
+          <MachinesPage
+            machines={machinesQuery.data?.machines || []}
+            loading={machinesQuery.isLoading}
+            error={machinesQuery.error ? String(machinesQuery.error.message) : ""}
+            selectedMachineId={selectedMachineId}
+            setSelectedMachineId={setSelectedMachineId}
+            machineName={machineName}
+            setMachineName={setMachineName}
+            machineSshCommand={machineSshCommand}
+            setMachineSshCommand={setMachineSshCommand}
+            machineAuthType={machineAuthType}
+            setMachineAuthType={setMachineAuthType}
+            machinePrivateKey={machinePrivateKey}
+            setMachinePrivateKey={setMachinePrivateKey}
+            machinePassword={machinePassword}
+            setMachinePassword={setMachinePassword}
+            saveMachinePending={saveMachineMutation.isPending}
+            saveMachineError={saveMachineMutation.error ? String(saveMachineMutation.error.message) : ""}
+            onSaveMachine={(event) => { event.preventDefault(); saveMachineMutation.mutate(); }}
+            testPending={testMachineMutation.isPending}
+            testResult={machineTestResult}
+            testError={testMachineMutation.error ? String(testMachineMutation.error.message) : ""}
+            onTestMachine={(id) => testMachineMutation.mutate(id)}
+          />
         ) : (
           <SettingsPage
             mode={mode}
@@ -1817,21 +1865,8 @@ export default function App() {
             managementConfigLoading={runtimeManagementConfigQuery.isLoading}
             managementConfigError={runtimeManagementConfigQuery.error ? String(runtimeManagementConfigQuery.error.message) : ""}
             machines={machinesQuery.data?.machines || []}
-            machinesLoading={machinesQuery.isLoading}
             machinesError={machinesQuery.error ? String(machinesQuery.error.message) : ""}
-            machineName={machineName}
-            setMachineName={setMachineName}
-            machineSshCommand={machineSshCommand}
-            setMachineSshCommand={setMachineSshCommand}
-            machineAuthType={machineAuthType}
-            setMachineAuthType={setMachineAuthType}
-            machinePrivateKey={machinePrivateKey}
-            setMachinePrivateKey={setMachinePrivateKey}
-            machinePassword={machinePassword}
-            setMachinePassword={setMachinePassword}
-            saveMachinePending={saveMachineMutation.isPending}
-            saveMachineError={saveMachineMutation.error ? String(saveMachineMutation.error.message) : ""}
-            onSaveMachine={(event) => { event.preventDefault(); saveMachineMutation.mutate(); }}
+            onOpenMachines={() => navigateTo("machines")}
             managementConfigValues={managementConfigValues}
             setManagementConfigValues={setManagementConfigValues}
             saveManagementConfigPending={saveManagementConfigMutation.isPending}
@@ -3377,21 +3412,8 @@ function SettingsPage({
   managementConfigLoading,
   managementConfigError,
   machines,
-  machinesLoading,
   machinesError,
-  machineName,
-  setMachineName,
-  machineSshCommand,
-  setMachineSshCommand,
-  machineAuthType,
-  setMachineAuthType,
-  machinePrivateKey,
-  setMachinePrivateKey,
-  machinePassword,
-  setMachinePassword,
-  saveMachinePending,
-  saveMachineError,
-  onSaveMachine,
+  onOpenMachines,
   managementConfigValues,
   setManagementConfigValues,
   saveManagementConfigPending,
@@ -3417,21 +3439,8 @@ function SettingsPage({
   managementConfigLoading: boolean;
   managementConfigError: string;
   machines: MachineConfig[];
-  machinesLoading: boolean;
   machinesError: string;
-  machineName: string;
-  setMachineName: (value: string) => void;
-  machineSshCommand: string;
-  setMachineSshCommand: (value: string) => void;
-  machineAuthType: "private_key" | "password";
-  setMachineAuthType: (value: "private_key" | "password") => void;
-  machinePrivateKey: string;
-  setMachinePrivateKey: (value: string) => void;
-  machinePassword: string;
-  setMachinePassword: (value: string) => void;
-  saveMachinePending: boolean;
-  saveMachineError: string;
-  onSaveMachine: (event: FormEvent) => void;
+  onOpenMachines: () => void;
   managementConfigValues: Record<string, string>;
   setManagementConfigValues: (value: Record<string, string>) => void;
   saveManagementConfigPending: boolean;
@@ -3578,8 +3587,8 @@ function SettingsPage({
           </button>
         </div>
       </section>
-      {(managementConfigError || saveManagementConfigError || machinesError || saveMachineError) && (
-        <div className="inline-error">{managementConfigError || saveManagementConfigError || machinesError || saveMachineError}</div>
+      {(managementConfigError || saveManagementConfigError || machinesError) && (
+        <div className="inline-error">{managementConfigError || saveManagementConfigError || machinesError}</div>
       )}
       <form className="global-settings-layout" onSubmit={onSaveManagementConfig}>
         <aside className="global-settings-summary">
@@ -3639,18 +3648,146 @@ function SettingsPage({
             </div>
             <em>{machines.length}</em>
           </div>
+          <div className="machine-settings-link">
+            <KeyValues data={{ machines: machines.length, store: "runtime-settings-db", api: controlPlaneApiUrl }} />
+            <button type="button" className="primary" onClick={onOpenMachines}>
+              <Server size={14} />
+              Open Machine Manager
+            </button>
+          </div>
+        </article>
+      </section>
+      <section className="settings-note-panel">
+        <Info size={15} />
+        <span>Secret 字段不会从后端返回明文；输入框留空会保留当前值，填写内容才会覆盖保存。</span>
+      </section>
+    </>
+  );
+}
+
+function MachinesPage({
+  machines,
+  loading,
+  error,
+  selectedMachineId,
+  setSelectedMachineId,
+  machineName,
+  setMachineName,
+  machineSshCommand,
+  setMachineSshCommand,
+  machineAuthType,
+  setMachineAuthType,
+  machinePrivateKey,
+  setMachinePrivateKey,
+  machinePassword,
+  setMachinePassword,
+  saveMachinePending,
+  saveMachineError,
+  onSaveMachine,
+  testPending,
+  testResult,
+  testError,
+  onTestMachine,
+}: {
+  machines: MachineConfig[];
+  loading: boolean;
+  error: string;
+  selectedMachineId: string;
+  setSelectedMachineId: (value: string) => void;
+  machineName: string;
+  setMachineName: (value: string) => void;
+  machineSshCommand: string;
+  setMachineSshCommand: (value: string) => void;
+  machineAuthType: "private_key" | "password";
+  setMachineAuthType: (value: "private_key" | "password") => void;
+  machinePrivateKey: string;
+  setMachinePrivateKey: (value: string) => void;
+  machinePassword: string;
+  setMachinePassword: (value: string) => void;
+  saveMachinePending: boolean;
+  saveMachineError: string;
+  onSaveMachine: (event: FormEvent) => void;
+  testPending: boolean;
+  testResult: Record<string, unknown> | null;
+  testError: string;
+  onTestMachine: (id: string) => void;
+}) {
+  const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
+  const loadMachine = (machine: MachineConfig) => {
+    setSelectedMachineId(machine.id);
+    setMachineName(machine.name);
+    setMachineSshCommand(machine.sshCommand);
+    setMachineAuthType(machine.authType === "password" ? "password" : "private_key");
+    setMachinePrivateKey("");
+    setMachinePassword("");
+  };
+  const clearForm = () => {
+    setSelectedMachineId("");
+    setMachineName("");
+    setMachineSshCommand("");
+    setMachineAuthType("private_key");
+    setMachinePrivateKey("");
+    setMachinePassword("");
+  };
+  return (
+    <>
+      <section className="concept-hero">
+        <div>
+          <span className="status-pill waiting"><Server size={14} />Machines</span>
+          <h1>机器节点管理</h1>
+          <p>集中管理可被 Runtime 创建/删除流程选择的 SSH 节点，密钥和密码只保存到 Control Plane D1，页面不回显明文。</p>
+        </div>
+        <div className="context-card">
+          <strong>Control Plane</strong>
+          <span>{machines.length} machines</span>
+          <code>{controlPlaneApiUrl}</code>
+        </div>
+      </section>
+      {(error || saveMachineError || testError) && <div className="inline-error">{error || saveMachineError || testError}</div>}
+      <section className="machines-workspace">
+        <aside className="machines-list-panel">
+          <div className="panel-head">
+            <div><strong>Machine List</strong><span>{loading ? "loading" : `${machines.length} records`}</span></div>
+            <button type="button" className="ghost-btn compact" onClick={clearForm}>New</button>
+          </div>
           <div className="machine-list">
             {machines.map((machine) => (
-              <div key={machine.id} className="machine-row">
+              <button key={machine.id} type="button" className={`machine-row machine-row-button ${selectedMachine?.id === machine.id ? "active" : ""}`} onClick={() => loadMachine(machine)}>
                 <div>
                   <strong>{machine.name}</strong>
-                  <code>{machine.sshCommand}</code>
+                  <code>{machine.user}@{machine.host}:{machine.port}</code>
                 </div>
-                <span>{machine.authType === "password" ? "password" : "private key"} · {machine.privateKeyPresent || machine.passwordPresent ? "secret saved" : "secret missing"}</span>
-              </div>
+                <span>{machine.authType === "password" ? "password" : "private key"}</span>
+              </button>
             ))}
-            {!machines.length && <LoadingOrEmpty loading={machinesLoading} text="还没有机器节点配置" />}
+            {!machines.length && <LoadingOrEmpty loading={loading} text="还没有机器节点配置" />}
           </div>
+        </aside>
+        <section className="machine-detail-panel">
+          <div className="panel-head">
+            <div><strong>Machine Detail</strong><span>{selectedMachine?.id || "new machine"}</span></div>
+            {selectedMachine && (
+              <button type="button" className="ghost-btn compact" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
+                {testPending ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}
+                Test
+              </button>
+            )}
+          </div>
+          {selectedMachine ? (
+            <KeyValues data={{
+              id: selectedMachine.id,
+              host: selectedMachine.host,
+              port: selectedMachine.port,
+              user: selectedMachine.user,
+              auth: selectedMachine.authType,
+              secret: selectedMachine.privateKeyPresent || selectedMachine.passwordPresent ? "saved" : "missing",
+              status: selectedMachine.status,
+              updated: selectedMachine.updatedAt || "",
+            }} />
+          ) : <Empty text="选择机器或创建新机器" />}
+          {testResult && (
+            <pre className="node-test-stdout">{JSON.stringify(testResult, null, 2)}</pre>
+          )}
           <form className="machine-editor" onSubmit={onSaveMachine}>
             <label>
               <span>Name</span>
@@ -3670,7 +3807,7 @@ function SettingsPage({
             {machineAuthType === "private_key" ? (
               <label>
                 <span>Private Key</span>
-                <textarea value={machinePrivateKey} onChange={(event) => setMachinePrivateKey(event.target.value)} rows={5} placeholder="粘贴 OpenSSH private key；保存后不回显明文" disabled={saveMachinePending} />
+                <textarea value={machinePrivateKey} onChange={(event) => setMachinePrivateKey(event.target.value)} rows={6} placeholder="粘贴 OpenSSH private key；保存后不回显明文" disabled={saveMachinePending} />
               </label>
             ) : (
               <label>
@@ -3683,11 +3820,7 @@ function SettingsPage({
               Save Machine
             </button>
           </form>
-        </article>
-      </section>
-      <section className="settings-note-panel">
-        <Info size={15} />
-        <span>Secret 字段不会从后端返回明文；输入框留空会保留当前值，填写内容才会覆盖保存。</span>
+        </section>
       </section>
     </>
   );

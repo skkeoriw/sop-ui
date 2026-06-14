@@ -4931,3 +4931,46 @@ pre {
   width: 100%;
   min-width: 0;
 }
+
+.machine-settings-link {
+  display: grid;
+  gap: 12px;
+}
+
+.machines-workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.machines-list-panel,
+.machine-detail-panel {
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.22));
+  border-radius: 8px;
+  background: var(--panel, rgba(15, 23, 42, 0.55));
+  padding: 14px;
+}
+
+.machine-row-button {
+  width: 100%;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.machine-row-button.active {
+  border-color: var(--accent, #60a5fa);
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.machine-detail-panel {
+  display: grid;
+  gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .machines-workspace {
+    grid-template-columns: 1fr;
+  }
+}

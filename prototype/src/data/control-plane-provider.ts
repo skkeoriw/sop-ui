@@ -122,4 +122,12 @@ export const controlPlaneProvider = {
     if (!machine) throw new Error(String(raw.error || "Machine save failed"));
     return mapMachine(machine);
   },
+
+  async testMachine(id: string): Promise<Record<string, unknown>> {
+    return requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  },
 };
