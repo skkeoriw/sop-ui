@@ -24,7 +24,6 @@ import {
   PanelLeftOpen,
   Play,
   RefreshCw,
-  RotateCcw,
   Search,
   Server,
   Settings,
@@ -34,6 +33,7 @@ import {
   X
 } from "lucide-react";
 import { getMode, getProvider, normalizeEndpoint, setMode as writeMode } from "./data/provider";
+import { controlPlaneApiUrl, controlPlaneProvider } from "./data/control-plane-provider";
 import { queryKeys } from "./data/query-keys";
 import type {
   Artifact,
@@ -47,6 +47,7 @@ import type {
   NodeDetail,
   NodeConfig,
   NodeEvent,
+  MachineConfig,
   NodeLog,
   NodeModule,
   NodeModuleDetail,
@@ -728,9 +729,11 @@ export default function App() {
   const [runtimeCreatePrivateKey, setRuntimeCreatePrivateKey] = useState(runtimeManagementDefaults.createPrivateKey);
   const [runtimeCreateEnvText, setRuntimeCreateEnvText] = useState(runtimeManagementDefaults.createEnvText);
   const [runtimeCreateConfigOverrides, setRuntimeCreateConfigOverrides] = useState<Record<string, string>>({});
+  const [runtimeCreateMachineId, setRuntimeCreateMachineId] = useState("");
   const [runtimeDeleteId, setRuntimeDeleteId] = useState(runtimeManagementDefaults.deleteRuntimeId);
   const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState(runtimeManagementDefaults.deleteSshCommand);
   const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState(runtimeManagementDefaults.deletePrivateKey);
+  const [runtimeDeleteMachineId, setRuntimeDeleteMachineId] = useState("");
   const [runtimeDeleteForce, setRuntimeDeleteForce] = useState(runtimeManagementDefaults.deleteForce);
   const [instanceCreateId, setInstanceCreateId] = useState(runtimeManagementDefaults.instanceId);
   const [instanceCreateRepo, setInstanceCreateRepo] = useState(runtimeManagementDefaults.instanceRepo);
@@ -739,6 +742,11 @@ export default function App() {
   const [instanceDeleteRepo, setInstanceDeleteRepo] = useState(runtimeManagementDefaults.deleteInstanceRepo);
   const [instanceDeleteForce, setInstanceDeleteForce] = useState(runtimeManagementDefaults.deleteInstanceForce);
   const [managementConfigValues, setManagementConfigValues] = useState<Record<string, string>>({});
+  const [machineName, setMachineName] = useState("");
+  const [machineSshCommand, setMachineSshCommand] = useState("");
+  const [machineAuthType, setMachineAuthType] = useState<"private_key" | "password">("private_key");
+  const [machinePrivateKey, setMachinePrivateKey] = useState("");
+  const [machinePassword, setMachinePassword] = useState("");
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
@@ -874,9 +882,15 @@ export default function App() {
     retry: 1,
   });
   const runtimeManagementConfigQuery = useQuery({
-    queryKey: ["runtime-management-config", mode, runtime?.id || "", managementInstance?.instanceId || ""],
-    queryFn: () => provider.getRuntimeManagementConfig(runtime!, managementInstance!.instanceId),
-    enabled: Boolean(runtime && managementInstance && viewMode === "settings"),
+    queryKey: ["control-plane-settings", mode],
+    queryFn: () => controlPlaneProvider.getSettings(),
+    enabled: viewMode === "settings",
+    retry: 1,
+  });
+  const machinesQuery = useQuery({
+    queryKey: ["control-plane-machines", mode],
+    queryFn: () => controlPlaneProvider.listMachines(),
+    enabled: viewMode === "settings" || triggerOpen,
     retry: 1,
   });
   const runsQuery = useQuery({
@@ -1037,6 +1051,7 @@ export default function App() {
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-runtime",
+          machine_id: runtimeCreateMachineId || undefined,
           ssh_command: runtimeCreateSshCommand,
           private_key_b64: encodeSecretB64(runtimeCreatePrivateKey),
           ...parseRuntimeEnvOverrides(runtimeCreateEnvText),
@@ -1072,6 +1087,7 @@ export default function App() {
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-runtime",
+          machine_id: runtimeDeleteMachineId || undefined,
           runtime_id: runtimeDeleteId,
           ssh_command: runtimeDeleteSshCommand,
           private_key_b64: encodeSecretB64(runtimeDeletePrivateKey),
@@ -1115,6 +1131,7 @@ export default function App() {
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-instance",
+          machine_id: runtimeCreateMachineId || undefined,
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
           ssh_command: runtimeCreateSshCommand,
@@ -1160,6 +1177,7 @@ export default function App() {
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-instance",
+          machine_id: runtimeDeleteMachineId || undefined,
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
           ssh_command: runtimeDeleteSshCommand,
@@ -1195,11 +1213,10 @@ export default function App() {
 
   const saveManagementConfigMutation = useMutation({
     mutationFn: async () => {
-      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
       const values = Object.fromEntries(Object.entries(managementConfigValues).filter(([, value]) => value.trim()));
       if (!Object.keys(values).length) throw new Error("请至少填写一个要保存的配置值");
       const [result] = await Promise.all([
-        provider.saveRuntimeManagementConfig(runtime, managementInstance.instanceId, {
+        controlPlaneProvider.saveSettings({
           values,
         }),
         minimumDelay(300),
@@ -1208,36 +1225,55 @@ export default function App() {
     },
     onSuccess: async () => {
       setManagementConfigValues({});
-      setToast("Runtime 管理配置已保存；Create Runtime 会自动继承");
+      setToast("全局配置已保存到 Control Plane D1");
       initializeManagementConfigMutation.reset();
       await runtimeManagementConfigQuery.refetch();
-      await runtimeInheritanceQuery.refetch();
     },
     onError: (error) => {
-      setToast(`Runtime 管理配置保存失败：${String((error as Error).message || error)}`);
+      setToast(`全局配置保存失败：${String((error as Error).message || error)}`);
     },
   });
 
   const initializeManagementConfigMutation = useMutation({
     mutationFn: async () => {
-      if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      throw new Error("全局 Settings 已迁移到 Control Plane，不再从某台 Runtime 初始化");
+    },
+    onSuccess: async () => {
+      saveManagementConfigMutation.reset();
+      setManagementConfigValues({});
+      setToast("全局 Settings 已由 Control Plane 管理");
+      await runtimeManagementConfigQuery.refetch();
+    },
+    onError: (error) => {
+      setToast(`初始化管理配置失败：${String((error as Error).message || error)}`);
+    },
+  });
+
+  const saveMachineMutation = useMutation({
+    mutationFn: async () => {
+      if (!machineSshCommand.trim()) throw new Error("请填写 SSH Command");
       const [result] = await Promise.all([
-        provider.initializeRuntimeManagementConfig(runtime, managementInstance.instanceId, {
-          overwrite: false,
+        controlPlaneProvider.saveMachine({
+          name: machineName.trim() || machineSshCommand.trim(),
+          sshCommand: machineSshCommand.trim(),
+          authType: machineAuthType,
+          privateKey: machineAuthType === "private_key" ? machinePrivateKey : "",
+          password: machineAuthType === "password" ? machinePassword : "",
         }),
         minimumDelay(300),
       ]);
       return result;
     },
     onSuccess: async () => {
-      saveManagementConfigMutation.reset();
-      setManagementConfigValues({});
-      setToast("已从当前 Runtime 初始化管理配置；Create Runtime 会自动继承");
-      await runtimeManagementConfigQuery.refetch();
-      await runtimeInheritanceQuery.refetch();
+      setMachineName("");
+      setMachineSshCommand("");
+      setMachinePrivateKey("");
+      setMachinePassword("");
+      setToast("机器节点已保存到 Control Plane D1");
+      await machinesQuery.refetch();
     },
     onError: (error) => {
-      setToast(`初始化管理配置失败：${String((error as Error).message || error)}`);
+      setToast(`机器节点保存失败：${String((error as Error).message || error)}`);
     },
   });
 
@@ -1780,15 +1816,28 @@ export default function App() {
             managementConfig={runtimeManagementConfigQuery.data}
             managementConfigLoading={runtimeManagementConfigQuery.isLoading}
             managementConfigError={runtimeManagementConfigQuery.error ? String(runtimeManagementConfigQuery.error.message) : ""}
+            machines={machinesQuery.data?.machines || []}
+            machinesLoading={machinesQuery.isLoading}
+            machinesError={machinesQuery.error ? String(machinesQuery.error.message) : ""}
+            machineName={machineName}
+            setMachineName={setMachineName}
+            machineSshCommand={machineSshCommand}
+            setMachineSshCommand={setMachineSshCommand}
+            machineAuthType={machineAuthType}
+            setMachineAuthType={setMachineAuthType}
+            machinePrivateKey={machinePrivateKey}
+            setMachinePrivateKey={setMachinePrivateKey}
+            machinePassword={machinePassword}
+            setMachinePassword={setMachinePassword}
+            saveMachinePending={saveMachineMutation.isPending}
+            saveMachineError={saveMachineMutation.error ? String(saveMachineMutation.error.message) : ""}
+            onSaveMachine={(event) => { event.preventDefault(); saveMachineMutation.mutate(); }}
             managementConfigValues={managementConfigValues}
             setManagementConfigValues={setManagementConfigValues}
             saveManagementConfigPending={saveManagementConfigMutation.isPending}
             saveManagementConfigError={saveManagementConfigMutation.error ? String(saveManagementConfigMutation.error.message) : ""}
-            initializeManagementConfigPending={initializeManagementConfigMutation.isPending}
-            initializeManagementConfigError={initializeManagementConfigMutation.error ? String(initializeManagementConfigMutation.error.message) : ""}
             onRefreshManagementConfig={() => runtimeManagementConfigQuery.refetch()}
             onSaveManagementConfig={(event) => { event.preventDefault(); initializeManagementConfigMutation.reset(); saveManagementConfigMutation.mutate(); }}
-            onInitializeManagementConfig={() => { saveManagementConfigMutation.reset(); setManagementConfigValues({}); initializeManagementConfigMutation.mutate(); }}
             globalTunnelApiUrl={GLOBAL_TUNNEL_API_URL}
             globalTunnelAdminUrl={GLOBAL_TUNNEL_ADMIN_URL}
           />
@@ -1810,14 +1859,20 @@ export default function App() {
           setCreateEnvText={setRuntimeCreateEnvText}
           createConfigOverrides={runtimeCreateConfigOverrides}
           setCreateConfigOverrides={setRuntimeCreateConfigOverrides}
+          createMachineId={runtimeCreateMachineId}
+          setCreateMachineId={setRuntimeCreateMachineId}
           deleteRuntimeId={runtimeDeleteId}
           setDeleteRuntimeId={setRuntimeDeleteId}
           deleteSshCommand={runtimeDeleteSshCommand}
           setDeleteSshCommand={setRuntimeDeleteSshCommand}
           deletePrivateKey={runtimeDeletePrivateKey}
           setDeletePrivateKey={setRuntimeDeletePrivateKey}
+          deleteMachineId={runtimeDeleteMachineId}
+          setDeleteMachineId={setRuntimeDeleteMachineId}
           deleteForce={runtimeDeleteForce}
           setDeleteForce={setRuntimeDeleteForce}
+          machines={machinesQuery.data?.machines || []}
+          machinesLoading={machinesQuery.isLoading}
           instanceCreateId={instanceCreateId}
           setInstanceCreateId={setInstanceCreateId}
           instanceCreateRepo={instanceCreateRepo}
@@ -3321,15 +3376,28 @@ function SettingsPage({
   managementConfig,
   managementConfigLoading,
   managementConfigError,
+  machines,
+  machinesLoading,
+  machinesError,
+  machineName,
+  setMachineName,
+  machineSshCommand,
+  setMachineSshCommand,
+  machineAuthType,
+  setMachineAuthType,
+  machinePrivateKey,
+  setMachinePrivateKey,
+  machinePassword,
+  setMachinePassword,
+  saveMachinePending,
+  saveMachineError,
+  onSaveMachine,
   managementConfigValues,
   setManagementConfigValues,
   saveManagementConfigPending,
   saveManagementConfigError,
-  initializeManagementConfigPending,
-  initializeManagementConfigError,
   onRefreshManagementConfig,
   onSaveManagementConfig,
-  onInitializeManagementConfig,
   globalTunnelApiUrl,
   globalTunnelAdminUrl,
 }: {
@@ -3348,15 +3416,28 @@ function SettingsPage({
   managementConfig: RuntimeManagementConfigPreview | undefined;
   managementConfigLoading: boolean;
   managementConfigError: string;
+  machines: MachineConfig[];
+  machinesLoading: boolean;
+  machinesError: string;
+  machineName: string;
+  setMachineName: (value: string) => void;
+  machineSshCommand: string;
+  setMachineSshCommand: (value: string) => void;
+  machineAuthType: "private_key" | "password";
+  setMachineAuthType: (value: "private_key" | "password") => void;
+  machinePrivateKey: string;
+  setMachinePrivateKey: (value: string) => void;
+  machinePassword: string;
+  setMachinePassword: (value: string) => void;
+  saveMachinePending: boolean;
+  saveMachineError: string;
+  onSaveMachine: (event: FormEvent) => void;
   managementConfigValues: Record<string, string>;
   setManagementConfigValues: (value: Record<string, string>) => void;
   saveManagementConfigPending: boolean;
   saveManagementConfigError: string;
-  initializeManagementConfigPending: boolean;
-  initializeManagementConfigError: string;
   onRefreshManagementConfig: () => void;
   onSaveManagementConfig: (event: FormEvent) => void;
-  onInitializeManagementConfig: () => void;
   globalTunnelApiUrl: string;
   globalTunnelAdminUrl: string;
 }) {
@@ -3480,9 +3561,9 @@ function SettingsPage({
           <p>本页展示与项目级别相关的配置入口，Runtime 级别配置保持在 Runtime Overview / Runtime Management 内。</p>
         </div>
         <div className="context-card">
-          <strong>Global</strong>
+          <strong>Control Plane</strong>
           <span>{mode} · global scope</span>
-          <code>{globalTunnelAdminUrl}</code>
+          <code>{controlPlaneApiUrl}</code>
         </div>
       </section>
       <section className="global-settings-toolbar">
@@ -3495,14 +3576,10 @@ function SettingsPage({
             {managementConfigLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
             Refresh
           </button>
-          <button type="button" className="ghost-btn compact" onClick={onInitializeManagementConfig} disabled={initializeManagementConfigPending || !managementInstance}>
-            {initializeManagementConfigPending ? <Loader2 size={14} className="spin" /> : <RotateCcw size={14} />}
-            Init from Runtime
-          </button>
         </div>
       </section>
-      {(managementConfigError || initializeManagementConfigError || saveManagementConfigError) && (
-        <div className="inline-error">{managementConfigError || initializeManagementConfigError || saveManagementConfigError}</div>
+      {(managementConfigError || saveManagementConfigError || machinesError || saveMachineError) && (
+        <div className="inline-error">{managementConfigError || saveManagementConfigError || machinesError || saveMachineError}</div>
       )}
       <form className="global-settings-layout" onSubmit={onSaveManagementConfig}>
         <aside className="global-settings-summary">
@@ -3510,20 +3587,22 @@ function SettingsPage({
             <strong>Scope</strong>
             <KeyValues data={{
               mode,
-              runtime: runtime?.id || "unknown",
-              runtime_management: managementInstance?.instanceId || "missing",
-              settings_backend: managementConfig?.backend || "file",
-              settings_store: managementConfig?.d1?.enabled ? managementConfig.d1.database_name || "d1" : "local file",
+              scope: "global",
+              runtime_dependency: "none",
+              settings_backend: managementConfig?.backend || "d1",
+              settings_store: managementConfig?.d1?.enabled ? managementConfig.d1.database_name || "runtime-settings-db" : "runtime-settings-db",
+              control_plane_api: controlPlaneApiUrl,
               tunnel_admin: globalTunnelAdminUrl,
               tunnel_api: globalTunnelApiUrl,
               runtime_count: runtimes.length,
               instance_count: instances.length,
+              machine_count: machines.length,
               mode_status: streamStatus,
               nodes_ready: `${nodesReadyCount}/${nodesTotal}`,
             }} />
             <button type="button" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>打开 Tunnel Admin</button>
           </div>
-          <button type="submit" disabled={saveManagementConfigPending || !editedCount || !managementInstance}>
+          <button type="submit" disabled={saveManagementConfigPending || !editedCount}>
             {saveManagementConfigPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
             Save Global Config
           </button>
@@ -3550,6 +3629,62 @@ function SettingsPage({
           })}
         </section>
       </form>
+      <section className="global-config-card-grid machine-config-grid">
+        <article className="global-config-card settings-wide">
+          <div className="global-config-card-head">
+            <span><Server size={18} /></span>
+            <div>
+              <strong>Machine Nodes</strong>
+              <small>SSH 节点配置来自 Control Plane D1，Runtime 创建/删除时可以选择节点</small>
+            </div>
+            <em>{machines.length}</em>
+          </div>
+          <div className="machine-list">
+            {machines.map((machine) => (
+              <div key={machine.id} className="machine-row">
+                <div>
+                  <strong>{machine.name}</strong>
+                  <code>{machine.sshCommand}</code>
+                </div>
+                <span>{machine.authType === "password" ? "password" : "private key"} · {machine.privateKeyPresent || machine.passwordPresent ? "secret saved" : "secret missing"}</span>
+              </div>
+            ))}
+            {!machines.length && <LoadingOrEmpty loading={machinesLoading} text="还没有机器节点配置" />}
+          </div>
+          <form className="machine-editor" onSubmit={onSaveMachine}>
+            <label>
+              <span>Name</span>
+              <input value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="Runtime target machine" disabled={saveMachinePending} />
+            </label>
+            <label>
+              <span>SSH Command</span>
+              <input value={machineSshCommand} onChange={(event) => setMachineSshCommand(event.target.value)} placeholder="ssh -i ~/.ssh/id_ed25519 user@host" disabled={saveMachinePending} />
+            </label>
+            <label>
+              <span>Auth Type</span>
+              <select value={machineAuthType} onChange={(event) => setMachineAuthType(event.target.value as "private_key" | "password")} disabled={saveMachinePending}>
+                <option value="private_key">Private Key</option>
+                <option value="password">Password</option>
+              </select>
+            </label>
+            {machineAuthType === "private_key" ? (
+              <label>
+                <span>Private Key</span>
+                <textarea value={machinePrivateKey} onChange={(event) => setMachinePrivateKey(event.target.value)} rows={5} placeholder="粘贴 OpenSSH private key；保存后不回显明文" disabled={saveMachinePending} />
+              </label>
+            ) : (
+              <label>
+                <span>Password</span>
+                <input type="password" value={machinePassword} onChange={(event) => setMachinePassword(event.target.value)} placeholder="SSH password；保存后不回显明文" disabled={saveMachinePending} />
+              </label>
+            )}
+            <button type="submit" className="primary" disabled={saveMachinePending || !machineSshCommand.trim()}>
+              {saveMachinePending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
+              Save Machine
+            </button>
+          </form>
+        </article>
+      </section>
       <section className="settings-note-panel">
         <Info size={15} />
         <span>Secret 字段不会从后端返回明文；输入框留空会保留当前值，填写内容才会覆盖保存。</span>
@@ -4014,14 +4149,20 @@ function RuntimeManagementStartDrawer({
   setCreateEnvText,
   createConfigOverrides,
   setCreateConfigOverrides,
+  createMachineId,
+  setCreateMachineId,
   deleteRuntimeId,
   setDeleteRuntimeId,
   deleteSshCommand,
   setDeleteSshCommand,
   deletePrivateKey,
   setDeletePrivateKey,
+  deleteMachineId,
+  setDeleteMachineId,
   deleteForce,
   setDeleteForce,
+  machines,
+  machinesLoading,
   instanceCreateId,
   setInstanceCreateId,
   instanceCreateRepo,
@@ -4061,14 +4202,20 @@ function RuntimeManagementStartDrawer({
   setCreateEnvText: (value: string) => void;
   createConfigOverrides: Record<string, string>;
   setCreateConfigOverrides: (value: Record<string, string>) => void;
+  createMachineId: string;
+  setCreateMachineId: (value: string) => void;
   deleteRuntimeId: string;
   setDeleteRuntimeId: (value: string) => void;
   deleteSshCommand: string;
   setDeleteSshCommand: (value: string) => void;
   deletePrivateKey: string;
   setDeletePrivateKey: (value: string) => void;
+  deleteMachineId: string;
+  setDeleteMachineId: (value: string) => void;
   deleteForce: boolean;
   setDeleteForce: (value: boolean) => void;
+  machines: MachineConfig[];
+  machinesLoading: boolean;
   instanceCreateId: string;
   setInstanceCreateId: (value: string) => void;
   instanceCreateRepo: string;
@@ -4104,6 +4251,33 @@ function RuntimeManagementStartDrawer({
   const isDeleteInstance = action === "delete-instance";
   const isCreate = isCreateRuntime || isCreateInstance;
   const submitLabel = isCreateRuntime ? "Create Runtime" : isDeleteRuntime ? "Delete Runtime" : isCreateInstance ? "Create Instance" : "Delete Instance";
+  const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
+  const selectedDeleteMachine = machines.find((machine) => machine.id === deleteMachineId);
+  const renderMachineSelect = (
+    value: string,
+    onChange: (value: string) => void,
+    onApplySsh: (value: string) => void,
+  ) => (
+    <label>
+      <span>Machine Node</span>
+      <select
+        value={value}
+        onChange={(event) => {
+          const nextId = event.target.value;
+          onChange(nextId);
+          const machine = machines.find((item) => item.id === nextId);
+          if (machine?.sshCommand) onApplySsh(machine.sshCommand);
+        }}
+        disabled={pending || machinesLoading}
+      >
+        <option value="">{machinesLoading ? "Loading machine nodes..." : "Manual SSH / saved defaults"}</option>
+        {machines.map((machine) => (
+          <option key={machine.id} value={machine.id}>{machine.name} · {machine.user}@{machine.host}</option>
+        ))}
+      </select>
+      <span className="field-hint">{value ? "将提交 machine_id，SSH Command 作为兼容覆盖一起发送；secret 不会从浏览器回读。" : "不选择时沿用手填 SSH 或后端保存默认值。"}</span>
+    </label>
+  );
 
   return (
     <div className="drawer-backdrop" role="presentation">
@@ -4139,6 +4313,8 @@ function RuntimeManagementStartDrawer({
 
           {isCreateRuntime ? (
             <div className="runtime-drawer-form">
+              {renderMachineSelect(createMachineId, setCreateMachineId, setCreateSshCommand)}
+              {selectedCreateMachine && <KeyValues data={{ machine_id: selectedCreateMachine.id, host: selectedCreateMachine.host, auth: selectedCreateMachine.authType, secret: selectedCreateMachine.privateKeyPresent || selectedCreateMachine.passwordPresent ? "saved" : "missing" }} />}
               <label>
                 <span>SSH Command</span>
                 <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
@@ -4176,6 +4352,8 @@ function RuntimeManagementStartDrawer({
             </div>
           ) : isDeleteRuntime ? (
             <div className="runtime-drawer-form">
+              {renderMachineSelect(deleteMachineId, setDeleteMachineId, setDeleteSshCommand)}
+              {selectedDeleteMachine && <KeyValues data={{ machine_id: selectedDeleteMachine.id, host: selectedDeleteMachine.host, auth: selectedDeleteMachine.authType, secret: selectedDeleteMachine.privateKeyPresent || selectedDeleteMachine.passwordPresent ? "saved" : "missing" }} />}
               <label>
                 <span>Runtime ID</span>
                 <input value={deleteRuntimeId} onChange={(event) => setDeleteRuntimeId(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 Runtime ID" />
@@ -4196,6 +4374,7 @@ function RuntimeManagementStartDrawer({
             </div>
           ) : isCreateInstance ? (
             <div className="runtime-drawer-form">
+              {renderMachineSelect(createMachineId, setCreateMachineId, setCreateSshCommand)}
               <label>
                 <span>Instance ID</span>
                 <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder="wiki-sop-new-instance" />
@@ -4223,6 +4402,7 @@ function RuntimeManagementStartDrawer({
             </div>
           ) : (
             <div className="runtime-drawer-form">
+              {renderMachineSelect(deleteMachineId, setDeleteMachineId, setDeleteSshCommand)}
               <label>
                 <span>Instance ID</span>
                 <input value={instanceDeleteId} onChange={(event) => setInstanceDeleteId(event.target.value)} disabled={pending} placeholder="wiki-sop-old-instance" />

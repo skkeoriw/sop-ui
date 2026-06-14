@@ -85,6 +85,32 @@ export interface RuntimeManagementConfigSaveInput {
   values: Record<string, string>;
 }
 
+export interface MachineConfig {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  sshCommand: string;
+  authType: "private_key" | "password" | string;
+  privateKeyPresent: boolean;
+  privateKey?: string;
+  passwordPresent: boolean;
+  password?: string;
+  labels: string[];
+  role: string;
+  status: string;
+  lastCheckAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface MachineList {
+  machines: MachineConfig[];
+  total: number;
+}
+
 export interface DagNode {
   id: string;
   title: string;
