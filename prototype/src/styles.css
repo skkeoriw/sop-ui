@@ -4891,10 +4891,10 @@ pre {
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.34);
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #e5edf7;
+  background: #ffffff;
+  color: #0f172a;
 }
 
 .machine-row div {
@@ -4907,15 +4907,15 @@ pre {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #d7e2ee;
-  background: rgba(226, 232, 240, 0.08);
-  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: #1e293b;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
   border-radius: 5px;
   padding: 2px 6px;
 }
 
 .machine-row span {
-  color: #cbd5e1;
+  color: #334155;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -4952,22 +4952,22 @@ pre {
 
 .machines-list-panel,
 .machine-detail-panel {
-  border: 1px solid rgba(148, 163, 184, 0.36);
+  border: 1px solid #cbd5e1;
   border-radius: 8px;
-  background: rgba(10, 17, 30, 0.92);
-  color: #e5edf7;
+  background: #f8fafc;
+  color: #0f172a;
   padding: 14px;
 }
 
 .machines-list-panel .panel-head strong,
 .machine-detail-panel .panel-head strong,
 .machine-row strong {
-  color: #f8fafc;
+  color: #0f172a;
 }
 
 .machines-list-panel .panel-head span,
 .machine-detail-panel .panel-head span {
-  color: #cbd5e1;
+  color: #475569;
 }
 
 .machine-row-button {
@@ -4980,15 +4980,15 @@ pre {
 
 .machine-row-button:hover,
 .machine-row-button:focus-visible {
-  border-color: rgba(125, 211, 252, 0.72);
-  background: rgba(21, 32, 52, 0.96);
+  border-color: #0284c7;
+  background: #eef6ff;
   outline: none;
 }
 
 .machine-row-button.active {
-  border-color: #38bdf8;
-  background: rgba(14, 116, 144, 0.28);
-  box-shadow: inset 3px 0 0 #38bdf8;
+  border-color: #0284c7;
+  background: #e0f2fe;
+  box-shadow: inset 3px 0 0 #0284c7;
 }
 
 .machine-detail-panel {
@@ -5001,24 +5001,24 @@ pre {
   gap: 10px;
   padding: 12px;
   border-radius: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.34);
-  background: rgba(15, 23, 42, 0.82);
-  color: #e5edf7;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
 }
 
 .machine-test-result.warning {
-  border-color: rgba(250, 204, 21, 0.58);
-  background: rgba(66, 51, 12, 0.46);
+  border-color: #d97706;
+  background: #fffbeb;
 }
 
 .machine-test-result.ok {
-  border-color: rgba(74, 222, 128, 0.48);
-  background: rgba(20, 83, 45, 0.34);
+  border-color: #16a34a;
+  background: #f0fdf4;
 }
 
 .machine-test-result.failed {
-  border-color: rgba(248, 113, 113, 0.52);
-  background: rgba(69, 10, 10, 0.38);
+  border-color: #dc2626;
+  background: #fef2f2;
 }
 
 .machine-test-title {
@@ -5029,15 +5029,15 @@ pre {
 }
 
 .machine-test-title strong {
-  color: #f8fafc;
+  color: #0f172a;
 }
 
 .machine-test-title span {
   margin-left: auto;
   padding: 3px 7px;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.62);
-  color: #e2e8f0;
+  background: #e2e8f0;
+  color: #0f172a;
   font-size: 11px;
   line-height: 1.2;
   white-space: nowrap;
@@ -5045,7 +5045,7 @@ pre {
 
 .machine-test-result p {
   margin: 0;
-  color: #e2e8f0;
+  color: #334155;
   font-size: 13px;
   line-height: 1.55;
 }
@@ -5056,7 +5056,7 @@ pre {
 }
 
 .machine-test-result summary {
-  color: #dbeafe;
+  color: #075985;
   cursor: pointer;
   font-size: 12px;
 }
