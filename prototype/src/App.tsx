@@ -3832,7 +3832,11 @@ function MachineTestResult({ result }: { result: Record<string, unknown> }) {
   const isAccepted = status === "accepted" || status === "succeeded" || Boolean(result.ok);
   const tone = isExecutorRequired || isRunning ? "warning" : isAccepted ? "ok" : "failed";
   const title = isExecutorRequired ? "SSH 测试执行器未接入" : status === "succeeded" ? "SSH 测试通过" : isRunning ? "SSH 测试执行中" : isAccepted ? "测试请求已接收" : "SSH 测试未通过";
-  const reason = isRunning
+  const reason = status === "succeeded"
+    ? "SSH Executor 已完成真实 SSH 连接测试，目标机器返回了预期探针输出。"
+    : status === "failed"
+    ? "SSH Executor 已执行测试，但目标机器连接或认证未通过。"
+    : isRunning
     ? "测试任务已进入 Control Plane，正在等待 SSH Executor 领取或回写结果。"
     : isExecutorRequired
     ? "Control Plane 已收到测试请求，但 Cloudflare Worker 不能直接打开 SSH 连接，需要开发机或 Runtime agent 执行真实 SSH 检测。"
