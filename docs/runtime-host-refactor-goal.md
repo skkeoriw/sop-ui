@@ -18,12 +18,58 @@
 
 1. 不修改 create runtime、delete runtime、create instance、delete instance 的核心执行流程。
 2. 不硬编码 IP、runtime id、machine id、instance id。
-3. 底层 API 类型可以暂时保留 runtime 字段，但用户可见文案逐步改成 Runtime Host。
+3. 底层 API 类型可以暂时保留 runtime 字段，但用户可见文案逐步收敛到 Runtime Host。
 4. Workflow Definition 和 Execution Run 必须拆开，不再把 execution 列表显示为 workflows。
 5. Node Definition 和 Node Run State 必须拆开，不再把节点定义和某次执行状态混成一个对象。
 6. GitHub repo、TG 通知配置、workspace path 归属 Instance，不归属 Runtime Host。
 7. Runtime Host 页面只表达机器宿主、Hermes、SPI、Tunnel、Health、Instances，不承载业务 repo/TG 配置。
 8. 支持 real/mock mode，现有数据缺字段时要有兼容空状态，不得导致页面报错。
+
+## Current-State Audit
+
+这次改造不是从零拆接口。当前代码已经完成一版拆分，后续重点是修正语义、查询边界和页面消费方式。
+
+### 已存在的 Runtime SPI 接口消费
+
+`prototype/src/data/sop-provider.ts` 已经优先调用 `/api/sop/v1/...`，失败后 fallback 到旧 `/api/sop/...`：
+
+- `listInstances` -> `/api/sop/v1/instances`
+- `getDag` -> `/api/sop/v1/instances/:instance_id/workflow`
+- `listRuns` -> `/api/sop/v1/instances/:instance_id/workflow/runs`
+- `getRun` -> `/api/sop/v1/instances/:instance_id/workflow/runs/:run_id`
+- `getRunEvents` -> `/api/sop/v1/instances/:instance_id/workflow/runs/:run_id/events`
+- `getRunArtifacts` -> `/api/sop/v1/instances/:instance_id/workflow/runs/:run_id/artifacts`
+- `getNode` -> `/api/sop/v1/instances/:instance_id/workflow/runs/:run_id/nodes/:node_id`
+- `getNodeLog`、`listNodes`、`listNodeModules`、`node-drafts` 仍按 runtime SPI 旧路径兼容。
+
+### 已存在的 Control Plane 接口消费
+
+`prototype/src/data/control-plane-provider.ts` 和 `sop-control-plane/src/index.js` 已经提供：
+
+- `settings` / `settings/resolve`
+- `machines`
+- `machines/:id`
+- `machines/:id/resolve`
+- `machines/:id/test`
+- `machine-check-jobs`
+- executor claim / complete
+- `runtimes` registry
+
+Settings 和 Machines 已经走 Control Plane + D1，不应再描述为需要新建的能力。
+
+### 当前不一致点
+
+- Runtime 页面曾默认加载 workflow DAG、runs、node registry，导致 Runtime Host 首屏被深层业务执行数据拖慢。
+- Runtime 关系区曾把 Execution Runs 展示在 `Workflows` 列里，造成 Workflow Definition 和 Execution Run 混淆。
+- Node Detail 曾出现在 Runtime Host 首页，给用户造成 Node 是 Runtime 一级资源的错觉。
+- Machines 页面已有 role/auth 筛选控件，但 provider 之前没有把 `role` / `auth_type` 参数带给 Control Plane。
+
+### 本阶段修正边界
+
+- Runtime Host 首屏只加载 runtimes、instances summary、health/Hermes 手动检查，不主动加载 DAG/runs/nodes。
+- Runtime 关系区只展示 Host -> Instance -> Workflow Definition -> Latest Execution 的摘要链路。
+- Workflow Definition、Execution Run、Node Run State 的完整详情继续留在 Instance / Workflow / Nodes 页面按需加载。
+- Machines 筛选参数必须真实传递给 Control Plane。
 
 ## 页面交互改造
 
@@ -147,7 +193,9 @@ NodeRunState
 
 ## 接口设计方向
 
-后续接口应按查询粒度拆分：
+接口已经拆过一版。后续不是重建接口，而是把现有接口补齐为更稳定的 summary/detail/page/search 语义；底层兼容旧路径时，前端仍优先使用 `/api/sop/v1/...`。
+
+长期目标路径可以收敛为：
 
 - `GET /runtime-hosts`
 - `GET /runtime-hosts/:hostId`

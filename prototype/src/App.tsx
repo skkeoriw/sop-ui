@@ -964,8 +964,8 @@ export default function App() {
     instanceDeleteForce,
   ]);
 
-  const shouldLoadWorkflowShape = viewMode === "runtime" || viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes";
-  const shouldLoadRuns = viewMode === "runtime" || viewMode === "instance" || viewMode === "workflow";
+  const shouldLoadWorkflowShape = viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes";
+  const shouldLoadRuns = viewMode === "instance" || viewMode === "workflow";
   const shouldLoadRunDetail = viewMode === "workflow" && Boolean(route.pipelineId);
   const dagQuery = useQuery({
     queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""),
@@ -975,7 +975,7 @@ export default function App() {
   const runtimeInheritanceQuery = useQuery({
     queryKey: ["runtime-inheritance", mode, runtime?.id || "", managementInstance?.instanceId || ""],
     queryFn: () => provider.getRuntimeInheritance(runtime!, managementInstance!.instanceId),
-    enabled: Boolean(runtime && managementInstance),
+    enabled: Boolean(runtime && managementInstance && triggerOpen),
     retry: 1,
   });
   const runtimeManagementConfigQuery = useQuery({
@@ -1079,7 +1079,7 @@ export default function App() {
   const nodesQuery = useQuery({
     queryKey: queryKeys.nodes(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodes(runtime!, instance!.instanceId),
-    enabled: Boolean(runtime && instance)
+    enabled: Boolean(runtime && instance && (viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes"))
   });
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
@@ -1804,7 +1804,7 @@ export default function App() {
         </div>
         <nav className="rail-nav" aria-label="Primary">
           <button type="button" className={viewMode === "runtime" ? "active" : ""} onClick={() => navigateTo("runtime")}>
-            <Server size={17} /><span>Runtime</span><small>{instances.length || "-"} instances</small>
+            <Server size={17} /><span>Hosts</span><small>{instances.length || "-"} instances</small>
           </button>
           <button type="button" className={viewMode === "instance" ? "active" : ""} onClick={() => navigateTo("instance")}>
             <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
@@ -2382,8 +2382,8 @@ function RuntimeSwitcher({
       <button type="button" className="runtime-switcher-button" onClick={() => onOpenChange(!open)} aria-expanded={open}>
         <Server size={16} />
         <span>
-          <small>Runtime</small>
-          <strong>{runtime?.displayName || runtime?.name || "Select runtime"}</strong>
+          <small>Runtime Host</small>
+          <strong>{runtime?.displayName || runtime?.name || "Select host"}</strong>
         </span>
         <em className={runtime?.localStatus === "ok" ? "ok" : "warn"}>{runtime?.localStatus || runtime?.status || "unknown"}</em>
         <ChevronDown size={15} />
@@ -2516,19 +2516,22 @@ function RuntimeOverview({
   const relationshipInstance = instances.find((item) => item.instanceId === relationshipInstanceId)
     || selectedInstance
     || instances[0];
-  const relationshipRun = runs.find((run) => run.pipelineId === relationshipRunId)
+  const relationshipWorkflow = relationshipInstance?.workflowBinding;
+  const relationshipRun = relationshipInstance?.latestExecution
+    || runs.find((run) => run.pipelineId === relationshipRunId)
     || selectedRun
-    || relationshipInstance?.latestExecution
     || runs[0];
-  const relationshipNodes = dag?.nodes || [];
+  const workflowDefinitionCount = instances.filter((item) => item.workflowBinding).length;
+  const latestExecutionCount = instances.filter((item) => item.latestExecution).length;
+  const relationshipNodes: DagNode[] = [];
   const relationshipNode = relationshipNodes.find((node) => node.id === relationshipNodeId) || relationshipNodes[0];
   const relationshipProgress = runProgressFromNodes(relationshipRun, dag);
   const relationshipNodeStatus = relationshipNode ? relationshipRun?.nodes?.[relationshipNode.id] || "waiting" : "waiting";
   const relationshipPath = [
     runtime?.displayName || runtime?.name || runtime?.id,
     relationshipInstance?.instanceId,
-    relationshipRun?.pipelineId ? shortId(relationshipRun.pipelineId) : relationshipInstance?.workflowBinding?.workflowName,
-    relationshipNode?.id,
+    relationshipWorkflow?.workflowName,
+    relationshipRun?.pipelineId ? shortId(relationshipRun.pipelineId) : "",
   ].filter(Boolean).join(" / ");
 
   const handleRunProbe = async () => {
@@ -2594,7 +2597,7 @@ function RuntimeOverview({
     <section className="runtime-overview">
       <div className="concept-hero runtime-hero">
         <div>
-          <span className="status-pill running"><Server size={14} />Runtime Overview</span>
+          <span className="status-pill running"><Server size={14} />Runtime Host Overview</span>
           <h1>Runtime 承载执行能力，Instance 承载业务隔离。</h1>
           <p>先确认机器、通道、SPI 和 Hermes 所在的运行环境，再进入某个 Instance 查看 Workflow、Executions、Nodes 和 Artifacts。</p>
         </div>
@@ -2623,13 +2626,13 @@ function RuntimeOverview({
       <section className="flow-panel runtime-relationship-panel">
         <div className="panel-head runtime-relationship-head">
           <div>
-            <strong>Runtime Relationship Explorer</strong>
-            <span>{relationshipPath || "选择 Runtime 后查看 Instance / Workflow / Node 关系"}</span>
+            <strong>Runtime Host Relationship</strong>
+            <span>{relationshipPath || "选择 Runtime 后查看 Host / Instance / Workflow Definition / Latest Execution 摘要"}</span>
           </div>
           <div className="runtime-relationship-actions">
             <span>{instances.length} instances</span>
-            <span>{runs.length || (relationshipInstance?.latestExecution ? 1 : 0)} workflows</span>
-            <span>{relationshipNodes.length} nodes</span>
+            <span>{workflowDefinitionCount} workflow definitions</span>
+            <span>{latestExecutionCount} latest executions</span>
           </div>
         </div>
         <div className="relationship-columns">
@@ -2664,116 +2667,97 @@ function RuntimeOverview({
 
           <div className="relationship-column">
             <div className="relationship-column-head">
-              <strong>Workflows</strong>
-              <span>{runs.length || (relationshipInstance?.latestExecution ? 1 : 0)}</span>
+              <strong>Workflow Definition</strong>
+              <span>{relationshipWorkflow ? 1 : 0}</span>
             </div>
             <div className="relationship-list">
-              {(runs.length ? runs : relationshipInstance?.latestExecution ? [relationshipInstance.latestExecution] : []).map((run) => {
-                const progress = runProgressFromNodes(run, dag);
-                return (
-                  <button
-                    key={run.pipelineId}
-                    type="button"
-                    className={`relationship-item workflow ${relationshipRun?.pipelineId === run.pipelineId ? "active" : ""}`}
-                    onClick={() => {
-                      setRelationshipRunId(run.pipelineId);
-                      setRelationshipNodeId(relationshipNodes[0]?.id || "");
-                    }}
-                  >
-                    <span>
-                      <strong>{relationshipInstance?.workflowBinding?.workflowName || shortId(run.pipelineId)}</strong>
-                      <small>{shortId(run.pipelineId)} · {progress.percent}% · {run.updatedAt || run.startedAt}</small>
-                    </span>
-                    <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
-                  </button>
-                );
-              })}
-              {!runs.length && !relationshipInstance?.latestExecution && (
-                <Empty text={relationshipInstance ? "当前 Instance 没有 Workflow Run" : "先选择一个 Instance"} />
-              )}
-              {relationshipInstance?.workflowBinding && (
-                <div className="relationship-binding">
-                  <strong>{relationshipInstance.workflowBinding.workflowName}</strong>
-                  <span>{relationshipInstance.workflowBinding.workflowVersion || relationshipInstance.workflowBinding.bindingStatus || "binding"}</span>
-                </div>
+              {relationshipWorkflow ? (
+                <button
+                  type="button"
+                  className="relationship-item workflow active"
+                  onClick={() => relationshipInstance && onOpenWorkflow(relationshipInstance.instanceId)}
+                >
+                  <span>
+                    <strong>{relationshipWorkflow.workflowName || relationshipInstance?.sopType || "workflow"}</strong>
+                    <small>{relationshipWorkflow.definitionPath || relationshipWorkflow.definitionSource || "agent-brains SOP definition"}</small>
+                  </span>
+                  <span className={`status-pill ${relationshipWorkflow.bindingStatus === "failed" ? "failed" : "done"}`}>
+                    {relationshipWorkflow.workflowVersion || relationshipWorkflow.bindingStatus || "bound"}
+                  </span>
+                </button>
+              ) : (
+                <Empty text={relationshipInstance ? "当前 Instance 没有 Workflow Definition 绑定" : "先选择一个 Instance"} />
               )}
             </div>
           </div>
 
           <div className="relationship-column">
             <div className="relationship-column-head">
-              <strong>Nodes</strong>
-              <span>{relationshipNodes.length}</span>
+              <strong>Latest Execution</strong>
+              <span>{relationshipRun ? 1 : 0}</span>
             </div>
             <div className="relationship-list">
-              {relationshipNodes.map((node) => {
-                const state = relationshipRun?.nodes?.[node.id] || "waiting";
-                const stateDetail = relationshipRun?.nodeStates?.[node.id];
-                return (
-                  <button
-                    key={node.id}
-                    type="button"
-                    className={`relationship-item node ${relationshipNode?.id === node.id ? "active" : ""} ${state}`}
-                    onClick={() => setRelationshipNodeId(node.id)}
-                  >
-                    <span>
-                      <strong>{node.title}</strong>
-                      <small>{node.id} · {node.mode} · {formatDuration(stateDetail?.durationS || 0)}</small>
-                    </span>
-                    <span className={`status-pill ${state}`}>{statusLabel(state)}</span>
-                  </button>
-                );
-              })}
-              {!relationshipNodes.length && (
-                <Empty text={relationshipInstance ? "当前 Workflow 没有 DAG 节点数据" : "先选择一个 Instance"} />
+              {relationshipRun ? (
+                <button
+                  type="button"
+                  className={`relationship-item node active ${relationshipRun.status}`}
+                  onClick={() => relationshipInstance && onOpenWorkflow(relationshipInstance.instanceId, relationshipRun.pipelineId)}
+                >
+                  <span>
+                    <strong>{shortId(relationshipRun.pipelineId)}</strong>
+                    <small>{relationshipRun.updatedAt || relationshipRun.startedAt || "no timestamp"} · {runProgressFromNodes(relationshipRun).percent}%</small>
+                  </span>
+                  <span className={`status-pill ${relationshipRun.status}`}>{statusLabel(relationshipRun.status)}</span>
+                </button>
+              ) : (
+                <Empty text={relationshipInstance ? "当前 Instance 没有 Execution 记录" : "先选择一个 Instance"} />
               )}
             </div>
           </div>
 
           <aside className="relationship-detail">
             <div className="relationship-column-head">
-              <strong>Node Detail</strong>
-              <span className={`status-pill ${relationshipNodeStatus}`}>{statusLabel(relationshipNodeStatus)}</span>
+              <strong>Boundary Detail</strong>
+              <span className={`status-pill ${relationshipRun?.status || relationshipInstance?.status || "waiting"}`}>
+                {relationshipRun ? statusLabel(relationshipRun.status) : relationshipInstance?.status || "waiting"}
+              </span>
             </div>
-            {relationshipNode ? (
+            {relationshipInstance ? (
               <>
                 <div className="relationship-detail-title">
-                  <strong>{relationshipNode.title}</strong>
-                  <code>{relationshipNode.id}</code>
+                  <strong>{relationshipInstance.title || relationshipInstance.instanceId}</strong>
+                  <code>{relationshipInstance.instanceId}</code>
                 </div>
                 <KeyValues data={{
                   runtime: runtime?.id || "-",
                   instance: relationshipInstance?.instanceId || "-",
-                  workflow: relationshipInstance?.workflowBinding?.workflowName || "-",
+                  workflow_definition: relationshipWorkflow?.workflowName || "-",
+                  definition_path: relationshipWorkflow?.definitionPath || "-",
                   run: relationshipRun?.pipelineId || "-",
-                  status: relationshipNodeStatus,
-                  started_at: relationshipRun?.nodeStates?.[relationshipNode.id]?.startedAt || "-",
-                  finished_at: relationshipRun?.nodeStates?.[relationshipNode.id]?.finishedAt || "-",
-                  duration: formatDuration(relationshipRun?.nodeStates?.[relationshipNode.id]?.durationS || 0),
-                  attempt: relationshipRun?.nodeStates?.[relationshipNode.id]?.attempt || "-",
+                  run_status: relationshipRun ? statusLabel(relationshipRun.status) : "-",
+                  progress: relationshipRun ? `${runProgressFromNodes(relationshipRun).percent}%` : "-",
+                  repo: relationshipInstance.repo || "-",
+                  artifacts: relationshipInstance.artifactCount ?? "-",
                 }} />
-                {relationshipRun?.nodeStates?.[relationshipNode.id]?.error && (
-                  <pre className="log-box error-log">{relationshipRun.nodeStates[relationshipNode.id].error}</pre>
-                )}
                 <div className="relationship-detail-actions">
                   <button type="button" onClick={() => relationshipInstance && onOpenInstance(relationshipInstance.instanceId)}>Open Instance</button>
                   <button
                     type="button"
                     className="primary"
                     disabled={!relationshipInstance}
-                    onClick={() => relationshipInstance && onOpenWorkflow(relationshipInstance.instanceId, relationshipRun?.pipelineId || "", relationshipNode.id)}
+                    onClick={() => relationshipInstance && onOpenWorkflow(relationshipInstance.instanceId, relationshipRun?.pipelineId || "")}
                   >
-                    Open Workflow
+                    {relationshipRun ? "Open Execution" : "Open Workflow"}
                   </button>
                 </div>
                 <div className="relationship-progress">
-                  <span>Workflow progress</span>
+                  <span>Latest execution progress</span>
                   <div className="dag-progress"><span style={{ width: `${relationshipProgress.percent}%` }} /></div>
                   <small>{relationshipProgress.done}/{relationshipProgress.total} nodes · {relationshipProgress.percent}%</small>
                 </div>
               </>
             ) : (
-              <Empty text="选择一个节点查看详情" />
+              <Empty text="选择一个 Instance 查看边界摘要" />
             )}
           </aside>
         </div>
@@ -2782,7 +2766,7 @@ function RuntimeOverview({
       <section className="runtime-detail-grid">
         <div className="flow-panel runtime-identity-panel">
           <div className="panel-head">
-            <div><strong>Runtime Detail</strong><span>机器、通道和 SPI 的当前状态</span></div>
+            <div><strong>Host Detail</strong><span>机器、通道和 SPI 的当前状态</span></div>
             <span className={`status-pill ${runtimeStatus}`}>{runtime?.localStatus || runtime?.status || "unknown"}</span>
           </div>
           <div className="runtime-detail-body">
@@ -2803,7 +2787,7 @@ function RuntimeOverview({
 
         <div className="flow-panel runtime-health-panel">
           <div className="panel-head">
-            <div><strong>Runtime Health</strong><span>面向控制台的可用性摘要</span></div>
+            <div><strong>Host Health</strong><span>面向控制台的可用性摘要</span></div>
             <button type="button" className="ghost-btn compact" onClick={handleRunProbe} disabled={!runtime || probeRunning}>
               {probeRunning ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}Run Checks
             </button>
@@ -2919,7 +2903,7 @@ function RuntimeOverview({
       <section className="flow-panel runtime-management-panel">
         <div className="panel-head">
           <div>
-            <strong>Runtime Management</strong>
+            <strong>Host Operations</strong>
             <span>所有动作都通过 runtime-management workflow 执行和记录</span>
           </div>
           <span className={`status-pill ${managementInstance ? "done" : "waiting"}`}>
@@ -4739,13 +4723,13 @@ function MachineTestResult({ result }: { result: Record<string, unknown> }) {
       }} />
       {(stdout || stderr) && (
         <div className="machine-test-output">
-          {stdout && <pre className="node-test-stdout">{stdout}</pre>}
-          {stderr && <pre className="node-test-stdout">{stderr}</pre>}
+          {stdout && <pre className="machine-test-pre">{stdout}</pre>}
+          {stderr && <pre className="machine-test-pre">{stderr}</pre>}
         </div>
       )}
       <details>
         <summary>Raw response</summary>
-        <pre className="node-test-stdout">{JSON.stringify(result, null, 2)}</pre>
+        <pre className="machine-test-pre">{JSON.stringify(result, null, 2)}</pre>
       </details>
     </section>
   );
@@ -5398,7 +5382,7 @@ function RuntimeManagementStartDrawer({
         </div>
         <div className="drawer-body">
           <div className="drawer-note">
-            <strong>Runtime Management SOP</strong>
+            <strong>Host Operations SOP</strong>
             <span>在当前 Runtime 上启动 runtime-management workflow；默认使用管理端已保存的目标 SSH 和 Runtime 配置。</span>
           </div>
           <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />

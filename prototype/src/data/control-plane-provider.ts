@@ -152,6 +152,8 @@ export const controlPlaneProvider = {
       pageSize: options?.pageSize || 25,
       q: options?.q || "",
       status: options?.status || "all",
+      role: options?.role || "",
+      authType: options?.authType || "",
       sort: options?.sort,
       order: options?.order,
     });
