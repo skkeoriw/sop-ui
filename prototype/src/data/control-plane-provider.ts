@@ -1,4 +1,4 @@
-import type { MachineConfig, MachineList, MachineSecretConfig, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput } from "./types";
+import type { MachineConfig, MachineList, MachineSecretConfig, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput, WorkflowSettingsResolve } from "./types";
 
 const DEFAULT_CONTROL_PLANE_API = "https://sop-control-plane.hb67egcim4.workers.dev";
 
@@ -85,6 +85,21 @@ export const controlPlaneProvider = {
       backend: raw.backend,
       d1: raw.d1,
     } as RuntimeInheritancePreview;
+  },
+
+  async resolveSettingsForWorkflow(): Promise<WorkflowSettingsResolve> {
+    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/settings/resolve`);
+    const payload = raw.payload && typeof raw.payload === "object" ? raw.payload as Record<string, unknown> : {};
+    const values = raw.values && typeof raw.values === "object" ? raw.values as Record<string, unknown> : {};
+    return {
+      ok: Boolean(raw.ok),
+      backend: raw.backend ? String(raw.backend) : undefined,
+      source: raw.source ? String(raw.source) : undefined,
+      payload: Object.fromEntries(Object.entries(payload).map(([key, value]) => [key, String(value)])),
+      values: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])),
+      presentKeys: Array.isArray(raw.present_keys) ? raw.present_keys.map(String) : [],
+      payloadKeys: Array.isArray(raw.payload_keys) ? raw.payload_keys.map(String) : [],
+    };
   },
 
   async saveSettings(input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview> {

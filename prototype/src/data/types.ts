@@ -484,6 +484,16 @@ export interface TriggerInput {
   input?: Record<string, unknown>;
 }
 
+export interface WorkflowSettingsResolve {
+  ok: boolean;
+  backend?: string;
+  source?: string;
+  values?: Record<string, string>;
+  payload: Record<string, string>;
+  presentKeys?: string[];
+  payloadKeys?: string[];
+}
+
 export interface TriggerResult {
   status: string;
   pipelineId?: string;

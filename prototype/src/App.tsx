@@ -402,6 +402,10 @@ function parseRuntimeEnvOverrides(value: string): Record<string, string> {
   return env;
 }
 
+function compactStringRecord(input: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(input).filter(([, value]) => String(value || "").trim()).map(([key, value]) => [key, String(value).trim()]));
+}
+
 function statusIcon(status: StageStatus) {
   if (status === "done") return <CheckCircle2 size={15} />;
   if (status === "running") return <Loader2 size={15} className="spin" />;
@@ -888,7 +892,7 @@ export default function App() {
   const runtimeManagementConfigQuery = useQuery({
     queryKey: ["control-plane-settings", mode],
     queryFn: () => controlPlaneProvider.getSettings(),
-    enabled: viewMode === "settings",
+    enabled: viewMode === "settings" || triggerOpen,
     retry: 1,
   });
   const machinesQuery = useQuery({
@@ -1066,16 +1070,27 @@ export default function App() {
     };
   };
 
+  const resolveGlobalWorkflowPayload = async () => {
+    const resolved = await controlPlaneProvider.resolveSettingsForWorkflow();
+    if (!resolved.ok) throw new Error("Control Plane 全局配置加载失败");
+    return compactStringRecord(resolved.payload || {});
+  };
+
   const createRuntimeMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
       const sshPayload = await resolveMachineSshPayload(runtimeCreateMachineId, runtimeCreateSshCommand, runtimeCreatePrivateKey);
+      const globalPayload = await resolveGlobalWorkflowPayload();
+      const runtimeOverrides = {
+        ...compactStringRecord(parseRuntimeEnvOverrides(runtimeCreateEnvText)),
+        ...compactStringRecord(runtimeCreateConfigOverrides),
+      };
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-runtime",
+          ...globalPayload,
           ...sshPayload,
-          ...parseRuntimeEnvOverrides(runtimeCreateEnvText),
-          ...Object.fromEntries(Object.entries(runtimeCreateConfigOverrides).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()])),
+          ...runtimeOverrides,
         }),
         minimumDelay(450),
       ]);
@@ -1105,9 +1120,11 @@ export default function App() {
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
       const sshPayload = await resolveMachineSshPayload(runtimeDeleteMachineId, runtimeDeleteSshCommand, runtimeDeletePrivateKey);
+      const globalPayload = await resolveGlobalWorkflowPayload();
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-runtime",
+          ...globalPayload,
           runtime_id: runtimeDeleteId,
           ...sshPayload,
           force: runtimeDeleteForce,
@@ -1148,9 +1165,15 @@ export default function App() {
       if (!instancePayload.instance_id) throw new Error("请填写 Instance ID");
       if (!instancePayload.repo) throw new Error("请填写 Instance Repo");
       const sshPayload = await resolveMachineSshPayload(runtimeCreateMachineId, runtimeCreateSshCommand, runtimeCreatePrivateKey);
+      const globalPayload = await resolveGlobalWorkflowPayload();
+      const runtimeOverrides = {
+        ...compactStringRecord(parseRuntimeEnvOverrides(runtimeCreateEnvText)),
+        ...compactStringRecord(runtimeCreateConfigOverrides),
+      };
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-instance",
+          ...globalPayload,
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
           ...sshPayload,
@@ -1159,8 +1182,7 @@ export default function App() {
           instance_repo: instancePayload.repo,
           instance_sop_type: instancePayload.sop_type,
           instances: [instancePayload],
-          ...parseRuntimeEnvOverrides(runtimeCreateEnvText),
-          ...Object.fromEntries(Object.entries(runtimeCreateConfigOverrides).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()])),
+          ...runtimeOverrides,
         }),
         minimumDelay(450),
       ]);
@@ -1933,14 +1955,14 @@ export default function App() {
           setInstanceDeleteRepo={setInstanceDeleteRepo}
           instanceDeleteForce={instanceDeleteForce}
           setInstanceDeleteForce={setInstanceDeleteForce}
-          inheritance={runtimeInheritanceQuery.data}
-          inheritanceLoading={runtimeInheritanceQuery.isLoading}
-          inheritanceError={runtimeInheritanceQuery.error ? String(runtimeInheritanceQuery.error.message) : ""}
-          onRefreshInheritance={() => runtimeInheritanceQuery.refetch()}
+          inheritance={runtimeManagementConfigQuery.data}
+          inheritanceLoading={runtimeManagementConfigQuery.isLoading}
+          inheritanceError={runtimeManagementConfigQuery.error ? String(runtimeManagementConfigQuery.error.message) : ""}
+          onRefreshInheritance={() => runtimeManagementConfigQuery.refetch()}
           onSaveDefaults={saveRuntimeManagementDefaults}
           onResetDefaults={resetRuntimeManagementDefaults}
           onLoadInheritanceToEnv={() => {
-            setRuntimeCreateEnvText(runtimeEnvTemplateFromPreview(runtimeInheritanceQuery.data));
+            setRuntimeCreateEnvText(runtimeEnvTemplateFromPreview(runtimeManagementConfigQuery.data));
             setToast("已把继承配置模板加载到 Runtime Env Overrides");
           }}
           createPending={createRuntimeMutation.isPending || createInstanceMutation.isPending}
