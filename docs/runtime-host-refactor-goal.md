@@ -29,6 +29,18 @@
 
 这次改造不是从零拆接口。当前代码已经完成一版拆分，后续重点是修正语义、查询边界和页面消费方式。
 
+### 表述纠偏
+
+以下说法不能再作为准确现状使用：
+
+- “接口还没有拆”：不准确。前端 provider 已经按 Control Plane、Runtime SPI、Machine、Settings、Execution、Node 等领域拆出调用边界；准确说法是后端接口还没有完全收敛为 summary/detail/page/search 的稳定产品语义。
+- “接口已经完全拆完”：不准确。Runtime 列表已优先走 Control Plane registry，Instance / Workflow / Execution / Node 仍主要走各 Runtime SPI，部分能力还依赖旧路径 fallback。
+- “Settings 需要通过某台 Runtime 读取”：不准确。Settings 当前由 SOP UI 直接调用 Control Plane Worker，再由 Worker 读写 D1；它是全局配置，不归属任何 Runtime Host。
+- “Machine Node 等同 Runtime Host”：不准确。Machine Node 是原始 SSH 连接配置；Runtime Host 是在某台 Machine 上部署后的 Hermes + SPI + Tunnel 运行宿主。
+- “Workflow 列表就是 Workflow”：不准确。当前页面里很多所谓 workflow 列表实际是某个 Workflow Definition 的 Execution Runs；后续文案和页面必须统一称为 Executions / Runs。
+- “选择 Machine Node 需要改 workflow 核心逻辑”：不准确。选择 Machine Node 的第一阶段目标只是从 Control Plane D1 加载 SSH 入参，并按旧 workflow 参数提交 `ssh_command`、`private_key_b64`、`ssh_password`。
+- “R2 静态原型上线等于 React 页面已改造”：不准确。R2 HTML 只是交互参考，线上 React 页面必须单独实现、构建和部署。
+
 ### 已存在的 Runtime SPI 接口消费
 
 `prototype/src/data/sop-provider.ts` 已经优先调用 `/api/sop/v1/...`，失败后 fallback 到旧 `/api/sop/...`：

@@ -4526,6 +4526,22 @@ function SettingsPage({
       ],
     },
   ];
+  const renderedConfigKeys = new Set<string>();
+  configCards.forEach((card) => {
+    card.keys.forEach((field) => {
+      renderedConfigKeys.add(field.key);
+      const item = itemByKey.get(field.key);
+      (item?.aliases || []).forEach((alias) => renderedConfigKeys.add(alias.toUpperCase()));
+    });
+  });
+  ["CF_EMAIL", "CF_API_KEY"].forEach((key) => renderedConfigKeys.add(key));
+  const extraConfigFields = (managementConfig?.items || [])
+    .filter((item) => item.key && !renderedConfigKeys.has(item.key))
+    .map((item) => ({
+      key: item.key,
+      label: item.key.replace(/_/g, " "),
+      placeholder: item.present ? "已配置；填写则覆盖" : "填写全局配置值",
+    }));
   const renderConfigField = (field: { key: string; label: string; placeholder: string }) => {
     const item = itemByKey.get(field.key);
     const edited = Boolean(managementConfigValues[field.key]?.trim());
@@ -4629,6 +4645,21 @@ function SettingsPage({
               </article>
             );
           })}
+          {extraConfigFields.length > 0 && (
+            <article className="global-config-card settings-wide">
+              <div className="global-config-card-head">
+                <span><SlidersHorizontal size={18} /></span>
+                <div>
+                  <strong>Other Global Settings</strong>
+                  <small>D1 返回但未归入固定卡片的配置项，仍可直接查看和覆盖</small>
+                </div>
+                <em>{extraConfigFields.filter((field) => itemByKey.get(field.key)?.present).length}/{extraConfigFields.length}</em>
+              </div>
+              <div className="global-config-fields">
+                {extraConfigFields.map(renderConfigField)}
+              </div>
+            </article>
+          )}
         </section>
       </form>
       <section className="global-config-card-grid machine-config-grid">
@@ -4749,7 +4780,7 @@ function MachinesPage({
   onDuplicateMachine: (id: string, reuseSecret: boolean) => void;
   onToast: (message: string) => void;
 }) {
-  const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
+  const selectedMachine = selectedMachineId ? machines.find((machine) => machine.id === selectedMachineId) : undefined;
   const machineTotal = machineList?.total ?? machines.length;
   const hasNextPage = Boolean(machineList?.hasMore);
   const loadMachine = (machine: MachineConfig) => {
