@@ -3410,6 +3410,19 @@ pre {
   font-size: 12px;
 }
 
+.current-runtime-summary {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.current-runtime-summary strong {
+  color: #14532d;
+}
+
+.current-runtime-summary span {
+  color: #166534;
+}
+
 .inline-warning {
   padding: 10px 12px;
   border: 1px solid #facc15;

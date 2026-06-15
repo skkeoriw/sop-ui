@@ -1314,7 +1314,6 @@ export default function App() {
       };
       if (!instancePayload.instance_id) throw new Error("请填写 Instance ID");
       if (!instancePayload.repo) throw new Error("请填写 Instance Repo");
-      const sshPayload = await resolveMachineSshPayload(runtimeCreateMachineId, runtimeCreateSshCommand, runtimeCreatePrivateKey);
       const globalPayload = await resolveGlobalWorkflowPayload();
       const runtimeOverrides = {
         ...compactStringRecord(parseRuntimeEnvOverrides(runtimeCreateEnvText)),
@@ -1326,7 +1325,6 @@ export default function App() {
           ...globalPayload,
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
-          ...sshPayload,
           instance_id: instancePayload.instance_id,
           repo: instancePayload.repo,
           instance_repo: instancePayload.repo,
@@ -1364,13 +1362,11 @@ export default function App() {
       const targetId = instanceDeleteId.trim();
       if (!targetId) throw new Error("请填写 Instance ID");
       const targetRepo = instanceDeleteRepo.trim() || `skkeoriw/${targetId}`;
-      const sshPayload = await resolveMachineSshPayload(runtimeDeleteMachineId, runtimeDeleteSshCommand, runtimeDeletePrivateKey);
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-instance",
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
-          ...sshPayload,
           instance_id: targetId,
           repo: targetRepo,
           instance_repo: targetRepo,
@@ -5561,6 +5557,10 @@ function RuntimeManagementStartDrawer({
   const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
   const selectedDeleteMachine = machines.find((machine) => machine.id === deleteMachineId);
   const inferredDeleteRuntimeId = machineRuntimeId(selectedDeleteMachine);
+  const operationBoundaryTitle = isCreateRuntime || isDeleteRuntime ? "Target Machine Boundary" : "Current Runtime Boundary";
+  const operationBoundaryText = isCreateRuntime || isDeleteRuntime
+    ? "Runtime 创建/删除需要目标机器；优先选择 Machine Node，Control Plane 会注入保存的 SSH 凭据。"
+    : "Instance 创建/删除只作用于当前 Runtime Host，不选择目标机器，也不注入 SSH 凭据。";
   const renderMachineSelect = (
     value: string,
     onChange: (value: string) => void,
@@ -5599,8 +5599,8 @@ function RuntimeManagementStartDrawer({
         </div>
         <div className="drawer-body">
           <div className="drawer-note">
-            <strong>Host Operations SOP</strong>
-            <span>在当前 Runtime 上启动 runtime-management workflow；默认使用管理端已保存的目标 SSH 和 Runtime 配置。</span>
+            <strong>{operationBoundaryTitle}</strong>
+            <span>{operationBoundaryText}</span>
           </div>
           <KeyValues data={{ endpoint: runtime.endpoint, instance: instance.instanceId, repo: instance.repo }} />
 
@@ -5724,7 +5724,17 @@ function RuntimeManagementStartDrawer({
             </div>
           ) : isCreateInstance ? (
             <div className="runtime-drawer-form">
-              {renderMachineSelect(createMachineId, setCreateMachineId, setCreateSshCommand)}
+              <section className="selected-machine-summary current-runtime-summary">
+                <div>
+                  <strong>Current Runtime Host</strong>
+                  <span>Instance 会在当前 Runtime 内创建，不选择目标机器。</span>
+                </div>
+                <KeyValues data={{
+                  runtime_id: runtime?.id || "-",
+                  channel_url: runtime?.channelUrl || runtime?.endpoint || "-",
+                  management_instance: instance.instanceId,
+                }} />
+              </section>
               <label>
                 <span>Instance ID</span>
                 <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder="wiki-sop-new-instance" />
@@ -5737,17 +5747,6 @@ function RuntimeManagementStartDrawer({
                 <span>SOP Type</span>
                 <input value={instanceCreateSopType} onChange={(event) => setInstanceCreateSopType(event.target.value)} disabled={pending} placeholder="youtube-research-wiki" />
               </label>
-              <details className="advanced-runtime-overrides">
-                <summary>Manual SSH Override</summary>
-                <label>
-                  <span>SSH Command</span>
-                  <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；优先使用 Machine Node" />
-                </label>
-                <label>
-                  <span>Private Key</span>
-                  <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；正常情况下从 Machine Node 加载" rows={6} />
-                </label>
-              </details>
               <RuntimeInheritancePreviewPanel
                 preview={inheritance}
                 loading={inheritanceLoading}
@@ -5759,7 +5758,17 @@ function RuntimeManagementStartDrawer({
             </div>
           ) : (
             <div className="runtime-drawer-form">
-              {renderMachineSelect(deleteMachineId, setDeleteMachineId, setDeleteSshCommand)}
+              <section className="selected-machine-summary current-runtime-summary">
+                <div>
+                  <strong>Current Runtime Host</strong>
+                  <span>Instance 会在当前 Runtime 内删除，不选择目标机器。</span>
+                </div>
+                <KeyValues data={{
+                  runtime_id: runtime?.id || "-",
+                  channel_url: runtime?.channelUrl || runtime?.endpoint || "-",
+                  management_instance: instance.instanceId,
+                }} />
+              </section>
               <label>
                 <span>Instance ID</span>
                 <input value={instanceDeleteId} onChange={(event) => setInstanceDeleteId(event.target.value)} disabled={pending} placeholder="wiki-sop-old-instance" />
@@ -5768,17 +5777,6 @@ function RuntimeManagementStartDrawer({
                 <span>Instance Repo</span>
                 <input value={instanceDeleteRepo} onChange={(event) => setInstanceDeleteRepo(event.target.value)} disabled={pending} placeholder="skkeoriw/wiki-sop-old-instance" />
               </label>
-              <details className="advanced-runtime-overrides">
-                <summary>Manual SSH Override</summary>
-                <label>
-                  <span>SSH Command</span>
-                  <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；优先使用 Machine Node" />
-                </label>
-                <label>
-                  <span>Private Key</span>
-                  <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；正常情况下从 Machine Node 加载" rows={6} />
-                </label>
-              </details>
               <label className="inline-check drawer-inline-check">
                 <input type="checkbox" checked={instanceDeleteForce} onChange={(event) => setInstanceDeleteForce(event.target.checked)} disabled={pending} />
                 <span>Force when running executions exist</span>
