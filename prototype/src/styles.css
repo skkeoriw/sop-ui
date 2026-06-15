@@ -659,6 +659,26 @@ pre {
   margin-bottom: 10px;
 }
 
+.machine-tools {
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 160px);
+}
+
+.list-pagination {
+  display: grid;
+  grid-template-columns: minmax(88px, auto) minmax(0, 1fr) minmax(72px, auto);
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.list-pagination span {
+  justify-self: center;
+  color: #475569;
+  font-weight: 700;
+}
+
 .search-box,
 .filter-box {
   display: grid;
@@ -5115,6 +5135,10 @@ pre {
 
 @media (max-width: 900px) {
   .machines-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .machine-tools {
     grid-template-columns: 1fr;
   }
 }

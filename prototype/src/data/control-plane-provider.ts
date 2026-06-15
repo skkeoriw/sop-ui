@@ -1,4 +1,4 @@
-import type { MachineConfig, MachineList, MachineSecretConfig, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput, WorkflowSettingsResolve } from "./types";
+import type { ListQueryOptions, MachineConfig, MachineList, MachineSecretConfig, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput, WorkflowSettingsResolve } from "./types";
 
 const DEFAULT_CONTROL_PLANE_API = "https://sop-control-plane.hb67egcim4.workers.dev";
 
@@ -31,6 +31,18 @@ async function requestJsonFallback<T>(urls: string[], init?: RequestInit): Promi
 
 function normalizeBaseUrl(value: string) {
   return String(value || DEFAULT_CONTROL_PLANE_API).trim().replace(/\/+$/, "");
+}
+
+function toQuery(options?: ListQueryOptions) {
+  const params = new URLSearchParams();
+  if (options?.page) params.set("page", String(options.page));
+  if (options?.pageSize) params.set("page_size", String(options.pageSize));
+  if (options?.q) params.set("q", options.q);
+  if (options?.status) params.set("status", options.status);
+  if (options?.sort) params.set("sort", options.sort);
+  if (options?.order) params.set("order", options.order);
+  const text = params.toString();
+  return text ? `?${text}` : "";
 }
 
 function mapRuntimeInheritancePreview(raw: Record<string, unknown>): RuntimeInheritancePreview {
@@ -132,10 +144,18 @@ export const controlPlaneProvider = {
     return mapRuntimeInheritancePreview((raw.config as Record<string, unknown>) || raw);
   },
 
-  async listMachines(): Promise<MachineList> {
+  async listMachines(options?: ListQueryOptions): Promise<MachineList> {
+    const query = toQuery({
+      page: options?.page || 1,
+      pageSize: options?.pageSize || 25,
+      q: options?.q || "",
+      status: options?.status || "all",
+      sort: options?.sort,
+      order: options?.order,
+    });
     const raw = await requestJsonFallback<Record<string, unknown>>([
-      `${controlPlaneApiUrl}/api/sop/v1/machines?page=1&page_size=100&status=all`,
-      `${controlPlaneApiUrl}/api/machines?page=1&page_size=100&status=all`,
+      `${controlPlaneApiUrl}/api/sop/v1/machines${query}`,
+      `${controlPlaneApiUrl}/api/machines${query}`,
     ]);
     const machines = Array.isArray(raw.machines) ? raw.machines as Array<Record<string, unknown>> : Array.isArray(raw.items) ? raw.items as Array<Record<string, unknown>> : [];
     return {

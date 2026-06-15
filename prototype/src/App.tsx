@@ -48,6 +48,7 @@ import type {
   NodeConfig,
   NodeEvent,
   MachineConfig,
+  MachineList,
   NodeLog,
   NodeModule,
   NodeModuleDetail,
@@ -779,6 +780,9 @@ export default function App() {
   const [machinePassword, setMachinePassword] = useState("");
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [machineTestResult, setMachineTestResult] = useState<Record<string, unknown> | null>(null);
+  const [machineSearch, setMachineSearch] = useState("");
+  const [machineStatusFilter, setMachineStatusFilter] = useState("all");
+  const [machinePage, setMachinePage] = useState(1);
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
   const [nodeConfigId, setNodeConfigId] = useState("");
@@ -788,6 +792,7 @@ export default function App() {
   const [runOverlays, setRunOverlays] = useState<Record<string, RunOverlay>>({});
   const [executionSearch, setExecutionSearch] = useState("");
   const [executionFilter, setExecutionFilter] = useState<"all" | StageStatus>("all");
+  const [executionPage, setExecutionPage] = useState(1);
   const [nodeSearch, setNodeSearch] = useState("");
   const [nodeFilter, setNodeFilter] = useState("all");
   const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
@@ -930,16 +935,34 @@ export default function App() {
     enabled: viewMode === "settings" || triggerOpen,
     retry: 1,
   });
+  const machineQueryOptions = viewMode === "machines"
+    ? {
+      page: machinePage,
+      pageSize: 25,
+      q: machineSearch.trim(),
+      status: machineStatusFilter,
+      sort: "updated_at",
+      order: "desc" as const,
+    }
+    : {
+      page: 1,
+      pageSize: 100,
+      q: "",
+      status: "all",
+      sort: "updated_at",
+      order: "desc" as const,
+    };
   const machinesQuery = useQuery({
-    queryKey: ["control-plane-machines", mode],
-    queryFn: () => controlPlaneProvider.listMachines(),
+    queryKey: ["control-plane-machines", mode, machineQueryOptions.page, machineQueryOptions.pageSize, machineQueryOptions.q, machineQueryOptions.status],
+    queryFn: () => controlPlaneProvider.listMachines(machineQueryOptions),
     enabled: viewMode === "settings" || viewMode === "machines" || triggerOpen,
     retry: 1,
   });
   const runsQuery = useQuery({
-    queryKey: [...queryKeys.runs(mode, runtime, instance?.instanceId || ""), executionSearch.trim(), executionFilter],
+    queryKey: [...queryKeys.runs(mode, runtime, instance?.instanceId || ""), executionSearch.trim(), executionFilter, executionPage],
     queryFn: () => provider.listRuns(runtime, instance.instanceId, {
-      pageSize: 80,
+      page: executionPage,
+      pageSize: 20,
       q: executionSearch.trim(),
       status: executionFilter === "all" ? undefined : executionFilter,
       sort: "updated_at",
@@ -1453,7 +1476,8 @@ export default function App() {
     }
   }, [dag, route.nodeId, selectedStageId]);
   useEffect(() => { setInstanceId(""); setSelectedRunId(""); setSelectedStageId(""); }, [runtimeId]);
-  useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); }, [instanceId]);
+  useEffect(() => { setSelectedRunId(""); setSelectedStageId(""); setExecutionPage(1); }, [instanceId]);
+  useEffect(() => { setExecutionPage(1); }, [runtimeId]);
   useEffect(() => {
     if (!serverRuns.length) return;
     const serverIds = new Set(serverRuns.map((run) => run.pipelineId));
@@ -1831,8 +1855,11 @@ export default function App() {
             runs={workflowExecutions}
             executionSearch={executionSearch}
             executionFilter={executionFilter}
+            executionPage={executionPage}
+            executionHasNext={serverRuns.length >= 20}
             onExecutionSearch={setExecutionSearch}
             onExecutionFilter={setExecutionFilter}
+            onExecutionPage={setExecutionPage}
             selectedRun={selectedRun}
             selectedRunMissing={routeRunMissing}
             selectedStage={selectedStage}
@@ -1892,8 +1919,15 @@ export default function App() {
         ) : viewMode === "machines" ? (
           <MachinesPage
             machines={machinesQuery.data?.machines || []}
+            machineList={machinesQuery.data}
             loading={machinesQuery.isLoading}
             error={machinesQuery.error ? String(machinesQuery.error.message) : ""}
+            machineSearch={machineSearch}
+            setMachineSearch={setMachineSearch}
+            machineStatusFilter={machineStatusFilter}
+            setMachineStatusFilter={setMachineStatusFilter}
+            machinePage={machinePage}
+            setMachinePage={setMachinePage}
             selectedMachineId={selectedMachineId}
             setSelectedMachineId={setSelectedMachineId}
             machineName={machineName}
@@ -2936,8 +2970,11 @@ function WorkflowWorkspace({
   runs,
   executionSearch,
   executionFilter,
+  executionPage,
+  executionHasNext,
   onExecutionSearch,
   onExecutionFilter,
+  onExecutionPage,
   selectedRun,
   selectedRunMissing,
   selectedStage,
@@ -2972,8 +3009,11 @@ function WorkflowWorkspace({
   runs: Run[];
   executionSearch: string;
   executionFilter: "all" | StageStatus;
+  executionPage: number;
+  executionHasNext: boolean;
   onExecutionSearch: (value: string) => void;
   onExecutionFilter: (value: "all" | StageStatus) => void;
+  onExecutionPage: (value: number) => void;
   selectedRun: Run | undefined;
   selectedRunMissing: boolean;
   selectedStage: DagNode | undefined;
@@ -3004,7 +3044,7 @@ function WorkflowWorkspace({
   const gitEvents = runEvents.filter((event) => event.event.startsWith("git."));
   const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram.") || event.event.startsWith("tg_notify"));
   const runningExecutionCount = runs.filter((run) => run.status === "running").length;
-  const topRuns = runs.slice(0, 8);
+  const topRuns = runs.slice(0, 20);
   const displayedRuns = selectedRun && !topRuns.some((run) => run.pipelineId === selectedRun.pipelineId)
     ? [selectedRun, ...topRuns.filter((run) => run.pipelineId !== selectedRun.pipelineId)].slice(0, 8)
     : topRuns;
@@ -3029,11 +3069,24 @@ function WorkflowWorkspace({
             <div className="execution-tools workflow-tools">
               <label className="search-box">
                 <Search size={14} />
-                <input value={executionSearch} onChange={(event) => onExecutionSearch(event.target.value)} placeholder="Search execution" />
+                <input
+                  value={executionSearch}
+                  onChange={(event) => {
+                    onExecutionPage(1);
+                    onExecutionSearch(event.target.value);
+                  }}
+                  placeholder="Search execution"
+                />
               </label>
               <label className="filter-box">
                 <SlidersHorizontal size={14} />
-                <select value={executionFilter} onChange={(event) => onExecutionFilter(event.target.value as "all" | StageStatus)}>
+                <select
+                  value={executionFilter}
+                  onChange={(event) => {
+                    onExecutionPage(1);
+                    onExecutionFilter(event.target.value as "all" | StageStatus);
+                  }}
+                >
                   <option value="all">All status</option>
                   {statusOrder.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
                 </select>
@@ -3055,6 +3108,15 @@ function WorkflowWorkspace({
                 </button>
               ))}
               {!runs.length && <Empty text="当前 Workspace 还没有 Execution" />}
+            </div>
+            <div className="list-pagination">
+              <button type="button" className="ghost-btn compact" disabled={executionPage <= 1} onClick={() => onExecutionPage(Math.max(1, executionPage - 1))}>
+                Previous
+              </button>
+              <span>Page {executionPage}</span>
+              <button type="button" className="ghost-btn compact" disabled={!executionHasNext} onClick={() => onExecutionPage(executionPage + 1)}>
+                Next
+              </button>
             </div>
           </section>
         </aside>
@@ -3783,8 +3845,15 @@ function SettingsPage({
 
 function MachinesPage({
   machines,
+  machineList,
   loading,
   error,
+  machineSearch,
+  setMachineSearch,
+  machineStatusFilter,
+  setMachineStatusFilter,
+  machinePage,
+  setMachinePage,
   selectedMachineId,
   setSelectedMachineId,
   machineName,
@@ -3806,8 +3875,15 @@ function MachinesPage({
   onTestMachine,
 }: {
   machines: MachineConfig[];
+  machineList?: MachineList;
   loading: boolean;
   error: string;
+  machineSearch: string;
+  setMachineSearch: (value: string) => void;
+  machineStatusFilter: string;
+  setMachineStatusFilter: (value: string) => void;
+  machinePage: number;
+  setMachinePage: (value: number) => void;
   selectedMachineId: string;
   setSelectedMachineId: (value: string) => void;
   machineName: string;
@@ -3829,6 +3905,8 @@ function MachinesPage({
   onTestMachine: (id: string) => void;
 }) {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
+  const machineTotal = machineList?.total ?? machines.length;
+  const hasNextPage = Boolean(machineList?.hasMore);
   const loadMachine = (machine: MachineConfig) => {
     setSelectedMachineId(machine.id);
     setMachineName(machine.name);
@@ -3855,7 +3933,7 @@ function MachinesPage({
         </div>
         <div className="context-card">
           <strong>Control Plane</strong>
-          <span>{machines.length} machines</span>
+          <span>{machineTotal} machines</span>
           <code>{controlPlaneApiUrl}</code>
         </div>
       </section>
@@ -3863,8 +3941,35 @@ function MachinesPage({
       <section className="machines-workspace">
         <aside className="machines-list-panel">
           <div className="panel-head">
-            <div><strong>Machine List</strong><span>{loading ? "loading" : `${machines.length} records`}</span></div>
+            <div><strong>Machine List</strong><span>{loading ? "loading" : `${machines.length}/${machineTotal} records`}</span></div>
             <button type="button" className="ghost-btn compact" onClick={clearForm}>New</button>
+          </div>
+          <div className="execution-tools machine-tools">
+            <label className="search-box">
+              <Search size={14} />
+              <input
+                value={machineSearch}
+                onChange={(event) => {
+                  setMachinePage(1);
+                  setMachineSearch(event.target.value);
+                }}
+                placeholder="Search machine"
+              />
+            </label>
+            <label className="filter-box">
+              <SlidersHorizontal size={14} />
+              <select
+                value={machineStatusFilter}
+                onChange={(event) => {
+                  setMachinePage(1);
+                  setMachineStatusFilter(event.target.value);
+                }}
+              >
+                <option value="all">All status</option>
+                <option value="active">Active</option>
+                <option value="disabled">Disabled</option>
+              </select>
+            </label>
           </div>
           <div className="machine-list">
             {machines.map((machine) => (
@@ -3877,6 +3982,15 @@ function MachinesPage({
               </button>
             ))}
             {!machines.length && <LoadingOrEmpty loading={loading} text="还没有机器节点配置" />}
+          </div>
+          <div className="list-pagination">
+            <button type="button" className="ghost-btn compact" disabled={machinePage <= 1 || loading} onClick={() => setMachinePage(Math.max(1, machinePage - 1))}>
+              Previous
+            </button>
+            <span>Page {machinePage}</span>
+            <button type="button" className="ghost-btn compact" disabled={!hasNextPage || loading} onClick={() => setMachinePage(machinePage + 1)}>
+              Next
+            </button>
           </div>
         </aside>
         <section className="machine-detail-panel">
