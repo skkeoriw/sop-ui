@@ -100,6 +100,7 @@ const DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND = "";
 const DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID = "";
 const GLOBAL_TUNNEL_API_URL = "https://tunnel-api.chxyka.ccwu.cc";
 const GLOBAL_TUNNEL_ADMIN_URL = "https://tunnel-admin-9vt.pages.dev";
+const RUNTIME_HOST_ARCHITECTURE_DOC_URL = "https://pub-6c235832628e401093619867c6100e22.r2.dev/sop-runtime-host-architecture.html";
 const DEFAULT_HERMES_SMOKE_ROUTE = "sop-runtime-hermes-smoke";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
 type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
@@ -1848,6 +1849,9 @@ export default function App() {
             <button type="button" className={mode === "mock" ? "active" : ""} onClick={() => changeMode("mock")}>Mock</button>
           </div>
           <button type="button" onClick={refresh}><RefreshCw size={16} />Refresh</button>
+          <button type="button" onClick={() => window.open(RUNTIME_HOST_ARCHITECTURE_DOC_URL, "_blank", "noopener,noreferrer")}>
+            <Info size={16} />Architecture
+          </button>
           <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => setTriggerOpen(true)}>
             <Play size={16} />{isRuntimeManagementInstance ? "Manage Runtime" : "New Execution"}
           </button>
