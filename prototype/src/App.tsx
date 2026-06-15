@@ -406,6 +406,25 @@ function compactStringRecord(input: Record<string, string>): Record<string, stri
   return Object.fromEntries(Object.entries(input).filter(([, value]) => String(value || "").trim()).map(([key, value]) => [key, String(value).trim()]));
 }
 
+const CREATE_RUNTIME_IDENTITY_KEYS = new Set([
+  "runtime_id",
+  "channel_name",
+  "channel_url",
+  "spi_base_url",
+  "endpoint_url",
+  "webhook_public_host",
+  "hermes_public_host",
+  "hermes_webhook_url",
+  "RUNTIME_TARGET_RUNTIME_ID",
+  "RUNTIME_TARGET_CHANNEL_URL",
+  "HERMES_WEBHOOK_URL",
+  "WEBHOOK_PUBLIC_HOST",
+]);
+
+function withoutCreateRuntimeIdentity(input: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(input).filter(([key]) => !CREATE_RUNTIME_IDENTITY_KEYS.has(key)));
+}
+
 function statusIcon(status: StageStatus) {
   if (status === "done") return <CheckCircle2 size={15} />;
   if (status === "running") return <Loader2 size={15} className="spin" />;
@@ -1080,11 +1099,11 @@ export default function App() {
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
       const sshPayload = await resolveMachineSshPayload(runtimeCreateMachineId, runtimeCreateSshCommand, runtimeCreatePrivateKey);
-      const globalPayload = await resolveGlobalWorkflowPayload();
-      const runtimeOverrides = {
+      const globalPayload = withoutCreateRuntimeIdentity(await resolveGlobalWorkflowPayload());
+      const runtimeOverrides = withoutCreateRuntimeIdentity({
         ...compactStringRecord(parseRuntimeEnvOverrides(runtimeCreateEnvText)),
         ...compactStringRecord(runtimeCreateConfigOverrides),
-      };
+      });
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-runtime",
@@ -4567,6 +4586,7 @@ function RuntimeManagementStartDrawer({
                 overrides={createConfigOverrides}
                 onOverridesChange={setCreateConfigOverrides}
                 onRefresh={onRefreshInheritance}
+                hideCreateRuntimeIdentity
               />
               <details className="advanced-runtime-overrides">
                 <summary>Advanced Runtime Env Overrides</summary>
@@ -4704,6 +4724,7 @@ function RuntimeInheritancePreviewPanel({
   overrides,
   onOverridesChange,
   onRefresh,
+  hideCreateRuntimeIdentity = false,
 }: {
   preview: RuntimeInheritancePreview | undefined;
   loading: boolean;
@@ -4711,6 +4732,7 @@ function RuntimeInheritancePreviewPanel({
   overrides: Record<string, string>;
   onOverridesChange: (value: Record<string, string>) => void;
   onRefresh: () => void;
+  hideCreateRuntimeIdentity?: boolean;
 }) {
   const items = preview?.items || [];
   const editedCount = Object.values(overrides).filter((value) => value.trim()).length;
@@ -4742,7 +4764,10 @@ function RuntimeInheritancePreviewPanel({
     "RUNTIME_TARGET_RUNTIME_ID",
     "RUNTIME_TARGET_CHANNEL_URL",
   ]);
-  const visibleItems = items.filter((item) => importantKeys.has(item.key) || item.required);
+  const visibleItems = items.filter((item) => {
+    if (hideCreateRuntimeIdentity && CREATE_RUNTIME_IDENTITY_KEYS.has(item.key)) return false;
+    return importantKeys.has(item.key) || item.required;
+  });
   const updateOverride = (key: string, value: string) => {
     onOverridesChange({ ...overrides, [key]: value });
   };
