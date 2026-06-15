@@ -118,6 +118,9 @@ export interface MachineConfig {
 export interface MachineList {
   machines: MachineConfig[];
   total: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
 }
 
 export interface MachineSecretConfig extends MachineConfig {

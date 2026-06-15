@@ -91,8 +91,8 @@ interface StageNodeData extends Record<string, unknown> {
 }
 
 const statusOrder: StageStatus[] = ["running", "waiting", "failed", "skipped", "done"];
-const DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND = "ssh -i ~/.ssh/id_ed25519 a01020323900@34.29.222.183";
-const DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID = "runtime-34-29-222-183";
+const DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND = "";
+const DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID = "";
 const GLOBAL_TUNNEL_API_URL = "https://tunnel-api.chxyka.ccwu.cc";
 const GLOBAL_TUNNEL_ADMIN_URL = "https://tunnel-admin-9vt.pages.dev";
 const DEFAULT_HERMES_SMOKE_ROUTE = "sop-runtime-hermes-smoke";
@@ -126,6 +126,11 @@ type RuntimeManagementFormDefaults = {
 
 function stringFromStorage(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
+}
+
+function machineRuntimeId(machine: MachineConfig | undefined) {
+  if (!machine?.host) return "";
+  return `runtime-${machine.host.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")}`;
 }
 
 function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
@@ -1099,7 +1104,6 @@ export default function App() {
     const machine = await controlPlaneProvider.getMachineSecret(machineId);
     const resolvedPrivateKey = privateKey.trim() || machine.privateKey || "";
     return {
-      machine_id: machineId,
       ssh_command: sshCommand.trim() || machine.sshCommand,
       private_key_b64: encodeSecretB64(resolvedPrivateKey),
       ssh_password: machine.authType === "password" ? machine.password : "",
@@ -1156,12 +1160,14 @@ export default function App() {
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
       const sshPayload = await resolveMachineSshPayload(runtimeDeleteMachineId, runtimeDeleteSshCommand, runtimeDeletePrivateKey);
+      const selectedMachine = (machinesQuery.data?.machines || []).find((machine) => machine.id === runtimeDeleteMachineId);
+      const resolvedRuntimeId = runtimeDeleteId.trim() || machineRuntimeId(selectedMachine);
       const globalPayload = await resolveGlobalWorkflowPayload();
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-runtime",
           ...globalPayload,
-          runtime_id: runtimeDeleteId,
+          runtime_id: resolvedRuntimeId,
           ...sshPayload,
           force: runtimeDeleteForce,
         }),
@@ -1815,20 +1821,6 @@ export default function App() {
             onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "", selectedStage?.id || dag?.nodes[0]?.id || "")}
             onOpenExecutions={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
             onOpenNodes={() => navigateTo("nodes")}
-          />
-        ) : viewMode === "workflow" && !route.pipelineId ? (
-          <WorkflowHome
-            runtime={runtime}
-            instance={instance}
-            mode={mode}
-            selectedRun={selectedRun}
-            dag={dag}
-            runArtifacts={runArtifactsQuery.data || []}
-            streamStatus={streamStatus}
-            nodesReadyCount={nodesReadyCount}
-            managedNodeCount={managedNodes.length}
-            runs={workflowExecutions}
-            onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "", selectedStage?.id || dag?.nodes[0]?.id || "")}
           />
         ) : viewMode === "workflow" ? (
           <WorkflowWorkspace
@@ -4559,7 +4551,7 @@ function RuntimeManagementStartDrawer({
   const submitLabel = isCreateRuntime ? "Create Runtime" : isDeleteRuntime ? "Delete Runtime" : isCreateInstance ? "Create Instance" : "Delete Instance";
   const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
   const selectedDeleteMachine = machines.find((machine) => machine.id === deleteMachineId);
-  const inferredDeleteRuntimeId = selectedDeleteMachine?.host ? `runtime-${selectedDeleteMachine.host.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")}` : "";
+  const inferredDeleteRuntimeId = machineRuntimeId(selectedDeleteMachine);
   const renderMachineSelect = (
     value: string,
     onChange: (value: string) => void,
@@ -4582,7 +4574,7 @@ function RuntimeManagementStartDrawer({
           <option key={machine.id} value={machine.id}>{machine.name} · {machine.user}@{machine.host}</option>
         ))}
       </select>
-      <span className="field-hint">{value ? "将提交 machine_id；SSH 凭据由 Control Plane 注入，secret 不会从浏览器回读。" : "不选择时沿用后端保存默认值，或在高级覆盖中手填 SSH。"}</span>
+      <span className="field-hint">{value ? "选择后会从 Control Plane 加载 SSH 配置，并按旧 workflow 入参提交 ssh_command / private_key_b64 / ssh_password。" : "不选择时沿用后端保存默认值，或在高级覆盖中手填 SSH。"}</span>
     </label>
   );
 
@@ -4736,10 +4728,17 @@ function RuntimeManagementStartDrawer({
                 <span>SOP Type</span>
                 <input value={instanceCreateSopType} onChange={(event) => setInstanceCreateSopType(event.target.value)} disabled={pending} placeholder="youtube-research-wiki" />
               </label>
-              <label>
-                <span>SSH Command</span>
-                <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
-              </label>
+              <details className="advanced-runtime-overrides">
+                <summary>Manual SSH Override</summary>
+                <label>
+                  <span>SSH Command</span>
+                  <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；优先使用 Machine Node" />
+                </label>
+                <label>
+                  <span>Private Key</span>
+                  <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；正常情况下从 Machine Node 加载" rows={6} />
+                </label>
+              </details>
               <RuntimeInheritancePreviewPanel
                 preview={inheritance}
                 loading={inheritanceLoading}
@@ -4760,10 +4759,17 @@ function RuntimeManagementStartDrawer({
                 <span>Instance Repo</span>
                 <input value={instanceDeleteRepo} onChange={(event) => setInstanceDeleteRepo(event.target.value)} disabled={pending} placeholder="skkeoriw/wiki-sop-old-instance" />
               </label>
-              <label>
-                <span>SSH Command</span>
-                <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
-              </label>
+              <details className="advanced-runtime-overrides">
+                <summary>Manual SSH Override</summary>
+                <label>
+                  <span>SSH Command</span>
+                  <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；优先使用 Machine Node" />
+                </label>
+                <label>
+                  <span>Private Key</span>
+                  <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；正常情况下从 Machine Node 加载" rows={6} />
+                </label>
+              </details>
               <label className="inline-check drawer-inline-check">
                 <input type="checkbox" checked={instanceDeleteForce} onChange={(event) => setInstanceDeleteForce(event.target.checked)} disabled={pending} />
                 <span>Force when running executions exist</span>

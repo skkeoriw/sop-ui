@@ -17,6 +17,18 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 }
 
+async function requestJsonFallback<T>(urls: string[], init?: RequestInit): Promise<T> {
+  let lastError: unknown;
+  for (const url of urls) {
+    try {
+      return await requestJson<T>(url, init);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError || "Request failed"));
+}
+
 function normalizeBaseUrl(value: string) {
   return String(value || DEFAULT_CONTROL_PLANE_API).trim().replace(/\/+$/, "");
 }
@@ -79,7 +91,10 @@ export const controlPlaneProvider = {
   apiUrl: controlPlaneApiUrl,
 
   async getSettings(): Promise<RuntimeInheritancePreview> {
-    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/settings`);
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/settings`,
+      `${controlPlaneApiUrl}/api/settings`,
+    ]);
     return {
       ...mapRuntimeInheritancePreview(raw),
       backend: raw.backend,
@@ -88,7 +103,10 @@ export const controlPlaneProvider = {
   },
 
   async resolveSettingsForWorkflow(): Promise<WorkflowSettingsResolve> {
-    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/settings/resolve`);
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/settings/resolve`,
+      `${controlPlaneApiUrl}/api/settings/resolve`,
+    ]);
     const payload = raw.payload && typeof raw.payload === "object" ? raw.payload as Record<string, unknown> : {};
     const values = raw.values && typeof raw.values === "object" ? raw.values as Record<string, unknown> : {};
     return {
@@ -103,7 +121,10 @@ export const controlPlaneProvider = {
   },
 
   async saveSettings(input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview> {
-    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/settings`, {
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/settings`,
+      `${controlPlaneApiUrl}/api/settings`,
+    ], {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ values: input.values }),
@@ -112,11 +133,17 @@ export const controlPlaneProvider = {
   },
 
   async listMachines(): Promise<MachineList> {
-    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines`);
-    const machines = Array.isArray(raw.machines) ? raw.machines as Array<Record<string, unknown>> : [];
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/machines?page=1&page_size=100&status=all`,
+      `${controlPlaneApiUrl}/api/machines?page=1&page_size=100&status=all`,
+    ]);
+    const machines = Array.isArray(raw.machines) ? raw.machines as Array<Record<string, unknown>> : Array.isArray(raw.items) ? raw.items as Array<Record<string, unknown>> : [];
     return {
       machines: machines.map(mapMachine),
       total: Number(raw.total || machines.length),
+      page: Number(raw.page || 1),
+      pageSize: Number(raw.page_size || raw.pageSize || machines.length),
+      hasMore: Boolean(raw.has_more ?? raw.hasMore),
     };
   },
 
@@ -129,7 +156,10 @@ export const controlPlaneProvider = {
     password?: string;
     role?: string;
   }): Promise<MachineConfig> {
-    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines`, {
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/machines`,
+      `${controlPlaneApiUrl}/api/machines`,
+    ], {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -148,14 +178,20 @@ export const controlPlaneProvider = {
   },
 
   async getMachineSecret(id: string): Promise<MachineSecretConfig> {
-    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/resolve`);
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/machines/${encodeURIComponent(id)}/resolve`,
+      `${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/resolve`,
+    ]);
     const machine = raw.machine as Record<string, unknown> | undefined;
     if (!machine) throw new Error(String(raw.error || "Machine secret load failed"));
     return mapMachineSecret(machine);
   },
 
   async testMachine(id: string): Promise<Record<string, unknown>> {
-    const created = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/test`, {
+    const created = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/machines/${encodeURIComponent(id)}/test`,
+      `${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/test`,
+    ], {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
