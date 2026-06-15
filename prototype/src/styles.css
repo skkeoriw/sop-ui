@@ -4483,6 +4483,7 @@ pre {
 
 /* ── Runtime / Instance information architecture ────────────────────────── */
 
+.runtime-directory,
 .runtime-overview,
 .instance-overview {
   display: flex;
@@ -4490,6 +4491,7 @@ pre {
   gap: 18px;
 }
 
+.runtime-directory .flow-panel,
 .runtime-overview .flow-panel,
 .instance-overview .flow-panel {
   min-height: 0;
@@ -4497,6 +4499,85 @@ pre {
 
 .runtime-hero h1 {
   max-width: 780px;
+}
+
+.runtime-directory-panel {
+  overflow: hidden;
+}
+
+.runtime-directory-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.runtime-directory-tools {
+  padding: 12px;
+  border-bottom: 1px solid var(--line-2);
+  background: #f8fbff;
+}
+
+.runtime-directory-list {
+  display: grid;
+}
+
+.runtime-directory-row {
+  width: 100%;
+  min-height: 88px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, .72fr);
+  gap: 16px;
+  align-items: center;
+  padding: 14px;
+  border: 0;
+  border-bottom: 1px solid var(--line-2);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.runtime-directory-row:hover {
+  background: #f8fbff;
+}
+
+.runtime-directory-row:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .28);
+  outline-offset: -3px;
+}
+
+.runtime-directory-main,
+.runtime-directory-meta {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.runtime-directory-main strong {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.runtime-directory-main span,
+.runtime-directory-main code,
+.runtime-directory-meta small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.runtime-directory-main code {
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.runtime-directory-meta {
+  grid-template-columns: repeat(2, minmax(0, max-content));
+  justify-content: end;
+  justify-items: end;
 }
 
 .runtime-detail-grid {
@@ -5470,6 +5551,8 @@ pre {
 
 @media (max-width: 1180px) {
   .runtime-detail-grid,
+  .runtime-directory-head,
+  .runtime-directory-row,
   .runtime-main-grid,
   .runtime-hermes-grid,
   .runtime-management-grid,
@@ -5487,6 +5570,11 @@ pre {
 
   .wide-panel {
     grid-column: span 1;
+  }
+
+  .runtime-directory-meta {
+    justify-content: start;
+    justify-items: start;
   }
 
   .instance-actions {

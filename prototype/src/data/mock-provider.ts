@@ -271,9 +271,23 @@ function mockArtifacts(nodeId = "wiki-build"): Artifact[] {
 export const mockProvider: SopDataProvider = {
   mode: "mock",
 
-  async listRuntimes() {
+  async listRuntimes(options) {
     await delay();
-    return mockRuntimes.map((item) => runtime(item.id));
+    const query = (options?.q || "").trim().toLowerCase();
+    const statusFilter = options?.status && options.status !== "all" ? options.status : "";
+    const page = options?.page || 1;
+    const pageSize = options?.pageSize || mockRuntimes.length;
+    return mockRuntimes
+      .map((item) => runtime(item.id))
+      .filter((item) => {
+        const matchedStatus = !statusFilter || item.status === statusFilter;
+        const searchable = [item.id, item.name, item.displayName, item.endpoint, item.clientIp, item.localStatus, item.status]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return matchedStatus && (!query || searchable.includes(query));
+      })
+      .slice((page - 1) * pageSize, page * pageSize);
   },
 
   async listInstances(target) {

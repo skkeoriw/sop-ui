@@ -516,7 +516,7 @@ export interface TriggerResult {
 
 export interface SopDataProvider {
   mode: DataMode;
-  listRuntimes(): Promise<Runtime[]>;
+  listRuntimes(options?: ListQueryOptions): Promise<Runtime[]>;
   listInstances(runtime: Runtime, options?: ListQueryOptions): Promise<Instance[]>;
   getDag(runtime: Runtime, instanceId: string): Promise<Dag>;
   getRunDag(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Dag>;

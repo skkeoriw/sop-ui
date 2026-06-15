@@ -777,6 +777,9 @@ export default function App() {
   const [runtimeId, setRuntimeId] = useState(initialManualRuntime?.id || "");
   const [runtimeSwitcherOpen, setRuntimeSwitcherOpen] = useState(false);
   const [runtimeSwitchSearch, setRuntimeSwitchSearch] = useState("");
+  const [runtimeDirectorySearch, setRuntimeDirectorySearch] = useState("");
+  const [runtimeDirectoryStatus, setRuntimeDirectoryStatus] = useState("active");
+  const [runtimeDirectoryPage, setRuntimeDirectoryPage] = useState(1);
   const [instanceId, setInstanceId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedStageId, setSelectedStageId] = useState("");
@@ -847,7 +850,36 @@ export default function App() {
     output_path: "raw/generated-images/{pipeline_id}/cover-images.json"
   });
 
-  const runtimesQuery = useQuery({ queryKey: queryKeys.runtimes(mode), queryFn: () => provider.listRuntimes(), retry: 1 });
+  const isRuntimeDirectory = viewMode === "runtime" && !hasRuntimeRouteId;
+  const runtimeDirectoryPageSize = 25;
+  const runtimeQueryOptions = isRuntimeDirectory
+    ? {
+      page: runtimeDirectoryPage,
+      pageSize: runtimeDirectoryPageSize,
+      q: runtimeDirectorySearch.trim(),
+      status: runtimeDirectoryStatus === "all" ? undefined : runtimeDirectoryStatus,
+      sort: "updated_at",
+      order: "desc" as const,
+    }
+    : {
+      page: 1,
+      pageSize: 200,
+      q: "",
+      status: "active",
+      sort: "updated_at",
+      order: "desc" as const,
+    };
+  const runtimesQuery = useQuery({
+    queryKey: [
+      ...queryKeys.runtimes(mode),
+      runtimeQueryOptions.page,
+      runtimeQueryOptions.pageSize,
+      runtimeQueryOptions.q || "",
+      runtimeQueryOptions.status || "all",
+    ],
+    queryFn: () => provider.listRuntimes(runtimeQueryOptions),
+    retry: 1,
+  });
   const runtimes = useMemo(() => {
     const items = runtimesQuery.data || [];
     return manualRuntime && !items.some((item) => item.endpoint === manualRuntime.endpoint) ? [manualRuntime, ...items] : items;
@@ -1807,7 +1839,7 @@ export default function App() {
         </div>
         <nav className="rail-nav" aria-label="Primary">
           <button type="button" className={viewMode === "runtime" ? "active" : ""} onClick={() => navigateTo("runtime")}>
-            <Server size={17} /><span>Hosts</span><small>{instances.length || "-"} instances</small>
+            <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimes.length || "-"} hosts` : `${instances.length || "-"} instances`}</small>
           </button>
           <button type="button" className={viewMode === "instance" ? "active" : ""} onClick={() => navigateTo("instance")}>
             <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
@@ -1915,7 +1947,21 @@ export default function App() {
       </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
-        {viewMode === "runtime" ? (
+        {viewMode === "runtime" && isRuntimeDirectory ? (
+          <RuntimeDirectory
+            runtimes={runtimes}
+            loading={runtimesQuery.isLoading}
+            error={runtimesQuery.error ? String(runtimesQuery.error.message) : ""}
+            page={runtimeDirectoryPage}
+            pageSize={runtimeDirectoryPageSize}
+            search={runtimeDirectorySearch}
+            statusFilter={runtimeDirectoryStatus}
+            onSearch={setRuntimeDirectorySearch}
+            onStatusFilter={setRuntimeDirectoryStatus}
+            onPage={setRuntimeDirectoryPage}
+            onOpenRuntime={selectRuntime}
+          />
+        ) : viewMode === "runtime" ? (
           <RuntimeOverview
             runtime={runtime}
             runtimes={runtimes}
@@ -3036,6 +3082,122 @@ function RuntimeProbeList({ results, running }: { results: RuntimeProbeResult[];
         </div>
       ))}
     </div>
+  );
+}
+
+function RuntimeDirectory({
+  runtimes,
+  loading,
+  error,
+  page,
+  pageSize,
+  search,
+  statusFilter,
+  onSearch,
+  onStatusFilter,
+  onPage,
+  onOpenRuntime,
+}: {
+  runtimes: Runtime[];
+  loading: boolean;
+  error: string;
+  page: number;
+  pageSize: number;
+  search: string;
+  statusFilter: string;
+  onSearch: (value: string) => void;
+  onStatusFilter: (value: string) => void;
+  onPage: (value: number) => void;
+  onOpenRuntime: (runtimeId: string) => void;
+}) {
+  const activeCount = runtimes.filter((runtime) => runtime.status === "active").length;
+  const localOkCount = runtimes.filter((runtime) => runtime.localStatus === "ok").length;
+  const hermesConfiguredCount = runtimes.filter((runtime) => runtime.metadata?.hermes_webhook_url || runtime.metadata?.webhook_public_host).length;
+  const hasNextPage = runtimes.length >= pageSize;
+  return (
+    <section className="runtime-directory">
+      <div className="concept-hero runtime-hero">
+        <div>
+          <span className="status-pill running"><Server size={14} />Runtime Host Directory</span>
+          <h1>选择一台 Runtime Host 后再进入实例和工作流。</h1>
+          <p>机器、通道、SPI 与 Hermes 公网入口的基础状态，打开 Host 后查看实例、流程定义和执行记录。</p>
+        </div>
+        <div className="context-card">
+          <strong>{runtimes.length} hosts</strong>
+          <span>Page {page}</span>
+          <code>{statusFilter === "all" ? "all status" : statusFilter}</code>
+        </div>
+      </div>
+
+      <section className="console-metrics">
+        <Metric label="Page Hosts" value={runtimes.length} subtext={`page ${page}`} />
+        <Metric label="Active" value={activeCount} subtext="channel active" />
+        <Metric label="Local OK" value={localOkCount} subtext="runtime local status" />
+        <Metric label="Hermes" value={hermesConfiguredCount} subtext="public webhook metadata" />
+      </section>
+
+      <section className="flow-panel runtime-directory-panel">
+        <div className="panel-head runtime-directory-head">
+          <div><strong>Host Directory</strong><span>机器、通道、SPI 和 Hermes 摘要</span></div>
+          <div className="list-pagination compact">
+            <button type="button" className="ghost-btn compact" disabled={page <= 1 || loading} onClick={() => onPage(Math.max(1, page - 1))}>
+              Previous
+            </button>
+            <span>Page {page}</span>
+            <button type="button" className="ghost-btn compact" disabled={!hasNextPage || loading} onClick={() => onPage(page + 1)}>
+              Next
+            </button>
+          </div>
+        </div>
+        <div className="execution-tools runtime-directory-tools">
+          <label className="search-box">
+            <Search size={14} />
+            <input
+              value={search}
+              onChange={(event) => {
+                onPage(1);
+                onSearch(event.target.value);
+              }}
+              placeholder="Search runtime host"
+            />
+          </label>
+          <label className="filter-box">
+            <SlidersHorizontal size={14} />
+            <select
+              value={statusFilter}
+              onChange={(event) => {
+                onPage(1);
+                onStatusFilter(event.target.value);
+              }}
+            >
+              <option value="active">Active</option>
+              <option value="all">All status</option>
+              <option value="inactive">Inactive</option>
+              <option value="error">Error</option>
+            </select>
+          </label>
+        </div>
+        {error && <div className="inline-error">{error}</div>}
+        <div className="runtime-directory-list">
+          {runtimes.map((runtime) => (
+            <button key={runtime.id} type="button" className="runtime-directory-row" onClick={() => onOpenRuntime(runtime.id)}>
+              <div className="runtime-directory-main">
+                <strong>{runtime.displayName || runtime.name || runtime.id}</strong>
+                <span>{runtime.id}</span>
+                <code>{runtime.channelUrl || runtime.endpoint || "-"}</code>
+              </div>
+              <div className="runtime-directory-meta">
+                <span className={`status-pill ${runtime.status === "active" ? "done" : runtime.status === "error" ? "failed" : "waiting"}`}>{runtime.status || "unknown"}</span>
+                <span className={`status-pill ${runtime.localStatus === "ok" ? "done" : "waiting"}`}>local {runtime.localStatus || "unknown"}</span>
+                <small>{runtime.clientIp || runtime.machine || "-"}</small>
+                <small>{runtime.metadata?.hermes_webhook_url || runtime.metadata?.webhook_public_host ? "Hermes configured" : "Hermes missing"}</small>
+              </div>
+            </button>
+          ))}
+          {!runtimes.length && <LoadingOrEmpty loading={loading} text="没有匹配的 Runtime Host" />}
+        </div>
+      </section>
+    </section>
   );
 }
 

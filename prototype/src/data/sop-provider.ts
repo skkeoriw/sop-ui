@@ -547,22 +547,34 @@ function parseStringArray(value: string): string[] {
 export const sopProvider: SopDataProvider = {
   mode: "real",
 
-  async listRuntimes() {
+  async listRuntimes(options) {
+    const query = toQuery({
+      page: options?.page || 1,
+      pageSize: options?.pageSize || 200,
+      q: options?.q,
+      status: options?.status || "active",
+      sort: options?.sort || "updated_at",
+      order: options?.order || "desc",
+    });
     let runtimes: Runtime[] = [];
     try {
       const data = await requestJson<{ runtimes?: Array<Record<string, unknown>>; items?: Array<Record<string, unknown>> }>(
-        `${controlPlaneApiUrl}/api/sop/v1/runtimes?page=1&page_size=200&status=active`
+        `${controlPlaneApiUrl}/api/sop/v1/runtimes${query}`
       );
       runtimes = (data.items || data.runtimes || []).flatMap((item) => {
         const runtime = mapRuntime(item);
         return runtime ? [runtime] : [];
       });
     } catch {
-      const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=200`);
+      const fallbackLimit = Math.max(options?.pageSize || 200, 200);
+      const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=${fallbackLimit}`);
+      const search = (options?.q || "").trim().toLowerCase();
+      const statusFilter = options?.status && options.status !== "all" ? options.status : "active";
       runtimes = (data.tunnels || [])
         .flatMap((tunnel): Runtime[] => {
           const metadata = parseMetadata(tunnel.metadata);
-          if (metadata?.type !== "sop-runtime" || tunnel.status !== "active") return [];
+          if (metadata?.type !== "sop-runtime") return [];
+          if (statusFilter && tunnel.status !== statusFilter) return [];
           const runtime = mapRuntime({
             id: metadata.runtime_id || metadata.channel_name || tunnel.subdomain,
             name: metadata.channel_name || tunnel.subdomain,
@@ -578,7 +590,24 @@ export const sopProvider: SopDataProvider = {
             metadata,
           });
           return runtime ? [runtime] : [];
+        })
+        .filter((runtime) => {
+          if (!search) return true;
+          return [
+            runtime.id,
+            runtime.name,
+            runtime.displayName,
+            runtime.endpoint,
+            runtime.clientIp,
+            runtime.localStatus,
+            runtime.status,
+            runtime.metadata?.hermes_webhook_url,
+            runtime.metadata?.webhook_public_host,
+          ].filter(Boolean).join(" ").toLowerCase().includes(search);
         });
+      const page = options?.page || 1;
+      const pageSize = options?.pageSize || 200;
+      runtimes = runtimes.slice((page - 1) * pageSize, page * pageSize);
     }
     return runtimes
       .sort((a, b) => {
