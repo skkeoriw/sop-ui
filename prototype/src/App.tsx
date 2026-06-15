@@ -1930,7 +1930,6 @@ export default function App() {
               setRuntimeManagementAction(action);
               setTriggerOpen(true);
             }}
-            onSelectRuntime={selectRuntime}
           />
         ) : viewMode === "instance" ? (
           <InstanceOverview
@@ -2410,7 +2409,6 @@ function RuntimeOverview({
   mode,
   onOpenInstance,
   onOpenWorkflow,
-  onSelectRuntime,
   managementInstance,
   onOpenManagement,
 }: {
@@ -2421,7 +2419,6 @@ function RuntimeOverview({
   mode: DataMode;
   onOpenInstance: (instanceId: string) => void;
   onOpenWorkflow: (instanceId: string) => void;
-  onSelectRuntime: (runtimeId: string) => void;
   managementInstance: Instance | undefined;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
@@ -2560,26 +2557,6 @@ function RuntimeOverview({
 
       {runtimeTab === "overview" && (
         <>
-      <section className="flow-panel runtime-catalog-panel">
-        <div className="panel-head">
-          <div><strong>Runtime Catalog</strong><span>顶部下拉负责切换，这里保留所有 Runtime 的可扫描列表</span></div>
-          <span>{runtimes.length} runtimes</span>
-        </div>
-        <div className="runtime-catalog-list">
-          {runtimes.map((item) => (
-            <button key={item.id} type="button" className={`runtime-catalog-card ${runtime?.id === item.id ? "active" : ""}`} onClick={() => onSelectRuntime(item.id)}>
-              <div>
-                <strong>{item.displayName || item.name}</strong>
-                <span>{item.clientIp || item.machine || "no machine ip"} · {item.localStatus || item.status || "unknown"}</span>
-              </div>
-              <code>{item.spiBaseUrl || item.endpoint}</code>
-              <small>{item.metadata?.hermes_webhook_url || item.metadata?.webhook_public_host || "Hermes metadata missing"}</small>
-            </button>
-          ))}
-          {!runtimes.length && <LoadingOrEmpty loading={loading} text="没有发现 active SOP Runtime" />}
-        </div>
-      </section>
-
       <section className="runtime-detail-grid">
         <div className="flow-panel runtime-identity-panel">
           <div className="panel-head">

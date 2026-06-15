@@ -267,6 +267,8 @@ pre {
 }
 
 .topbar {
+  position: relative;
+  z-index: 200;
   grid-column: 2 / 5;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -422,6 +424,7 @@ pre {
 
 .runtime-switcher {
   position: relative;
+  z-index: 201;
   min-width: 0;
 }
 
@@ -478,7 +481,7 @@ pre {
 
 .runtime-switcher-menu {
   position: absolute;
-  z-index: 50;
+  z-index: 1000;
   left: 0;
   top: calc(100% + 8px);
   width: min(560px, calc(100vw - 240px));
