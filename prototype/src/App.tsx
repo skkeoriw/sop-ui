@@ -1853,7 +1853,7 @@ export default function App() {
             <Info size={16} />Architecture
           </button>
           <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => setTriggerOpen(true)}>
-            <Play size={16} />{isRuntimeManagementInstance ? "Manage Runtime" : "New Execution"}
+            <Play size={16} />{isRuntimeManagementInstance ? "Host Operations" : "New Execution"}
           </button>
         </div>
       </header>
@@ -4234,7 +4234,7 @@ function SettingsPage({
         <div>
           <span className="status-pill waiting"><Settings size={14} />Global Settings</span>
           <h1>全局运维配置（不绑定任意 Runtime）</h1>
-          <p>本页展示与项目级别相关的配置入口，Runtime 级别配置保持在 Runtime Overview / Runtime Management 内。</p>
+          <p>本页展示与项目级别相关的配置入口，Runtime Host 级别配置保持在 Runtime Host Overview / Host Operations 内。</p>
         </div>
         <div className="context-card">
           <strong>Control Plane</strong>
@@ -4244,7 +4244,7 @@ function SettingsPage({
       </section>
       <section className="global-settings-toolbar">
         <div>
-          <strong>Global Runtime Management Config</strong>
+          <strong>Global Host Operations Config</strong>
           <span>{managementConfig?.updatedAt ? `updated ${managementConfig.updatedAt}` : "server-side config"} · {editedCount} edited</span>
         </div>
         <div className="settings-actions">
@@ -5375,7 +5375,7 @@ function RuntimeManagementStartDrawer({
       <form className="side-drawer execution-start-drawer runtime-management-drawer" onSubmit={isCreate ? onCreate : onDelete}>
         <div className="drawer-head">
           <div>
-            <h2>Manage Runtime</h2>
+            <h2>Host Operations</h2>
             <span>{mode === "real" ? "Real SOP Runtime" : "Mock Runtime"} · {instance.instanceId}</span>
           </div>
           <button type="button" className="icon-btn" title="关闭 Runtime 管理面板" onClick={onClose} disabled={pending}><X size={16} /></button>
