@@ -23,6 +23,8 @@ import type {
   RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
   Runtime,
+  RuntimeList,
+  RunList,
   SopDataProvider,
   StageStatus,
   TriggerInput,
@@ -544,78 +546,168 @@ function parseStringArray(value: string): string[] {
   }
 }
 
+function sortRuntimeHosts(items: Runtime[]) {
+  return [...items].sort((a, b) => {
+    const healthA = a.localStatus === "ok" ? 0 : 1;
+    const healthB = b.localStatus === "ok" ? 0 : 1;
+    if (healthA !== healthB) return healthA - healthB;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+async function listRuntimeHosts(options?: ListQueryOptions): Promise<RuntimeList> {
+  const page = options?.page || 1;
+  const pageSize = options?.pageSize || 200;
+  const query = toQuery({
+    page,
+    pageSize,
+    q: options?.q,
+    status: options?.status || "active",
+    sort: options?.sort || "updated_at",
+    order: options?.order || "desc",
+  });
+  try {
+    const data = await requestJson<{
+      runtimes?: Array<Record<string, unknown>>;
+      items?: Array<Record<string, unknown>>;
+      total?: number;
+      page?: number;
+      page_size?: number;
+      has_more?: boolean;
+      source?: string;
+    }>(`${controlPlaneApiUrl}/api/sop/v1/runtimes${query}`);
+    const runtimes = sortRuntimeHosts((data.items || data.runtimes || []).flatMap((item) => {
+      const runtime = mapRuntime(item);
+      return runtime ? [runtime] : [];
+    }));
+    return {
+      runtimes,
+      total: Number(data.total ?? runtimes.length),
+      page: Number(data.page || page),
+      pageSize: Number(data.page_size || pageSize),
+      hasMore: Boolean(data.has_more),
+      source: data.source || "control-plane",
+    };
+  } catch {
+    const fallbackLimit = Math.max(pageSize, 200);
+    const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=${fallbackLimit}`);
+    const search = (options?.q || "").trim().toLowerCase();
+    const statusFilter = options?.status && options.status !== "all" ? options.status : "active";
+    const filtered = (data.tunnels || [])
+      .flatMap((tunnel): Runtime[] => {
+        const metadata = parseMetadata(tunnel.metadata);
+        if (metadata?.type !== "sop-runtime") return [];
+        if (statusFilter && tunnel.status !== statusFilter) return [];
+        const runtime = mapRuntime({
+          id: metadata.runtime_id || metadata.channel_name || tunnel.subdomain,
+          name: metadata.channel_name || tunnel.subdomain,
+          endpoint: metadata.channel_url || metadata.endpoint_url,
+          status: tunnel.status,
+          local_status: tunnel.local_status,
+          display_name: metadata.display_name,
+          client_ip: tunnel.client_ip || metadata.client_ip,
+          local_port: tunnel.local_port || metadata.local_port,
+          channel_name: metadata.channel_name,
+          spi_base_url: metadata.spi_base_url,
+          supported_sop_types: metadata.supported_sop_types,
+          metadata,
+        });
+        return runtime ? [runtime] : [];
+      })
+      .filter((runtime) => {
+        if (!search) return true;
+        return [
+          runtime.id,
+          runtime.name,
+          runtime.displayName,
+          runtime.endpoint,
+          runtime.clientIp,
+          runtime.localStatus,
+          runtime.status,
+          runtime.metadata?.hermes_webhook_url,
+          runtime.metadata?.webhook_public_host,
+        ].filter(Boolean).join(" ").toLowerCase().includes(search);
+      });
+    const sorted = sortRuntimeHosts(filtered);
+    const offset = (page - 1) * pageSize;
+    const runtimes = sorted.slice(offset, offset + pageSize);
+    return {
+      runtimes,
+      total: sorted.length,
+      page,
+      pageSize,
+      hasMore: offset + runtimes.length < sorted.length,
+      source: "tunnel-admin-fallback",
+    };
+  }
+}
+
+async function listWorkflowRuns(runtime: Runtime, instanceId: string, options?: ListQueryOptions): Promise<RunList> {
+  const page = options?.page || 1;
+  const pageSize = options?.pageSize || 50;
+  try {
+    const data = await requestJson<{
+      runs?: Array<Record<string, unknown>>;
+      executions?: Array<Record<string, unknown>>;
+      items?: Array<Record<string, unknown>>;
+      total?: number;
+      page?: number;
+      page_size?: number;
+      has_more?: boolean;
+      source?: string;
+    }>(
+      `${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow/runs${toQuery(options)}`
+    );
+    const rawRuns = data.items || data.executions || data.runs || [];
+    const runs = rawRuns.map(mapRun);
+    return {
+      runs,
+      total: Number(data.total ?? runs.length),
+      page: Number(data.page || page),
+      pageSize: Number(data.page_size || pageSize),
+      hasMore: Boolean(data.has_more),
+      source: data.source || "runtime-spi-v1",
+    };
+  } catch {
+    const legacyLimit = Math.max(page * pageSize, pageSize, 100);
+    const query = new URLSearchParams();
+    query.set("limit", String(legacyLimit));
+    const data = await requestJson<{ runs?: Array<Record<string, unknown>> }>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs?${query.toString()}`
+    );
+    const search = (options?.q || "").trim().toLowerCase();
+    const statusFilter = options?.status && options.status !== "all" ? options.status : "";
+    const filtered = (data.runs || [])
+      .map(mapRun)
+      .filter((run) => {
+        if (statusFilter && run.status !== statusFilter) return false;
+        if (!search) return true;
+        return [run.pipelineId, run.sourceUrl, run.repo, run.status, run.runningNode, run.failedNode]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(search);
+      });
+    const offset = (page - 1) * pageSize;
+    const runs = filtered.slice(offset, offset + pageSize);
+    return {
+      runs,
+      total: filtered.length,
+      page,
+      pageSize,
+      hasMore: offset + runs.length < filtered.length || filtered.length >= legacyLimit,
+      source: "legacy-runtime-spi",
+    };
+  }
+}
+
 export const sopProvider: SopDataProvider = {
   mode: "real",
 
+  listRuntimeHosts,
+
   async listRuntimes(options) {
-    const query = toQuery({
-      page: options?.page || 1,
-      pageSize: options?.pageSize || 200,
-      q: options?.q,
-      status: options?.status || "active",
-      sort: options?.sort || "updated_at",
-      order: options?.order || "desc",
-    });
-    let runtimes: Runtime[] = [];
-    try {
-      const data = await requestJson<{ runtimes?: Array<Record<string, unknown>>; items?: Array<Record<string, unknown>> }>(
-        `${controlPlaneApiUrl}/api/sop/v1/runtimes${query}`
-      );
-      runtimes = (data.items || data.runtimes || []).flatMap((item) => {
-        const runtime = mapRuntime(item);
-        return runtime ? [runtime] : [];
-      });
-    } catch {
-      const fallbackLimit = Math.max(options?.pageSize || 200, 200);
-      const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=${fallbackLimit}`);
-      const search = (options?.q || "").trim().toLowerCase();
-      const statusFilter = options?.status && options.status !== "all" ? options.status : "active";
-      runtimes = (data.tunnels || [])
-        .flatMap((tunnel): Runtime[] => {
-          const metadata = parseMetadata(tunnel.metadata);
-          if (metadata?.type !== "sop-runtime") return [];
-          if (statusFilter && tunnel.status !== statusFilter) return [];
-          const runtime = mapRuntime({
-            id: metadata.runtime_id || metadata.channel_name || tunnel.subdomain,
-            name: metadata.channel_name || tunnel.subdomain,
-            endpoint: metadata.channel_url || metadata.endpoint_url,
-            status: tunnel.status,
-            local_status: tunnel.local_status,
-            display_name: metadata.display_name,
-            client_ip: tunnel.client_ip || metadata.client_ip,
-            local_port: tunnel.local_port || metadata.local_port,
-            channel_name: metadata.channel_name,
-            spi_base_url: metadata.spi_base_url,
-            supported_sop_types: metadata.supported_sop_types,
-            metadata,
-          });
-          return runtime ? [runtime] : [];
-        })
-        .filter((runtime) => {
-          if (!search) return true;
-          return [
-            runtime.id,
-            runtime.name,
-            runtime.displayName,
-            runtime.endpoint,
-            runtime.clientIp,
-            runtime.localStatus,
-            runtime.status,
-            runtime.metadata?.hermes_webhook_url,
-            runtime.metadata?.webhook_public_host,
-          ].filter(Boolean).join(" ").toLowerCase().includes(search);
-        });
-      const page = options?.page || 1;
-      const pageSize = options?.pageSize || 200;
-      runtimes = runtimes.slice((page - 1) * pageSize, page * pageSize);
-    }
-    return runtimes
-      .sort((a, b) => {
-        const healthA = a.localStatus === "ok" ? 0 : 1;
-        const healthB = b.localStatus === "ok" ? 0 : 1;
-        if (healthA !== healthB) return healthA - healthB;
-        return a.name.localeCompare(b.name);
-      });
+    return (await listRuntimeHosts(options)).runtimes;
   },
 
   async listInstances(runtime, options) {
@@ -661,18 +753,10 @@ export const sopProvider: SopDataProvider = {
     return mapDag(data, instanceId);
   },
 
+  listWorkflowRuns,
+
   async listRuns(runtime, instanceId, options) {
-    let data: { runs?: Array<Record<string, unknown>>; executions?: Array<Record<string, unknown>> };
-    try {
-      data = await requestJson<{ runs?: Array<Record<string, unknown>>; executions?: Array<Record<string, unknown>> }>(
-        `${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow/runs${toQuery(options)}`
-      );
-    } catch {
-      data = await requestJson<{ runs?: Array<Record<string, unknown>> }>(
-        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs${toQuery(options)}`
-      );
-    }
-    return (data.executions || data.runs || []).map(mapRun);
+    return (await listWorkflowRuns(runtime, instanceId, options)).runs;
   },
 
   async getRun(runtime, instanceId, pipelineId) {

@@ -878,13 +878,26 @@ export default function App() {
       runtimeQueryOptions.q || "",
       runtimeQueryOptions.status || "all",
     ],
-    queryFn: () => provider.listRuntimes(runtimeQueryOptions),
+    queryFn: async () => {
+      if (provider.listRuntimeHosts) return provider.listRuntimeHosts(runtimeQueryOptions);
+      const runtimes = await provider.listRuntimes(runtimeQueryOptions);
+      return {
+        runtimes,
+        total: runtimes.length,
+        page: runtimeQueryOptions.page,
+        pageSize: runtimeQueryOptions.pageSize,
+        hasMore: runtimes.length >= runtimeQueryOptions.pageSize,
+        source: "legacy-provider",
+      };
+    },
     retry: 1,
   });
   const runtimes = useMemo(() => {
-    const items = runtimesQuery.data || [];
+    const items = runtimesQuery.data?.runtimes || [];
     return manualRuntime && !items.some((item) => item.endpoint === manualRuntime.endpoint) ? [manualRuntime, ...items] : items;
   }, [manualRuntime, runtimesQuery.data]);
+  const runtimeTotal = Math.max(runtimesQuery.data?.total ?? runtimes.length, runtimes.length);
+  const runtimeHasMore = Boolean(runtimesQuery.data?.hasMore);
   const runtime = runtimes.find((item) => item.id === runtimeId) || runtimes[0];
   const switcherRuntimes = useMemo(() => {
     const query = runtimeSwitchSearch.trim().toLowerCase();
@@ -1055,18 +1068,33 @@ export default function App() {
   });
   const runsQuery = useQuery({
     queryKey: [...queryKeys.runs(mode, runtime, instance?.instanceId || ""), executionSearch.trim(), executionFilter, executionPage, executionPageSize],
-    queryFn: () => provider.listRuns(runtime, instance.instanceId, {
-      page: executionPage,
-      pageSize: executionPageSize,
-      q: executionSearch.trim(),
-      status: executionFilter === "all" ? undefined : executionFilter,
-      sort: "updated_at",
-      order: "desc",
-    }),
+    queryFn: async () => {
+      const options = {
+        page: executionPage,
+        pageSize: executionPageSize,
+        q: executionSearch.trim(),
+        status: executionFilter === "all" ? undefined : executionFilter,
+        sort: "updated_at",
+        order: "desc" as const,
+      };
+      if (provider.listWorkflowRuns) return provider.listWorkflowRuns(runtime, instance.instanceId, options);
+      const runs = await provider.listRuns(runtime, instance.instanceId, options);
+      return {
+        runs,
+        total: runs.length,
+        page: executionPage,
+        pageSize: executionPageSize,
+        hasMore: runs.length >= executionPageSize,
+        source: "legacy-provider",
+      };
+    },
     enabled: Boolean(runtime && instance && shouldLoadRuns),
-    refetchInterval: (query) => (query.state.data?.some((run) => run.status === "running") && streamStatus !== "live" ? 15000 : false)
+    refetchInterval: (query) => (query.state.data?.runs.some((run) => run.status === "running") && streamStatus !== "live" ? 15000 : false)
   });
-  const serverRuns = runsQuery.data || [];
+  const serverRuns = runsQuery.data?.runs || [];
+  const runTotal = Math.max(runsQuery.data?.total ?? serverRuns.length, serverRuns.length);
+  const runHasMore = Boolean(runsQuery.data?.hasMore);
+  const runListSource = runsQuery.data?.source || "";
   const runs = useMemo(() => mergeRuns(serverRuns, optimisticRuns, runOverlays), [serverRuns, optimisticRuns, runOverlays]);
   const routeRunMissing = Boolean(selectedRunId && runs.length && !runs.some((run) => run.pipelineId === selectedRunId));
   const selectedRunSummary = selectedRunId ? runs.find((run) => run.pipelineId === selectedRunId) : runs[0];
@@ -1842,7 +1870,7 @@ export default function App() {
         </div>
         <nav className="rail-nav" aria-label="Primary">
           <button type="button" className={viewMode === "runtime" ? "active" : ""} onClick={() => navigateTo("runtime")}>
-            <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimes.length || "-"} hosts` : `${instances.length || "-"} instances`}</small>
+            <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimeTotal || "-"} hosts` : `${instances.length || "-"} instances`}</small>
           </button>
           <button type="button" className={viewMode === "instance" ? "active" : ""} onClick={() => navigateTo("instance")}>
             <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
@@ -1925,7 +1953,7 @@ export default function App() {
           {!instances.length && <LoadingOrEmpty loading={instancesQuery.isLoading} text="当前 Runtime 没有 enabled workspace" />}
         </section>
         <section className="runs-section">
-          <div className="section-title"><span>Executions</span><span>{visibleExecutions.length}/{runs.length}</span></div>
+          <div className="section-title"><span>Executions</span><span>{visibleExecutions.length}/{runTotal}</span></div>
           <div className="execution-tools">
             <label className="search-box">
               <Search size={14} />
@@ -1953,6 +1981,9 @@ export default function App() {
         {viewMode === "runtime" && isRuntimeDirectory ? (
           <RuntimeDirectory
             runtimes={runtimes}
+            total={runtimeTotal}
+            hasMore={runtimeHasMore}
+            source={runtimesQuery.data?.source || ""}
             loading={runtimesQuery.isLoading}
             error={runtimesQuery.error ? String(runtimesQuery.error.message) : ""}
             page={runtimeDirectoryPage}
@@ -2019,7 +2050,9 @@ export default function App() {
             executionSearch={executionSearch}
             executionFilter={executionFilter}
             executionPage={executionPage}
-            executionHasNext={serverRuns.length >= executionPageSize}
+            executionHasNext={runHasMore}
+            executionTotal={runTotal}
+            executionSource={runListSource}
             onExecutionSearch={setExecutionSearch}
             onExecutionFilter={setExecutionFilter}
             onExecutionPage={setExecutionPage}
@@ -3234,6 +3267,9 @@ function RuntimeProbeList({ results, running }: { results: RuntimeProbeResult[];
 
 function RuntimeDirectory({
   runtimes,
+  total,
+  hasMore,
+  source,
   loading,
   error,
   page,
@@ -3246,6 +3282,9 @@ function RuntimeDirectory({
   onOpenRuntime,
 }: {
   runtimes: Runtime[];
+  total: number;
+  hasMore: boolean;
+  source: string;
   loading: boolean;
   error: string;
   page: number;
@@ -3257,10 +3296,8 @@ function RuntimeDirectory({
   onPage: (value: number) => void;
   onOpenRuntime: (runtimeId: string) => void;
 }) {
-  const activeCount = runtimes.filter((runtime) => runtime.status === "active").length;
   const localOkCount = runtimes.filter((runtime) => runtime.localStatus === "ok").length;
   const hermesConfiguredCount = runtimes.filter((runtime) => runtime.metadata?.hermes_webhook_url || runtime.metadata?.webhook_public_host).length;
-  const hasNextPage = runtimes.length >= pageSize;
   return (
     <section className="runtime-directory">
       <div className="concept-hero runtime-hero">
@@ -3270,15 +3307,15 @@ function RuntimeDirectory({
           <p>机器、通道、SPI 与 Hermes 公网入口的基础状态，打开 Host 后查看实例、流程定义和执行记录。</p>
         </div>
         <div className="context-card">
-          <strong>{runtimes.length} hosts</strong>
+          <strong>{total} hosts</strong>
           <span>Page {page}</span>
-          <code>{statusFilter === "all" ? "all status" : statusFilter}</code>
+          <code>{source || (statusFilter === "all" ? "all status" : statusFilter)}</code>
         </div>
       </div>
 
       <section className="console-metrics">
         <Metric label="Page Hosts" value={runtimes.length} subtext={`page ${page}`} />
-        <Metric label="Active" value={activeCount} subtext="channel active" />
+        <Metric label="Total" value={total} subtext={statusFilter === "all" ? "all runtime hosts" : `${statusFilter} runtime hosts`} />
         <Metric label="Local OK" value={localOkCount} subtext="runtime local status" />
         <Metric label="Hermes" value={hermesConfiguredCount} subtext="public webhook metadata" />
       </section>
@@ -3291,7 +3328,7 @@ function RuntimeDirectory({
               Previous
             </button>
             <span>Page {page}</span>
-            <button type="button" className="ghost-btn compact" disabled={!hasNextPage || loading} onClick={() => onPage(page + 1)}>
+            <button type="button" className="ghost-btn compact" disabled={!hasMore || loading} onClick={() => onPage(page + 1)}>
               Next
             </button>
           </div>
@@ -3765,6 +3802,8 @@ function WorkflowWorkspace({
   executionFilter,
   executionPage,
   executionHasNext,
+  executionTotal,
+  executionSource,
   onExecutionSearch,
   onExecutionFilter,
   onExecutionPage,
@@ -3804,6 +3843,8 @@ function WorkflowWorkspace({
   executionFilter: "all" | StageStatus;
   executionPage: number;
   executionHasNext: boolean;
+  executionTotal: number;
+  executionSource: string;
   onExecutionSearch: (value: string) => void;
   onExecutionFilter: (value: "all" | StageStatus) => void;
   onExecutionPage: (value: number) => void;
@@ -3904,9 +3945,9 @@ function WorkflowWorkspace({
             <div className="panel-head compact">
               <div>
                 <strong>Executions</strong>
-                <span>{runningExecutionCount ? `${runningExecutionCount} running · 当前 run 置顶` : "当前 run 置顶，running 优先"}</span>
+                <span>{runningExecutionCount ? `${runningExecutionCount} running · ${executionSource || "runtime-spi"}` : `total ${executionTotal} · ${executionSource || "runtime-spi"}`}</span>
               </div>
-              <span>{runs.length}</span>
+              <span>{runs.length}/{executionTotal}</span>
             </div>
             <div className="execution-tools workflow-tools">
               <label className="search-box">

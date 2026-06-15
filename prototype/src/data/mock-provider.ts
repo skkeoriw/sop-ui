@@ -20,6 +20,8 @@ import type {
   RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
   Runtime,
+  RuntimeList,
+  RunList,
   SopDataProvider,
   TriggerInput
 } from "./types";
@@ -271,13 +273,13 @@ function mockArtifacts(nodeId = "wiki-build"): Artifact[] {
 export const mockProvider: SopDataProvider = {
   mode: "mock",
 
-  async listRuntimes(options) {
+  async listRuntimeHosts(options): Promise<RuntimeList> {
     await delay();
     const query = (options?.q || "").trim().toLowerCase();
     const statusFilter = options?.status && options.status !== "all" ? options.status : "";
     const page = options?.page || 1;
     const pageSize = options?.pageSize || mockRuntimes.length;
-    return mockRuntimes
+    const filtered = mockRuntimes
       .map((item) => runtime(item.id))
       .filter((item) => {
         const matchedStatus = !statusFilter || item.status === statusFilter;
@@ -286,8 +288,21 @@ export const mockProvider: SopDataProvider = {
           .join(" ")
           .toLowerCase();
         return matchedStatus && (!query || searchable.includes(query));
-      })
-      .slice((page - 1) * pageSize, page * pageSize);
+      });
+    const offset = (page - 1) * pageSize;
+    const runtimes = filtered.slice(offset, offset + pageSize);
+    return {
+      runtimes,
+      total: filtered.length,
+      page,
+      pageSize,
+      hasMore: offset + runtimes.length < filtered.length,
+      source: "mock",
+    };
+  },
+
+  async listRuntimes(options) {
+    return (await this.listRuntimeHosts!(options)).runtimes;
   },
 
   async listInstances(target) {
@@ -305,9 +320,37 @@ export const mockProvider: SopDataProvider = {
     return mockDag(target.id);
   },
 
-  async listRuns(target) {
+  async listWorkflowRuns(target, _instanceId, options): Promise<RunList> {
     await delay();
-    return (runsByRuntime.get(target.id) || []).map(mapRun);
+    const query = (options?.q || "").trim().toLowerCase();
+    const statusFilter = options?.status && options.status !== "all" ? options.status : "";
+    const page = options?.page || 1;
+    const pageSize = options?.pageSize || 50;
+    const filtered = (runsByRuntime.get(target.id) || [])
+      .map(mapRun)
+      .filter((run) => {
+        if (statusFilter && run.status !== statusFilter) return false;
+        if (!query) return true;
+        return [run.pipelineId, run.sourceUrl, run.repo, run.status]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+      });
+    const offset = (page - 1) * pageSize;
+    const runs = filtered.slice(offset, offset + pageSize);
+    return {
+      runs,
+      total: filtered.length,
+      page,
+      pageSize,
+      hasMore: offset + runs.length < filtered.length,
+      source: "mock",
+    };
+  },
+
+  async listRuns(target, instanceId, options) {
+    return (await this.listWorkflowRuns!(target, instanceId, options)).runs;
   },
 
   async getRun(target, _instanceId, pipelineId) {

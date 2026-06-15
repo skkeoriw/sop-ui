@@ -22,6 +22,15 @@ export interface Runtime {
   updatedAt?: string;
 }
 
+export interface RuntimeList {
+  runtimes: Runtime[];
+  total: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+  source?: string;
+}
+
 export interface WorkflowBinding {
   workflowId: string;
   workflowName: string;
@@ -186,6 +195,15 @@ export interface Run {
   pageCount?: number;
   durationS?: number;
   nodeStates?: Record<string, RunNodeState>;
+}
+
+export interface RunList {
+  runs: Run[];
+  total: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+  source?: string;
 }
 
 export interface RunNodeState {
@@ -516,10 +534,12 @@ export interface TriggerResult {
 
 export interface SopDataProvider {
   mode: DataMode;
+  listRuntimeHosts?(options?: ListQueryOptions): Promise<RuntimeList>;
   listRuntimes(options?: ListQueryOptions): Promise<Runtime[]>;
   listInstances(runtime: Runtime, options?: ListQueryOptions): Promise<Instance[]>;
   getDag(runtime: Runtime, instanceId: string): Promise<Dag>;
   getRunDag(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Dag>;
+  listWorkflowRuns?(runtime: Runtime, instanceId: string, options?: ListQueryOptions): Promise<RunList>;
   listRuns(runtime: Runtime, instanceId: string, options?: ListQueryOptions): Promise<Run[]>;
   getRun(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Run>;
   getRunEvents(runtime: Runtime, instanceId: string, pipelineId: string): Promise<NodeEvent[]>;
