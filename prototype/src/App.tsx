@@ -765,6 +765,8 @@ export default function App() {
   const [route, setRoute] = useState<AppRoute>(readRoute);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const viewMode = route.view;
+  const routeContext = useMemo(readRouteContext, [route]);
+  const hasRuntimeRouteId = Boolean(routeContext.runtimeId);
   const initialEndpoint = useMemo(() => normalizeEndpoint(new URL(window.location.href).searchParams.get("endpoint") || ""), []);
   const initialManualRuntime = useMemo<Runtime | undefined>(() => initialEndpoint ? ({
     id: `manual:${initialEndpoint}`, name: initialEndpoint.replace(/^https?:\/\//, ""), endpoint: initialEndpoint,
@@ -868,11 +870,13 @@ export default function App() {
       return searchable.includes(query);
     });
   }, [runtimeSwitchSearch, runtimes]);
+  const routeRuntimePending = Boolean(routeContext.runtimeId && runtime && runtime.id !== routeContext.runtimeId);
+  const shouldLoadInstances = Boolean(runtime && !routeRuntimePending && (viewMode !== "runtime" || hasRuntimeRouteId || triggerOpen));
 
   const instancesQuery = useQuery({
     queryKey: queryKeys.instances(mode, runtime),
     queryFn: () => provider.listInstances(runtime, { pageSize: 100, sort: "updated_at", order: "desc" }),
-    enabled: Boolean(runtime),
+    enabled: shouldLoadInstances,
   });
   const instances = instancesQuery.data || [];
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
@@ -964,9 +968,10 @@ export default function App() {
     instanceDeleteForce,
   ]);
 
-  const shouldLoadWorkflowShape = viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes";
+  const shouldLoadWorkflowShape = viewMode === "instance" || viewMode === "workflow";
   const shouldLoadRuns = viewMode === "instance" || viewMode === "workflow";
   const shouldLoadRunDetail = viewMode === "workflow" && Boolean(route.pipelineId);
+  const executionPageSize = viewMode === "instance" ? 8 : 20;
   const dagQuery = useQuery({
     queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.getDag(runtime, instance.instanceId),
@@ -1010,10 +1015,10 @@ export default function App() {
     retry: 1,
   });
   const runsQuery = useQuery({
-    queryKey: [...queryKeys.runs(mode, runtime, instance?.instanceId || ""), executionSearch.trim(), executionFilter, executionPage],
+    queryKey: [...queryKeys.runs(mode, runtime, instance?.instanceId || ""), executionSearch.trim(), executionFilter, executionPage, executionPageSize],
     queryFn: () => provider.listRuns(runtime, instance.instanceId, {
       page: executionPage,
-      pageSize: 20,
+      pageSize: executionPageSize,
       q: executionSearch.trim(),
       status: executionFilter === "all" ? undefined : executionFilter,
       sort: "updated_at",
@@ -1069,7 +1074,7 @@ export default function App() {
   const logQuery = useQuery({
     queryKey: queryKeys.log(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || "", selectedStageKey),
     queryFn: () => provider.getNodeLog(runtime!, instance!.instanceId, selectedRun!.pipelineId, selectedStageKey),
-    enabled: Boolean(runtime && instance && selectedRun && selectedStage && viewMode === "workflow")
+    enabled: Boolean(runtime && instance && selectedRun && selectedStage && shouldLoadRunDetail)
   });
   const nodeConfigQuery = useQuery({
     queryKey: queryKeys.nodeConfig(mode, runtime, instance?.instanceId || "", nodeConfigId),
@@ -1079,7 +1084,7 @@ export default function App() {
   const nodesQuery = useQuery({
     queryKey: queryKeys.nodes(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodes(runtime!, instance!.instanceId),
-    enabled: Boolean(runtime && instance && (viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes"))
+    enabled: Boolean(runtime && instance && (viewMode === "instance" || viewMode === "nodes"))
   });
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
@@ -1545,17 +1550,15 @@ export default function App() {
   useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
   useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
   useEffect(() => {
-    const context = readRouteContext();
-    if (context.runtimeId && runtimes.some((item) => item.id === context.runtimeId) && runtimeId !== context.runtimeId) {
-      setRuntimeId(context.runtimeId);
+    if (routeContext.runtimeId && runtimes.some((item) => item.id === routeContext.runtimeId) && runtimeId !== routeContext.runtimeId) {
+      setRuntimeId(routeContext.runtimeId);
     }
-  }, [runtimeId, runtimes]);
+  }, [routeContext.runtimeId, runtimeId, runtimes]);
   useEffect(() => {
-    const context = readRouteContext();
-    if (context.instanceId && instances.some((item) => item.instanceId === context.instanceId) && instanceId !== context.instanceId) {
-      setInstanceId(context.instanceId);
+    if (routeContext.instanceId && instances.some((item) => item.instanceId === routeContext.instanceId) && instanceId !== routeContext.instanceId) {
+      setInstanceId(routeContext.instanceId);
     }
-  }, [instanceId, instances]);
+  }, [routeContext.instanceId, instanceId, instances]);
   useEffect(() => { if (runs.length && !selectedRunId) setSelectedRunId(runs[0].pipelineId); }, [runs, selectedRunId]);
   useEffect(() => {
     if (route.pipelineId && runs.some((run) => run.pipelineId === route.pipelineId) && selectedRunId !== route.pipelineId) {
@@ -1967,7 +1970,7 @@ export default function App() {
             executionSearch={executionSearch}
             executionFilter={executionFilter}
             executionPage={executionPage}
-            executionHasNext={serverRuns.length >= 20}
+            executionHasNext={serverRuns.length >= executionPageSize}
             onExecutionSearch={setExecutionSearch}
             onExecutionFilter={setExecutionFilter}
             onExecutionPage={setExecutionPage}
@@ -6113,10 +6116,24 @@ function buildFlowNodes(
   onInfo: (id: string) => void
 ): Node<StageNodeData>[] {
   if (!dag) return [];
+  const seenStageIds = new Set<string>();
+  const stages = dag.nodes.filter((stage) => {
+    if (!stage.id || seenStageIds.has(stage.id)) return false;
+    seenStageIds.add(stage.id);
+    return true;
+  });
+  const seenEdgeIds = new Set<string>();
+  const edges = dag.edges.filter((edge) => {
+    if (!seenStageIds.has(edge.source) || !seenStageIds.has(edge.target)) return false;
+    const id = `${edge.source}-${edge.target}`;
+    if (seenEdgeIds.has(id)) return false;
+    seenEdgeIds.add(id);
+    return true;
+  });
   const depths = new Map<string, number>();
   const parents = new Map<string, string[]>();
-  dag.nodes.forEach((node) => parents.set(node.id, []));
-  dag.edges.forEach((edge) => parents.set(edge.target, [...(parents.get(edge.target) || []), edge.source]));
+  stages.forEach((node) => parents.set(node.id, []));
+  edges.forEach((edge) => parents.set(edge.target, [...(parents.get(edge.target) || []), edge.source]));
   const depth = (id: string): number => {
     if (depths.has(id)) return depths.get(id) || 0;
     const value = (parents.get(id) || []).length ? Math.max(...(parents.get(id) || []).map(depth)) + 1 : 0;
@@ -6124,7 +6141,7 @@ function buildFlowNodes(
     return value;
   };
   const rows = new Map<number, number>();
-  return dag.nodes.map((stage) => {
+  return stages.map((stage) => {
     const column = depth(stage.id);
     const row = rows.get(column) || 0;
     rows.set(column, row + 1);
@@ -6138,7 +6155,15 @@ function buildFlowNodes(
 }
 
 function buildFlowEdges(dag: Dag | undefined, run: Run | undefined): Edge[] {
-  return (dag?.edges || []).map((edge) => ({
+  const nodeIds = new Set((dag?.nodes || []).map((node) => node.id).filter(Boolean));
+  const edgeIds = new Set<string>();
+  return (dag?.edges || []).filter((edge) => {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) return false;
+    const id = `${edge.source}-${edge.target}`;
+    if (edgeIds.has(id)) return false;
+    edgeIds.add(id);
+    return true;
+  }).map((edge) => ({
     id: `${edge.source}-${edge.target}`,
     source: edge.source,
     target: edge.target,
