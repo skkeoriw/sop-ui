@@ -806,6 +806,7 @@ export default function App() {
   const [machinePassword, setMachinePassword] = useState("");
   const [machineRole, setMachineRole] = useState("target");
   const [machineStatus, setMachineStatus] = useState("active");
+  const [machineDuplicateReuseSecret, setMachineDuplicateReuseSecret] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [machineTestResult, setMachineTestResult] = useState<Record<string, unknown> | null>(null);
   const [machineSearch, setMachineSearch] = useState("");
@@ -1452,6 +1453,30 @@ export default function App() {
       setToast(`机器节点删除失败：${String((error as Error).message || error)}`);
     },
   });
+  const duplicateMachineMutation = useMutation({
+    mutationFn: async ({ id, reuseSecret }: { id: string; reuseSecret: boolean }) => {
+      const [result] = await Promise.all([
+        controlPlaneProvider.duplicateMachine(id, { reuseSecret }),
+        minimumDelay(300),
+      ]);
+      return result;
+    },
+    onSuccess: async (machine) => {
+      setSelectedMachineId(machine.id);
+      setMachineName(machine.name);
+      setMachineSshCommand(machine.sshCommand);
+      setMachineAuthType(machine.authType === "password" ? "password" : "private_key");
+      setMachineRole(machine.role || "target");
+      setMachineStatus(machine.status || "active");
+      setMachinePrivateKey("");
+      setMachinePassword("");
+      setToast("机器节点已复制，secret 仍由后端保存且不回显");
+      await machinesQuery.refetch();
+    },
+    onError: (error) => {
+      setToast(`机器节点复制失败：${String((error as Error).message || error)}`);
+    },
+  });
   const testMachineMutation = useMutation({
     mutationFn: async (machineId: string) => {
       const [result] = await Promise.all([
@@ -2023,6 +2048,8 @@ export default function App() {
             setMachineRole={setMachineRole}
             machineStatus={machineStatus}
             setMachineStatus={setMachineStatus}
+            duplicateReuseSecret={machineDuplicateReuseSecret}
+            setDuplicateReuseSecret={setMachineDuplicateReuseSecret}
             saveMachinePending={saveMachineMutation.isPending}
             saveMachineError={saveMachineMutation.error ? String(saveMachineMutation.error.message) : ""}
             onSaveMachine={(event) => { event.preventDefault(); saveMachineMutation.mutate(); }}
@@ -2035,6 +2062,8 @@ export default function App() {
               if (!window.confirm(`确认删除机器节点 ${id}？\n这会在 Control Plane 中执行 soft delete，不会登录目标机器。`)) return;
               deleteMachineMutation.mutate(id);
             }}
+            duplicatePending={duplicateMachineMutation.isPending}
+            onDuplicateMachine={(id, reuseSecret) => duplicateMachineMutation.mutate({ id, reuseSecret })}
             onToast={setToast}
           />
         ) : (
@@ -4111,6 +4140,8 @@ function MachinesPage({
   setMachineRole,
   machineStatus,
   setMachineStatus,
+  duplicateReuseSecret,
+  setDuplicateReuseSecret,
   saveMachinePending,
   saveMachineError,
   onSaveMachine,
@@ -4120,6 +4151,8 @@ function MachinesPage({
   onTestMachine,
   deletePending,
   onDeleteMachine,
+  duplicatePending,
+  onDuplicateMachine,
   onToast,
 }: {
   machines: MachineConfig[];
@@ -4152,6 +4185,8 @@ function MachinesPage({
   setMachineRole: (value: string) => void;
   machineStatus: string;
   setMachineStatus: (value: string) => void;
+  duplicateReuseSecret: boolean;
+  setDuplicateReuseSecret: (value: boolean) => void;
   saveMachinePending: boolean;
   saveMachineError: string;
   onSaveMachine: (event: FormEvent) => void;
@@ -4161,6 +4196,8 @@ function MachinesPage({
   onTestMachine: (id: string) => void;
   deletePending: boolean;
   onDeleteMachine: (id: string) => void;
+  duplicatePending: boolean;
+  onDuplicateMachine: (id: string, reuseSecret: boolean) => void;
   onToast: (message: string) => void;
 }) {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
@@ -4195,6 +4232,10 @@ function MachinesPage({
     }
   };
   const duplicateMachine = (machine: MachineConfig) => {
+    if (duplicateReuseSecret) {
+      onDuplicateMachine(machine.id, true);
+      return;
+    }
     setSelectedMachineId("");
     setMachineName(`${machine.name || machine.host} copy`);
     setMachineSshCommand(machine.sshCommand);
@@ -4301,8 +4342,8 @@ function MachinesPage({
                   <button type="button" title="Copy SSH" onClick={() => copySsh(machine)}>
                     <Copy size={14} />
                   </button>
-                  <button type="button" title="Duplicate Machine" onClick={() => duplicateMachine(machine)}>
-                    <Plus size={14} />
+                  <button type="button" title="Duplicate Machine" onClick={() => duplicateMachine(machine)} disabled={duplicatePending}>
+                    {duplicatePending ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
                   </button>
                   <button type="button" title="Edit" onClick={() => loadMachine(machine)}>
                     <Edit3 size={14} />
@@ -4337,6 +4378,10 @@ function MachinesPage({
                 <button type="button" className="ghost-btn compact" onClick={() => copySsh(selectedMachine)}>
                   <Copy size={14} />Copy SSH
                 </button>
+                <button type="button" className="ghost-btn compact" onClick={() => duplicateMachine(selectedMachine)} disabled={duplicatePending}>
+                  {duplicatePending ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
+                  Duplicate
+                </button>
                 <button type="button" className="ghost-btn compact danger" onClick={() => onDeleteMachine(selectedMachine.id)} disabled={deletePending}>
                   <Trash2 size={14} />Delete
                 </button>
@@ -4357,6 +4402,10 @@ function MachinesPage({
           ) : <Empty text="选择机器或创建新机器" />}
           {testResult && <MachineTestResult result={testResult} />}
           <form className="machine-editor" onSubmit={onSaveMachine}>
+            <label className="machine-secret-reuse">
+              <input type="checkbox" checked={duplicateReuseSecret} onChange={(event) => setDuplicateReuseSecret(event.target.checked)} />
+              <span>Duplicate action reuses saved secret on the server; secret will not be shown in the page.</span>
+            </label>
             <label>
               <span>Name</span>
               <input value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="Runtime target machine" disabled={saveMachinePending} />

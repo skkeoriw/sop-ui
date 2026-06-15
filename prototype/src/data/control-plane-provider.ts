@@ -210,6 +210,20 @@ export const controlPlaneProvider = {
     });
   },
 
+  async duplicateMachine(id: string, input: { reuseSecret?: boolean } = {}): Promise<MachineConfig> {
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/machines/${encodeURIComponent(id)}/duplicate`,
+      `${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/duplicate`,
+    ], {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reuse_secret: Boolean(input.reuseSecret) }),
+    });
+    const machine = raw.machine as Record<string, unknown> | undefined;
+    if (!machine) throw new Error(String(raw.error || "Machine duplicate failed"));
+    return mapMachine(machine);
+  },
+
   async getMachineSecret(id: string): Promise<MachineSecretConfig> {
     const raw = await requestJsonFallback<Record<string, unknown>>([
       `${controlPlaneApiUrl}/api/sop/v1/machines/${encodeURIComponent(id)}/resolve`,

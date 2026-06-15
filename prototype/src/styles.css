@@ -5448,6 +5448,26 @@ pre {
   gap: 6px;
 }
 
+.machine-secret-reuse {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px !important;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.machine-secret-reuse input {
+  width: 16px;
+  min-height: 16px;
+  margin-top: 1px;
+}
+
 .machine-editor input,
 .machine-editor select,
 .machine-editor textarea {
