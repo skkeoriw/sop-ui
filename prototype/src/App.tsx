@@ -28,6 +28,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Send,
   Server,
   Settings,
   ShieldCheck,
@@ -903,7 +904,13 @@ export default function App() {
     });
   }, [runtimeSwitchSearch, runtimes]);
   const routeRuntimePending = Boolean(routeContext.runtimeId && runtime && runtime.id !== routeContext.runtimeId);
-  const shouldLoadInstances = Boolean(runtime && !routeRuntimePending && (viewMode !== "runtime" || hasRuntimeRouteId || triggerOpen));
+  const shouldLoadRuntimeScopedData =
+    (viewMode === "runtime" && hasRuntimeRouteId) ||
+    viewMode === "instance" ||
+    viewMode === "workflow" ||
+    viewMode === "nodes" ||
+    triggerOpen;
+  const shouldLoadInstances = Boolean(runtime && !routeRuntimePending && shouldLoadRuntimeScopedData);
 
   const instancesQuery = useQuery({
     queryKey: queryKeys.instances(mode, runtime),
@@ -2125,17 +2132,6 @@ export default function App() {
         ) : (
           <SettingsPage
             mode={mode}
-            runtime={runtime}
-            runtimes={runtimes}
-            instance={instance}
-            instances={instances}
-            manualEndpoint={manualEndpoint}
-            setManualEndpoint={setManualEndpoint}
-            onAddManualEndpoint={addManualEndpoint}
-            streamStatus={streamStatus}
-            nodesReadyCount={nodesReadyCount}
-            nodesTotal={managedNodes.length}
-            managementInstance={managementInstance}
             managementConfig={runtimeManagementConfigQuery.data}
             managementConfigLoading={runtimeManagementConfigQuery.isLoading}
             managementConfigError={runtimeManagementConfigQuery.error ? String(runtimeManagementConfigQuery.error.message) : ""}
@@ -2360,6 +2356,27 @@ function buildRuntimeHermesSmokeProxyUrl(runtime: Runtime | undefined) {
   return base ? `${base}/runtime/hermes-smoke` : "";
 }
 
+function buildRuntimeHermesAgentProxyUrl(runtime: Runtime | undefined) {
+  const base = normalizeEndpoint(runtime?.spiBaseUrl || (runtime?.endpoint ? `${runtime.endpoint}/api/sop` : ""));
+  return base ? `${base}/runtime/hermes-agent-check` : "";
+}
+
+function buildHermesAgentCurlCommand(url: string, message: string) {
+  if (!url.trim()) return "Runtime SPI endpoint is missing.";
+  const body = JSON.stringify({
+    message,
+    text: message,
+    prompt: message,
+    source: "sop-ui",
+    mode: "agent-chat-check",
+  });
+  return [
+    `curl -sS -X POST ${shellQuoteSingle(url)} \\`,
+    `  -H 'Content-Type: application/json' \\`,
+    `  --data-binary ${shellQuoteSingle(body)}`,
+  ].join("\n");
+}
+
 async function runHermesConnectivityCheck(runtime: Runtime | undefined, message: string) {
   const proxyUrl = buildRuntimeHermesSmokeProxyUrl(runtime);
   if (!proxyUrl) throw new Error("Runtime SPI endpoint is missing");
@@ -2398,6 +2415,46 @@ async function runHermesConnectivityCheck(runtime: Runtime | undefined, message:
     curl,
     proxyUrl,
     error: typeof payload.error === "string" ? payload.error : typeof payload.reason === "string" ? payload.reason : "",
+  };
+}
+
+async function runHermesAgentChatCheck(runtime: Runtime | undefined, message: string) {
+  const proxyUrl = buildRuntimeHermesAgentProxyUrl(runtime);
+  if (!proxyUrl) throw new Error("Runtime SPI endpoint is missing");
+  const startedAt = performance.now();
+  const response = await fetch(proxyUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      message,
+      text: message,
+      prompt: message,
+      source: "sop-ui",
+      mode: "agent-chat-check",
+    }),
+  });
+  const body = await response.text();
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = body ? JSON.parse(body) as Record<string, unknown> : {};
+  } catch {
+    payload = {};
+  }
+  const responseBody = typeof payload.response === "string" ? payload.response : body;
+  return {
+    ok: Boolean(payload.ok ?? response.ok),
+    httpStatus: response.status || 0,
+    latencyMs: Number(payload.latency_ms || Math.round(performance.now() - startedAt)),
+    responseBody: formatHermesResponseBody(responseBody),
+    contentType: response.headers.get("content-type") || "application/json",
+    targetUrl: proxyUrl,
+    curl: buildHermesAgentCurlCommand(proxyUrl, message),
+    exitCode: payload.exit_code === null || payload.exit_code === undefined ? "-" : String(payload.exit_code),
+    mode: String(payload.mode || "hermes-agent-chat-check"),
+    error: typeof payload.reason === "string" ? payload.reason : typeof payload.error === "string" ? payload.error : "",
   };
 }
 
@@ -2489,6 +2546,19 @@ function RuntimeOverview({
   managementInstance: Instance | undefined;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
+  type HermesUiResult = {
+    ok: boolean;
+    httpStatus: number;
+    latencyMs: number;
+    responseBody: string;
+    contentType: string;
+    error?: string;
+    checkedAt: string;
+    target: string;
+    curl: string;
+    exitCode?: string;
+    mode?: string;
+  };
   const runtimeMetadataRows = buildRuntimeMetadataRows(runtime);
   const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
   const runningCount = instances.filter((item) => item.latestExecution?.status === "running").length;
@@ -2499,24 +2569,16 @@ function RuntimeOverview({
   const [probeRunning, setProbeRunning] = useState(false);
   const [hermesMessage, setHermesMessage] = useState("你好 你是谁");
   const [hermesUrl, setHermesUrl] = useState(buildHermesWebhookUrl(runtime));
-  const [hermesRunning, setHermesRunning] = useState(false);
+  const [hermesDeliveryRunning, setHermesDeliveryRunning] = useState(false);
+  const [hermesAgentRunning, setHermesAgentRunning] = useState(false);
   const [instanceSearch, setInstanceSearch] = useState("");
   const [instanceStatusFilter, setInstanceStatusFilter] = useState("all");
   const [runtimeTab, setRuntimeTab] = useState<"overview" | "config" | "events">("overview");
   const [relationshipInstanceId, setRelationshipInstanceId] = useState("");
   const [relationshipRunId, setRelationshipRunId] = useState("");
   const [relationshipNodeId, setRelationshipNodeId] = useState("");
-  const [hermesResult, setHermesResult] = useState<{
-    ok: boolean;
-    httpStatus: number;
-    latencyMs: number;
-    responseBody: string;
-    contentType: string;
-    error?: string;
-    checkedAt: string;
-    target: string;
-    curl: string;
-  } | null>(null);
+  const [hermesDeliveryResult, setHermesDeliveryResult] = useState<HermesUiResult | null>(null);
+  const [hermesAgentResult, setHermesAgentResult] = useState<HermesUiResult | null>(null);
 
   useEffect(() => {
     setProbeResults([]);
@@ -2525,8 +2587,10 @@ function RuntimeOverview({
 
   useEffect(() => {
     setHermesUrl(buildHermesWebhookUrl(runtime));
-    setHermesResult(null);
-    setHermesRunning(false);
+    setHermesDeliveryResult(null);
+    setHermesAgentResult(null);
+    setHermesDeliveryRunning(false);
+    setHermesAgentRunning(false);
   }, [runtime?.id]);
 
   useEffect(() => {
@@ -2589,11 +2653,13 @@ function RuntimeOverview({
     }
   };
 
-  const handleRunHermesCheck = async () => {
+  const hermesPrompt = hermesMessage.trim() || "你好 你是谁";
+
+  const handleRunHermesDeliveryCheck = async () => {
     if (!runtime) return;
     const target = hermesUrl.trim();
     if (!target) {
-      setHermesResult({
+      setHermesDeliveryResult({
         ok: false,
         httpStatus: 0,
         latencyMs: 0,
@@ -2606,10 +2672,10 @@ function RuntimeOverview({
       });
       return;
     }
-    setHermesRunning(true);
+    setHermesDeliveryRunning(true);
     try {
-      const result = await runHermesConnectivityCheck(runtime, hermesMessage.trim() || "你好 你是谁");
-      setHermesResult({
+      const result = await runHermesConnectivityCheck(runtime, hermesPrompt);
+      setHermesDeliveryResult({
         ok: result.ok,
         httpStatus: result.httpStatus,
         latencyMs: result.latencyMs,
@@ -2618,11 +2684,12 @@ function RuntimeOverview({
         error: result.ok ? undefined : result.error || `HTTP ${result.httpStatus}`,
         checkedAt: new Date().toISOString(),
         target: result.targetUrl || target,
-        curl: result.curl || buildHermesCurlCommand(target, hermesMessage.trim() || "你好 你是谁"),
+        curl: result.curl || buildHermesCurlCommand(target, hermesPrompt),
+        mode: "webhook-delivery-check",
       });
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
-      setHermesResult({
+      setHermesDeliveryResult({
         ok: false,
         httpStatus: 0,
         latencyMs: 0,
@@ -2631,12 +2698,84 @@ function RuntimeOverview({
         error: errorText,
         checkedAt: new Date().toISOString(),
         target,
-        curl: buildHermesCurlCommand(target, hermesMessage.trim() || "你好 你是谁"),
+        curl: buildHermesCurlCommand(target, hermesPrompt),
+        mode: "webhook-delivery-check",
       });
     } finally {
-      setHermesRunning(false);
+      setHermesDeliveryRunning(false);
     }
   };
+
+  const handleRunHermesAgentCheck = async () => {
+    if (!runtime) return;
+    const target = buildRuntimeHermesAgentProxyUrl(runtime);
+    setHermesAgentRunning(true);
+    try {
+      const result = await runHermesAgentChatCheck(runtime, hermesPrompt);
+      setHermesAgentResult({
+        ok: result.ok,
+        httpStatus: result.httpStatus,
+        latencyMs: result.latencyMs,
+        responseBody: result.responseBody,
+        contentType: result.contentType,
+        error: result.ok ? undefined : result.error || `HTTP ${result.httpStatus}`,
+        checkedAt: new Date().toISOString(),
+        target: result.targetUrl || target,
+        curl: result.curl || buildHermesAgentCurlCommand(target, hermesPrompt),
+        exitCode: result.exitCode,
+        mode: result.mode,
+      });
+    } catch (error) {
+      const errorText = error instanceof Error ? error.message : String(error);
+      setHermesAgentResult({
+        ok: false,
+        httpStatus: 0,
+        latencyMs: 0,
+        responseBody: "",
+        contentType: "",
+        error: errorText,
+        checkedAt: new Date().toISOString(),
+        target,
+        curl: buildHermesAgentCurlCommand(target, hermesPrompt),
+        mode: "hermes-agent-chat-check",
+      });
+    } finally {
+      setHermesAgentRunning(false);
+    }
+  };
+
+  const handleRunHermesChecks = async () => {
+    await Promise.all([
+      handleRunHermesDeliveryCheck(),
+      handleRunHermesAgentCheck(),
+    ]);
+  };
+
+  const renderHermesResult = (result: HermesUiResult | null, emptyText: string) => (
+    result ? (
+      <div className={`runtime-hermes-result ${result.ok ? "ok" : "failed"}`}>
+        <div className="runtime-hermes-summary">
+          <strong>{result.ok ? "Passed" : "Failed"}</strong>
+          <span>{result.error || `HTTP ${result.httpStatus}`}</span>
+          <small>{result.latencyMs}ms · {result.checkedAt}</small>
+        </div>
+        <KeyValues data={{
+          target_url: result.target,
+          http_status: result.httpStatus || "-",
+          content_type: result.contentType || "-",
+          latency_ms: `${result.latencyMs}ms`,
+          mode: result.mode || "-",
+          exit_code: result.exitCode || "-",
+        }} />
+        <div className="runtime-hermes-response">
+          <div className="section-title"><span>Response</span><span>{result.responseBody === "(empty response)" ? "empty" : "body"}</span></div>
+          <pre>{result.responseBody}</pre>
+        </div>
+      </div>
+    ) : (
+      <Empty text={emptyText} />
+    )
+  );
 
   return (
     <section className="runtime-overview">
@@ -2850,11 +2989,11 @@ function RuntimeOverview({
       <section className="flow-panel runtime-hermes-panel">
         <div className="panel-head">
           <div>
-            <strong>Hermes Connectivity</strong>
-            <span>通过 Runtime SPI 服务端签名验证 Hermes webhook 连通性</span>
+            <strong>Hermes Checks</strong>
+            <span>分开验证 webhook 投递链路和 Hermes Agent 真实对话能力</span>
           </div>
-          <button type="button" className="ghost-btn compact" onClick={handleRunHermesCheck} disabled={!runtime || hermesRunning || !hermesUrl.trim()}>
-            {hermesRunning ? <Loader2 size={14} className="spin" /> : <Play size={14} />}Run Hermes Check
+          <button type="button" className="ghost-btn compact" onClick={handleRunHermesChecks} disabled={!runtime || hermesDeliveryRunning || hermesAgentRunning}>
+            {hermesDeliveryRunning || hermesAgentRunning ? <Loader2 size={14} className="spin" /> : <Play size={14} />}Run both
           </button>
         </div>
         <div className="runtime-hermes-grid">
@@ -2862,7 +3001,7 @@ function RuntimeOverview({
             <label>
               <span>Test Message</span>
               <textarea value={hermesMessage} onChange={(event) => setHermesMessage(event.target.value)} rows={4} placeholder="请输入要发送给 Hermes 的文本" />
-              <span className="field-hint">页面会调用当前 Runtime SPI 的 hermes-smoke 代理，由服务端签名后发送到 Hermes webhook。</span>
+              <span className="field-hint">Delivery Check 会投递到 Hermes webhook；Agent Chat Check 会让 Runtime 本机 Hermes CLI 返回真实回答。</span>
             </label>
             <label>
               <span>Hermes Webhook URL</span>
@@ -2871,46 +3010,58 @@ function RuntimeOverview({
             </label>
             <div className={`runtime-hermes-endpoint-state ${hermesUrl.trim() ? "ok" : "missing"}`}>
               <strong>{hermesUrl.trim() ? "Hermes endpoint configured" : "Hermes endpoint missing"}</strong>
-              <span>{hermesUrl.trim() ? "Ready for webhook smoke check" : "Runtime metadata 没有 Hermes 公网入口，不能用 SPI 域名代替。"}</span>
+              <span>{hermesUrl.trim() ? "Delivery Check 可以验证 public webhook accepted；Agent Chat Check 仍然走 Runtime SPI 本机执行。" : "Runtime metadata 没有 Hermes 公网入口，不能用 SPI 域名代替 webhook。"}</span>
             </div>
             <div className="runtime-hermes-actions">
-              <button type="button" className="primary" onClick={handleRunHermesCheck} disabled={!runtime || hermesRunning || !hermesUrl.trim()}>
-                {hermesRunning ? <Loader2 size={16} className="spin" /> : <Play size={16} />}
-                {hermesRunning ? "Checking..." : "Run check"}
+              <button type="button" className="primary" onClick={handleRunHermesDeliveryCheck} disabled={!runtime || hermesDeliveryRunning || !hermesUrl.trim()}>
+                {hermesDeliveryRunning ? <Loader2 size={16} className="spin" /> : <Send size={16} />}
+                {hermesDeliveryRunning ? "Checking..." : "Run delivery"}
+              </button>
+              <button type="button" onClick={handleRunHermesAgentCheck} disabled={!runtime || hermesAgentRunning}>
+                {hermesAgentRunning ? <Loader2 size={16} className="spin" /> : <Bot size={16} />}
+                {hermesAgentRunning ? "Checking..." : "Run agent chat"}
               </button>
               <div className="runtime-hermes-meta">
                 <span>SPI: {runtime?.channelUrl || runtime?.endpoint || "-"}</span>
-                <span>Proxy: {buildRuntimeHermesSmokeProxyUrl(runtime) || "-"}</span>
+                <span>Delivery proxy: {buildRuntimeHermesSmokeProxyUrl(runtime) || "-"}</span>
+                <span>Agent proxy: {buildRuntimeHermesAgentProxyUrl(runtime) || "-"}</span>
                 <span>Hermes: {runtime?.metadata?.hermes_webhook_url || runtime?.metadata?.webhook_public_host || "missing"}</span>
               </div>
             </div>
           </div>
           <div className="runtime-hermes-output">
-            <div className="runtime-hermes-command">
-              <div className="section-title"><span>curl</span><span>copy and run manually</span></div>
-              <pre>{buildHermesCurlCommand(hermesUrl.trim() || buildHermesWebhookUrl(runtime), hermesMessage.trim() || "你好 你是谁")}</pre>
-            </div>
-            {hermesResult ? (
-              <div className={`runtime-hermes-result ${hermesResult.ok ? "ok" : "failed"}`}>
-                <div className="runtime-hermes-summary">
-                  <strong>{hermesResult.ok ? "Connected" : "Failed"}</strong>
-                  <span>{hermesResult.error || `HTTP ${hermesResult.httpStatus}`}</span>
-                  <small>{hermesResult.latencyMs}ms · {hermesResult.checkedAt}</small>
+            <div className="runtime-hermes-check-card">
+              <div className="runtime-hermes-check-head">
+                <div>
+                  <strong>Webhook Delivery Check</strong>
+                  <span>验证公网域名、HMAC 签名、Hermes gateway、smoke skill 投递 accepted。</span>
                 </div>
-                <KeyValues data={{
-                  target_url: hermesResult.target,
-                  http_status: hermesResult.httpStatus || "-",
-                  content_type: hermesResult.contentType || "-",
-                  latency_ms: `${hermesResult.latencyMs}ms`,
-                }} />
-                <div className="runtime-hermes-response">
-                  <div className="section-title"><span>Response</span><span>{hermesResult.responseBody === "(empty response)" ? "empty" : "body"}</span></div>
-                  <pre>{hermesResult.responseBody}</pre>
-                </div>
+                <span className={`status-pill ${hermesDeliveryResult?.ok ? "done" : hermesDeliveryResult ? "failed" : "waiting"}`}>
+                  {hermesDeliveryResult?.ok ? "passed" : hermesDeliveryResult ? "failed" : "waiting"}
+                </span>
               </div>
-            ) : (
-              <Empty text="先点击 Run check，或直接复制上方 curl 在终端里执行。" />
-            )}
+              <div className="runtime-hermes-command">
+                <div className="section-title"><span>curl</span><span>webhook delivery</span></div>
+                <pre>{buildHermesCurlCommand(hermesUrl.trim() || buildHermesWebhookUrl(runtime), hermesPrompt)}</pre>
+              </div>
+              {renderHermesResult(hermesDeliveryResult, "点击 Run delivery。accepted 只代表任务投递成功，不代表 Agent 已返回最终回答。")}
+            </div>
+            <div className="runtime-hermes-check-card">
+              <div className="runtime-hermes-check-head">
+                <div>
+                  <strong>Agent Chat Check</strong>
+                  <span>验证 Runtime 本机 Hermes CLI 能用当前模型配置返回自然语言回答。</span>
+                </div>
+                <span className={`status-pill ${hermesAgentResult?.ok ? "done" : hermesAgentResult ? "failed" : "waiting"}`}>
+                  {hermesAgentResult?.ok ? "passed" : hermesAgentResult ? "failed" : "waiting"}
+                </span>
+              </div>
+              <div className="runtime-hermes-command">
+                <div className="section-title"><span>curl</span><span>runtime agent proxy</span></div>
+                <pre>{buildHermesAgentCurlCommand(buildRuntimeHermesAgentProxyUrl(runtime), hermesPrompt)}</pre>
+              </div>
+              {renderHermesResult(hermesAgentResult, "点击 Run agent chat，确认 Hermes CLI 可以真实回答测试消息。")}
+            </div>
           </div>
         </div>
       </section>
@@ -4265,17 +4416,6 @@ function ArtifactsPage({
 
 function SettingsPage({
   mode,
-  runtime,
-  runtimes,
-  instance,
-  instances,
-  manualEndpoint,
-  setManualEndpoint,
-  onAddManualEndpoint,
-  streamStatus,
-  nodesReadyCount,
-  nodesTotal,
-  managementInstance,
   managementConfig,
   managementConfigLoading,
   managementConfigError,
@@ -4292,17 +4432,6 @@ function SettingsPage({
   globalTunnelAdminUrl,
 }: {
   mode: DataMode;
-  runtime: Runtime | undefined;
-  runtimes: Runtime[];
-  instance: Instance | undefined;
-  instances: Instance[];
-  manualEndpoint: string;
-  setManualEndpoint: (value: string) => void;
-  onAddManualEndpoint: (event: FormEvent) => void;
-  streamStatus: "live" | "reconnecting" | "polling fallback" | "closed";
-  nodesReadyCount: number;
-  nodesTotal: number;
-  managementInstance: Instance | undefined;
   managementConfig: RuntimeManagementConfigPreview | undefined;
   managementConfigLoading: boolean;
   managementConfigError: string;
@@ -4434,8 +4563,8 @@ function SettingsPage({
       <section className="concept-hero">
         <div>
           <span className="status-pill waiting"><Settings size={14} />Global Settings</span>
-          <h1>全局运维配置（不绑定任意 Runtime）</h1>
-          <p>本页展示与项目级别相关的配置入口，Runtime Host 级别配置保持在 Runtime Host Overview / Host Operations 内。</p>
+          <h1>Global Control Plane Settings</h1>
+          <p>全局配置只从 Control Plane / D1 读取和保存，不绑定任意 Runtime Host，也不拉取 Runtime SPI 的实例、工作流或节点数据。</p>
         </div>
         <div className="context-card">
           <strong>Control Plane</strong>
@@ -4445,7 +4574,7 @@ function SettingsPage({
       </section>
       <section className="global-settings-toolbar">
         <div>
-          <strong>Global Host Operations Config</strong>
+          <strong>Control Plane / D1 Global Config</strong>
           <span>{managementConfig?.updatedAt ? `updated ${managementConfig.updatedAt}` : "server-side config"} · {editedCount} edited</span>
         </div>
         <div className="settings-actions">
@@ -4471,11 +4600,7 @@ function SettingsPage({
               control_plane_api: controlPlaneApiUrl,
               tunnel_admin: globalTunnelAdminUrl,
               tunnel_api: globalTunnelApiUrl,
-              runtime_count: runtimes.length,
-              instance_count: instances.length,
               machine_count: machines.length,
-              mode_status: streamStatus,
-              nodes_ready: `${nodesReadyCount}/${nodesTotal}`,
             }} />
             <button type="button" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>打开 Tunnel Admin</button>
           </div>

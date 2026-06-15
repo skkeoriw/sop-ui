@@ -5073,6 +5073,11 @@ pre {
   gap: 12px;
 }
 
+.runtime-hermes-output {
+  display: grid;
+  gap: 14px;
+}
+
 .runtime-hermes-form label {
   display: flex;
   flex-direction: column;
@@ -5164,6 +5169,41 @@ pre {
   background: var(--panel);
 }
 
+.runtime-hermes-check-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.runtime-hermes-check-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.runtime-hermes-check-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.runtime-hermes-check-head strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.runtime-hermes-check-head span:not(.status-pill) {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .runtime-hermes-command {
   overflow: hidden;
 }
@@ -5190,7 +5230,6 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 14px;
   padding: 14px;
 }
 
