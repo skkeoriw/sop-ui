@@ -65,6 +65,8 @@ export interface ListQueryOptions {
   pageSize?: number;
   q?: string;
   status?: string;
+  role?: string;
+  authType?: string;
   sort?: string;
   order?: "asc" | "desc";
 }

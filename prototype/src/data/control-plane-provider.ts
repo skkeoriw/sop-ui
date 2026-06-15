@@ -39,6 +39,8 @@ function toQuery(options?: ListQueryOptions) {
   if (options?.pageSize) params.set("page_size", String(options.pageSize));
   if (options?.q) params.set("q", options.q);
   if (options?.status) params.set("status", options.status);
+  if (options?.role) params.set("role", options.role);
+  if (options?.authType) params.set("auth_type", options.authType);
   if (options?.sort) params.set("sort", options.sort);
   if (options?.order) params.set("order", options.order);
   const text = params.toString();
@@ -175,6 +177,7 @@ export const controlPlaneProvider = {
     privateKey?: string;
     password?: string;
     role?: string;
+    status?: string;
   }): Promise<MachineConfig> {
     const raw = await requestJsonFallback<Record<string, unknown>>([
       `${controlPlaneApiUrl}/api/sop/v1/machines`,
@@ -190,11 +193,21 @@ export const controlPlaneProvider = {
         private_key: input.privateKey,
         password: input.password,
         role: input.role || "target",
+        status: input.status || "active",
       }),
     });
     const machine = raw.machine as Record<string, unknown> | undefined;
     if (!machine) throw new Error(String(raw.error || "Machine save failed"));
     return mapMachine(machine);
+  },
+
+  async deleteMachine(id: string): Promise<{ ok: boolean; deleted?: boolean; id?: string }> {
+    return requestJsonFallback<{ ok: boolean; deleted?: boolean; id?: string }>([
+      `${controlPlaneApiUrl}/api/sop/v1/machines/${encodeURIComponent(id)}`,
+      `${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}`,
+    ], {
+      method: "DELETE",
+    });
   },
 
   async getMachineSecret(id: string): Promise<MachineSecretConfig> {

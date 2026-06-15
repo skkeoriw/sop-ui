@@ -12,6 +12,8 @@ import {
   CircleDot,
   Clock,
   Cloud,
+  Copy,
+  Edit3,
   Github,
   GitBranch,
   Info,
@@ -23,12 +25,14 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Play,
+  Plus,
   RefreshCw,
   Search,
   Server,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   Workflow,
   X
 } from "lucide-react";
@@ -748,6 +752,8 @@ export default function App() {
   const [manualRuntime, setManualRuntime] = useState<Runtime | undefined>(initialManualRuntime);
   const [manualEndpoint, setManualEndpoint] = useState(initialEndpoint);
   const [runtimeId, setRuntimeId] = useState(initialManualRuntime?.id || "");
+  const [runtimeSwitcherOpen, setRuntimeSwitcherOpen] = useState(false);
+  const [runtimeSwitchSearch, setRuntimeSwitchSearch] = useState("");
   const [instanceId, setInstanceId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedStageId, setSelectedStageId] = useState("");
@@ -778,10 +784,14 @@ export default function App() {
   const [machineAuthType, setMachineAuthType] = useState<"private_key" | "password">("private_key");
   const [machinePrivateKey, setMachinePrivateKey] = useState("");
   const [machinePassword, setMachinePassword] = useState("");
+  const [machineRole, setMachineRole] = useState("target");
+  const [machineStatus, setMachineStatus] = useState("active");
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [machineTestResult, setMachineTestResult] = useState<Record<string, unknown> | null>(null);
   const [machineSearch, setMachineSearch] = useState("");
   const [machineStatusFilter, setMachineStatusFilter] = useState("all");
+  const [machineRoleFilter, setMachineRoleFilter] = useState("all");
+  const [machineAuthFilter, setMachineAuthFilter] = useState("all");
   const [machinePage, setMachinePage] = useState(1);
   const [toast, setToast] = useState("");
   const [showNodeConfig, setShowNodeConfig] = useState(false);
@@ -819,6 +829,23 @@ export default function App() {
     return manualRuntime && !items.some((item) => item.endpoint === manualRuntime.endpoint) ? [manualRuntime, ...items] : items;
   }, [manualRuntime, runtimesQuery.data]);
   const runtime = runtimes.find((item) => item.id === runtimeId) || runtimes[0];
+  const switcherRuntimes = useMemo(() => {
+    const query = runtimeSwitchSearch.trim().toLowerCase();
+    if (!query) return runtimes;
+    return runtimes.filter((item) => {
+      const searchable = [
+        item.id,
+        item.name,
+        item.displayName,
+        item.endpoint,
+        item.clientIp,
+        item.localStatus,
+        item.metadata?.hermes_webhook_url,
+        item.metadata?.webhook_public_host,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [runtimeSwitchSearch, runtimes]);
 
   const instancesQuery = useQuery({
     queryKey: queryKeys.instances(mode, runtime),
@@ -941,6 +968,8 @@ export default function App() {
       pageSize: 25,
       q: machineSearch.trim(),
       status: machineStatusFilter,
+      role: machineRoleFilter === "all" ? "" : machineRoleFilter,
+      authType: machineAuthFilter === "all" ? "" : machineAuthFilter,
       sort: "updated_at",
       order: "desc" as const,
     }
@@ -953,7 +982,7 @@ export default function App() {
       order: "desc" as const,
     };
   const machinesQuery = useQuery({
-    queryKey: ["control-plane-machines", mode, machineQueryOptions.page, machineQueryOptions.pageSize, machineQueryOptions.q, machineQueryOptions.status],
+    queryKey: ["control-plane-machines", mode, machineQueryOptions.page, machineQueryOptions.pageSize, machineQueryOptions.q, machineQueryOptions.status, machineQueryOptions.role, machineQueryOptions.authType],
     queryFn: () => controlPlaneProvider.listMachines(machineQueryOptions),
     enabled: viewMode === "settings" || viewMode === "machines" || triggerOpen,
     retry: 1,
@@ -1358,26 +1387,52 @@ export default function App() {
       if (!machineSshCommand.trim()) throw new Error("请填写 SSH Command");
       const [result] = await Promise.all([
         controlPlaneProvider.saveMachine({
+          id: selectedMachineId || undefined,
           name: machineName.trim() || machineSshCommand.trim(),
           sshCommand: machineSshCommand.trim(),
           authType: machineAuthType,
-          privateKey: machineAuthType === "private_key" ? machinePrivateKey : "",
-          password: machineAuthType === "password" ? machinePassword : "",
+          privateKey: machineAuthType === "private_key" && machinePrivateKey.trim() ? machinePrivateKey : undefined,
+          password: machineAuthType === "password" && machinePassword.trim() ? machinePassword : undefined,
+          role: machineRole || "target",
+          status: machineStatus || "active",
         }),
         minimumDelay(300),
       ]);
       return result;
     },
     onSuccess: async () => {
-      setMachineName("");
-      setMachineSshCommand("");
+      setToast("机器节点已保存到 Control Plane D1");
       setMachinePrivateKey("");
       setMachinePassword("");
-      setToast("机器节点已保存到 Control Plane D1");
       await machinesQuery.refetch();
     },
     onError: (error) => {
       setToast(`机器节点保存失败：${String((error as Error).message || error)}`);
+    },
+  });
+  const deleteMachineMutation = useMutation({
+    mutationFn: async (machineId: string) => {
+      const [result] = await Promise.all([
+        controlPlaneProvider.deleteMachine(machineId),
+        minimumDelay(300),
+      ]);
+      return result;
+    },
+    onSuccess: async (_result, machineId) => {
+      if (selectedMachineId === machineId) {
+        setSelectedMachineId("");
+        setMachineName("");
+        setMachineSshCommand("");
+        setMachinePrivateKey("");
+        setMachinePassword("");
+        setMachineRole("target");
+        setMachineStatus("active");
+      }
+      setToast("机器节点已删除（soft delete）");
+      await machinesQuery.refetch();
+    },
+    onError: (error) => {
+      setToast(`机器节点删除失败：${String((error as Error).message || error)}`);
     },
   });
   const testMachineMutation = useMutation({
@@ -1614,6 +1669,8 @@ export default function App() {
 
   function selectRuntime(nextRuntimeId: string) {
     setRuntimeId(nextRuntimeId);
+    setRuntimeSwitcherOpen(false);
+    setRuntimeSwitchSearch("");
     const nextUrl = `/runtimes/${encodeURIComponent(nextRuntimeId)}${window.location.search}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
     setRoute({ view: "runtime", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
@@ -1722,23 +1779,23 @@ export default function App() {
             <Settings size={17} /><span>Settings</span><small>{mode}</small>
           </button>
         </nav>
-        <div className="rail-section">
-          <div className="section-title"><span>Runtime</span><span>{mode}</span></div>
-          {runtimes.map((item) => (
-            <button key={item.id} type="button" className={`rail-runtime ${runtime?.id === item.id ? "active" : ""}`} onClick={() => selectRuntime(item.id)}>
-              <Server size={14} />
-              <span>{item.name}</span>
-              <small>{item.machine || item.localStatus}</small>
-            </button>
-          ))}
-          {!runtimes.length && <div className="rail-empty">No runtime</div>}
-        </div>
       </aside>
       <header className="topbar">
         <div className="active-context">
-          <div>
-            <span>Active context</span>
-            <strong>{runtime?.name || "Runtime"} / {instance?.title || "Workspace"}</strong>
+          <RuntimeSwitcher
+            runtime={runtime}
+            runtimes={switcherRuntimes}
+            total={runtimes.length}
+            loading={runtimesQuery.isLoading}
+            open={runtimeSwitcherOpen}
+            search={runtimeSwitchSearch}
+            onOpenChange={setRuntimeSwitcherOpen}
+            onSearchChange={setRuntimeSwitchSearch}
+            onSelect={selectRuntime}
+          />
+          <div className="context-crumbs">
+            <span>Context</span>
+            <strong>{instance?.title || "Workspace"}{selectedRun?.pipelineId ? ` / ${shortId(selectedRun.pipelineId)}` : ""}</strong>
           </div>
           <code>{runtime?.endpoint || "No endpoint"}</code>
           <span className={`status-pill ${instance?.status === "failed" ? "failed" : runtime?.localStatus === "ok" ? "done" : "waiting"}`}>{instance?.status || runtime?.localStatus || "unknown"}</span>
@@ -1831,6 +1888,7 @@ export default function App() {
               setRuntimeManagementAction(action);
               setTriggerOpen(true);
             }}
+            onSelectRuntime={selectRuntime}
           />
         ) : viewMode === "instance" ? (
           <InstanceOverview
@@ -1926,6 +1984,10 @@ export default function App() {
             setMachineSearch={setMachineSearch}
             machineStatusFilter={machineStatusFilter}
             setMachineStatusFilter={setMachineStatusFilter}
+            machineRoleFilter={machineRoleFilter}
+            setMachineRoleFilter={setMachineRoleFilter}
+            machineAuthFilter={machineAuthFilter}
+            setMachineAuthFilter={setMachineAuthFilter}
             machinePage={machinePage}
             setMachinePage={setMachinePage}
             selectedMachineId={selectedMachineId}
@@ -1940,6 +2002,10 @@ export default function App() {
             setMachinePrivateKey={setMachinePrivateKey}
             machinePassword={machinePassword}
             setMachinePassword={setMachinePassword}
+            machineRole={machineRole}
+            setMachineRole={setMachineRole}
+            machineStatus={machineStatus}
+            setMachineStatus={setMachineStatus}
             saveMachinePending={saveMachineMutation.isPending}
             saveMachineError={saveMachineMutation.error ? String(saveMachineMutation.error.message) : ""}
             onSaveMachine={(event) => { event.preventDefault(); saveMachineMutation.mutate(); }}
@@ -1947,6 +2013,12 @@ export default function App() {
             testResult={machineTestResult}
             testError={testMachineMutation.error ? String(testMachineMutation.error.message) : ""}
             onTestMachine={(id) => testMachineMutation.mutate(id)}
+            deletePending={deleteMachineMutation.isPending}
+            onDeleteMachine={(id) => {
+              if (!window.confirm(`确认删除机器节点 ${id}？\n这会在 Control Plane 中执行 soft delete，不会登录目标机器。`)) return;
+              deleteMachineMutation.mutate(id);
+            }}
+            onToast={setToast}
           />
         ) : (
           <SettingsPage
@@ -2227,6 +2299,63 @@ async function runHermesConnectivityCheck(runtime: Runtime | undefined, message:
   };
 }
 
+function RuntimeSwitcher({
+  runtime,
+  runtimes,
+  total,
+  loading,
+  open,
+  search,
+  onOpenChange,
+  onSearchChange,
+  onSelect,
+}: {
+  runtime: Runtime | undefined;
+  runtimes: Runtime[];
+  total: number;
+  loading: boolean;
+  open: boolean;
+  search: string;
+  onOpenChange: (value: boolean) => void;
+  onSearchChange: (value: string) => void;
+  onSelect: (runtimeId: string) => void;
+}) {
+  return (
+    <div className="runtime-switcher">
+      <button type="button" className="runtime-switcher-button" onClick={() => onOpenChange(!open)} aria-expanded={open}>
+        <Server size={16} />
+        <span>
+          <small>Runtime</small>
+          <strong>{runtime?.displayName || runtime?.name || "Select runtime"}</strong>
+        </span>
+        <em className={runtime?.localStatus === "ok" ? "ok" : "warn"}>{runtime?.localStatus || runtime?.status || "unknown"}</em>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="runtime-switcher-menu">
+          <label className="runtime-switcher-search">
+            <Search size={14} />
+            <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder={`Search ${total} runtimes`} autoFocus />
+          </label>
+          <div className="runtime-switcher-list">
+            {runtimes.map((item) => (
+              <button key={item.id} type="button" className={`runtime-switcher-item ${runtime?.id === item.id ? "active" : ""}`} onClick={() => onSelect(item.id)}>
+                <span className={`runtime-dot ${item.localStatus === "ok" ? "ok" : "warn"}`} />
+                <span>
+                  <strong>{item.displayName || item.name}</strong>
+                  <small>{item.clientIp || item.machine || "no client ip"} · {item.localStatus || item.status || "unknown"}</small>
+                  <code>{item.spiBaseUrl || item.endpoint}</code>
+                </span>
+              </button>
+            ))}
+            {!runtimes.length && <div className="runtime-switcher-empty">{loading ? "Loading runtimes..." : "No runtime matched"}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RuntimeOverview({
   runtime,
   runtimes,
@@ -2235,6 +2364,7 @@ function RuntimeOverview({
   mode,
   onOpenInstance,
   onOpenWorkflow,
+  onSelectRuntime,
   managementInstance,
   onOpenManagement,
 }: {
@@ -2245,6 +2375,7 @@ function RuntimeOverview({
   mode: DataMode;
   onOpenInstance: (instanceId: string) => void;
   onOpenWorkflow: (instanceId: string) => void;
+  onSelectRuntime: (runtimeId: string) => void;
   managementInstance: Instance | undefined;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
@@ -2372,6 +2503,26 @@ function RuntimeOverview({
         <Metric label="Instances" value={instances.length} subtext={`${readyCount} ready`} />
         <Metric label="Running" value={runningCount} subtext={`${failedCount} failed workspace`} />
         <Metric label="SPI" value={runtime?.localStatus || runtime?.status || "-"} subtext={runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`} />
+      </section>
+
+      <section className="flow-panel runtime-catalog-panel">
+        <div className="panel-head">
+          <div><strong>Runtime Catalog</strong><span>顶部下拉负责切换，这里保留所有 Runtime 的可扫描列表</span></div>
+          <span>{runtimes.length} runtimes</span>
+        </div>
+        <div className="runtime-catalog-list">
+          {runtimes.map((item) => (
+            <button key={item.id} type="button" className={`runtime-catalog-card ${runtime?.id === item.id ? "active" : ""}`} onClick={() => onSelectRuntime(item.id)}>
+              <div>
+                <strong>{item.displayName || item.name}</strong>
+                <span>{item.clientIp || item.machine || "no machine ip"} · {item.localStatus || item.status || "unknown"}</span>
+              </div>
+              <code>{item.spiBaseUrl || item.endpoint}</code>
+              <small>{item.metadata?.hermes_webhook_url || item.metadata?.webhook_public_host || "Hermes metadata missing"}</small>
+            </button>
+          ))}
+          {!runtimes.length && <LoadingOrEmpty loading={loading} text="没有发现 active SOP Runtime" />}
+        </div>
       </section>
 
       <section className="runtime-detail-grid">
@@ -3852,6 +4003,10 @@ function MachinesPage({
   setMachineSearch,
   machineStatusFilter,
   setMachineStatusFilter,
+  machineRoleFilter,
+  setMachineRoleFilter,
+  machineAuthFilter,
+  setMachineAuthFilter,
   machinePage,
   setMachinePage,
   selectedMachineId,
@@ -3866,6 +4021,10 @@ function MachinesPage({
   setMachinePrivateKey,
   machinePassword,
   setMachinePassword,
+  machineRole,
+  setMachineRole,
+  machineStatus,
+  setMachineStatus,
   saveMachinePending,
   saveMachineError,
   onSaveMachine,
@@ -3873,6 +4032,9 @@ function MachinesPage({
   testResult,
   testError,
   onTestMachine,
+  deletePending,
+  onDeleteMachine,
+  onToast,
 }: {
   machines: MachineConfig[];
   machineList?: MachineList;
@@ -3882,6 +4044,10 @@ function MachinesPage({
   setMachineSearch: (value: string) => void;
   machineStatusFilter: string;
   setMachineStatusFilter: (value: string) => void;
+  machineRoleFilter: string;
+  setMachineRoleFilter: (value: string) => void;
+  machineAuthFilter: string;
+  setMachineAuthFilter: (value: string) => void;
   machinePage: number;
   setMachinePage: (value: number) => void;
   selectedMachineId: string;
@@ -3896,6 +4062,10 @@ function MachinesPage({
   setMachinePrivateKey: (value: string) => void;
   machinePassword: string;
   setMachinePassword: (value: string) => void;
+  machineRole: string;
+  setMachineRole: (value: string) => void;
+  machineStatus: string;
+  setMachineStatus: (value: string) => void;
   saveMachinePending: boolean;
   saveMachineError: string;
   onSaveMachine: (event: FormEvent) => void;
@@ -3903,6 +4073,9 @@ function MachinesPage({
   testResult: Record<string, unknown> | null;
   testError: string;
   onTestMachine: (id: string) => void;
+  deletePending: boolean;
+  onDeleteMachine: (id: string) => void;
+  onToast: (message: string) => void;
 }) {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId) || machines[0];
   const machineTotal = machineList?.total ?? machines.length;
@@ -3912,6 +4085,8 @@ function MachinesPage({
     setMachineName(machine.name);
     setMachineSshCommand(machine.sshCommand);
     setMachineAuthType(machine.authType === "password" ? "password" : "private_key");
+    setMachineRole(machine.role || "target");
+    setMachineStatus(machine.status || "active");
     setMachinePrivateKey("");
     setMachinePassword("");
   };
@@ -3920,8 +4095,29 @@ function MachinesPage({
     setMachineName("");
     setMachineSshCommand("");
     setMachineAuthType("private_key");
+    setMachineRole("target");
+    setMachineStatus("active");
     setMachinePrivateKey("");
     setMachinePassword("");
+  };
+  const copySsh = async (machine: MachineConfig) => {
+    try {
+      await navigator.clipboard.writeText(machine.sshCommand || `ssh ${machine.user}@${machine.host}`);
+      onToast("SSH Command 已复制");
+    } catch {
+      onToast("复制失败，请手动复制 SSH Command");
+    }
+  };
+  const duplicateMachine = (machine: MachineConfig) => {
+    setSelectedMachineId("");
+    setMachineName(`${machine.name || machine.host} copy`);
+    setMachineSshCommand(machine.sshCommand);
+    setMachineAuthType(machine.authType === "password" ? "password" : "private_key");
+    setMachineRole(machine.role || "target");
+    setMachineStatus("active");
+    setMachinePrivateKey("");
+    setMachinePassword("");
+    onToast("已复制非敏感字段，请补充 secret 后保存为新机器");
   };
   return (
     <>
@@ -3967,19 +4163,69 @@ function MachinesPage({
               >
                 <option value="all">All status</option>
                 <option value="active">Active</option>
+                <option value="offline">Offline</option>
                 <option value="disabled">Disabled</option>
+                <option value="deleted">Deleted</option>
+              </select>
+            </label>
+            <label className="filter-box">
+              <SlidersHorizontal size={14} />
+              <select
+                value={machineRoleFilter}
+                onChange={(event) => {
+                  setMachinePage(1);
+                  setMachineRoleFilter(event.target.value);
+                }}
+              >
+                <option value="all">All roles</option>
+                <option value="target">Target</option>
+                <option value="executor">Executor</option>
+                <option value="dev-machine">Dev Machine</option>
+              </select>
+            </label>
+            <label className="filter-box">
+              <ShieldCheck size={14} />
+              <select
+                value={machineAuthFilter}
+                onChange={(event) => {
+                  setMachinePage(1);
+                  setMachineAuthFilter(event.target.value);
+                }}
+              >
+                <option value="all">All auth</option>
+                <option value="private_key">Private Key</option>
+                <option value="password">Password</option>
               </select>
             </label>
           </div>
           <div className="machine-list">
             {machines.map((machine) => (
-              <button key={machine.id} type="button" className={`machine-row machine-row-button ${selectedMachine?.id === machine.id ? "active" : ""}`} onClick={() => loadMachine(machine)}>
-                <div>
-                  <strong>{machine.name}</strong>
-                  <code>{machine.user}@{machine.host}:{machine.port}</code>
+              <div key={machine.id} className={`machine-row machine-row-button ${selectedMachine?.id === machine.id ? "active" : ""}`}>
+                <button type="button" className="machine-row-main" onClick={() => loadMachine(machine)}>
+                  <div>
+                    <strong>{machine.name}</strong>
+                    <code>{machine.user}@{machine.host}:{machine.port}</code>
+                  </div>
+                  <span>{machine.authType === "password" ? "password" : "private key"}</span>
+                </button>
+                <div className="machine-row-actions" aria-label={`${machine.name} actions`}>
+                  <button type="button" title="Test SSH" onClick={() => onTestMachine(machine.id)} disabled={testPending}>
+                    <Activity size={14} />
+                  </button>
+                  <button type="button" title="Copy SSH" onClick={() => copySsh(machine)}>
+                    <Copy size={14} />
+                  </button>
+                  <button type="button" title="Duplicate Machine" onClick={() => duplicateMachine(machine)}>
+                    <Plus size={14} />
+                  </button>
+                  <button type="button" title="Edit" onClick={() => loadMachine(machine)}>
+                    <Edit3 size={14} />
+                  </button>
+                  <button type="button" title="Delete" className="danger-icon" onClick={() => onDeleteMachine(machine.id)} disabled={deletePending}>
+                    <Trash2 size={14} />
+                  </button>
                 </div>
-                <span>{machine.authType === "password" ? "password" : "private key"}</span>
-              </button>
+              </div>
             ))}
             {!machines.length && <LoadingOrEmpty loading={loading} text="还没有机器节点配置" />}
           </div>
@@ -3997,10 +4243,18 @@ function MachinesPage({
           <div className="panel-head">
             <div><strong>Machine Detail</strong><span>{selectedMachine?.id || "new machine"}</span></div>
             {selectedMachine && (
-              <button type="button" className="ghost-btn compact" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
-                {testPending ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}
-                Test
-              </button>
+              <div className="machine-detail-actions">
+                <button type="button" className="ghost-btn compact" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
+                  {testPending ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}
+                  Test
+                </button>
+                <button type="button" className="ghost-btn compact" onClick={() => copySsh(selectedMachine)}>
+                  <Copy size={14} />Copy SSH
+                </button>
+                <button type="button" className="ghost-btn compact danger" onClick={() => onDeleteMachine(selectedMachine.id)} disabled={deletePending}>
+                  <Trash2 size={14} />Delete
+                </button>
+              </div>
             )}
           </div>
           {selectedMachine ? (
@@ -4032,20 +4286,38 @@ function MachinesPage({
                 <option value="password">Password</option>
               </select>
             </label>
+            <div className="machine-editor-grid">
+              <label>
+                <span>Role</span>
+                <select value={machineRole} onChange={(event) => setMachineRole(event.target.value)} disabled={saveMachinePending}>
+                  <option value="target">Target</option>
+                  <option value="executor">Executor</option>
+                  <option value="dev-machine">Dev Machine</option>
+                </select>
+              </label>
+              <label>
+                <span>Status</span>
+                <select value={machineStatus} onChange={(event) => setMachineStatus(event.target.value)} disabled={saveMachinePending}>
+                  <option value="active">Active</option>
+                  <option value="disabled">Disabled</option>
+                  <option value="offline">Offline</option>
+                </select>
+              </label>
+            </div>
             {machineAuthType === "private_key" ? (
               <label>
                 <span>Private Key</span>
-                <textarea value={machinePrivateKey} onChange={(event) => setMachinePrivateKey(event.target.value)} rows={6} placeholder="粘贴 OpenSSH private key；保存后不回显明文" disabled={saveMachinePending} />
+                <textarea value={machinePrivateKey} onChange={(event) => setMachinePrivateKey(event.target.value)} rows={6} placeholder={selectedMachine?.privateKeyPresent ? "已配置；留空保存会保留原 secret，填写则替换" : "粘贴 OpenSSH private key；保存后不回显明文"} disabled={saveMachinePending} />
               </label>
             ) : (
               <label>
                 <span>Password</span>
-                <input type="password" value={machinePassword} onChange={(event) => setMachinePassword(event.target.value)} placeholder="SSH password；保存后不回显明文" disabled={saveMachinePending} />
+                <input type="password" value={machinePassword} onChange={(event) => setMachinePassword(event.target.value)} placeholder={selectedMachine?.passwordPresent ? "已配置；留空保存会保留原 secret，填写则替换" : "SSH password；保存后不回显明文"} disabled={saveMachinePending} />
               </label>
             )}
             <button type="submit" className="primary" disabled={saveMachinePending || !machineSshCommand.trim()}>
               {saveMachinePending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
-              Save Machine
+              {selectedMachineId ? "Save Changes" : "Create Machine"}
             </button>
           </form>
         </section>
