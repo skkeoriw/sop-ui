@@ -1,4 +1,5 @@
 import { normalizeEndpoint } from "./provider";
+import { controlPlaneApiUrl } from "./control-plane-provider";
 import type {
   Dag,
   Instance,
@@ -505,35 +506,81 @@ function mapNodeDraftSchema(raw: Record<string, unknown>): NodeDraftSchema {
   };
 }
 
+function mapRuntime(raw: Record<string, unknown>): Runtime | null {
+  const metadata = normalizeMetadata(raw.metadata);
+  const endpoint = normalizeEndpoint(String(raw.endpoint || raw.channel_url || raw.channelUrl || metadata.channel_url || metadata.endpoint_url || ""));
+  if (!endpoint) return null;
+  const name = String(raw.name || raw.channel_name || raw.channelName || metadata.channel_name || raw.id || endpoint);
+  return {
+    id: String(raw.id || raw.runtime_id || metadata.runtime_id || name),
+    name,
+    endpoint,
+    machine: name.match(/\d+/)?.[0],
+    status: String(raw.status || "unknown"),
+    localStatus: String(raw.local_status || raw.localStatus || "unknown"),
+    displayName: String(raw.display_name || raw.displayName || metadata.display_name || metadata.runtime_id || name),
+    clientIp: String(raw.client_ip || raw.clientIp || metadata.client_ip || ""),
+    localPort: String(raw.local_port || raw.localPort || metadata.local_port || ""),
+    channelName: String(raw.channel_name || raw.channelName || metadata.channel_name || name),
+    channelUrl: endpoint,
+    spiBaseUrl: String(raw.spi_base_url || raw.spiBaseUrl || metadata.spi_base_url || `${endpoint}/api/sop`),
+    metadata,
+    supportedSopTypes: Array.isArray(raw.supported_sop_types)
+      ? raw.supported_sop_types.map(String)
+      : Array.isArray(raw.supportedSopTypes)
+      ? raw.supportedSopTypes.map(String)
+      : metadata.supported_sop_types
+      ? parseStringArray(metadata.supported_sop_types)
+      : [],
+  };
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return value.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+}
+
 export const sopProvider: SopDataProvider = {
   mode: "real",
 
   async listRuntimes() {
-    const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=200`);
-    return (data.tunnels || [])
-      .flatMap((tunnel): Runtime[] => {
-        const metadata = parseMetadata(tunnel.metadata);
-        if (metadata?.type !== "sop-runtime" || tunnel.status !== "active") return [];
-        const endpoint = normalizeEndpoint(String(metadata.channel_url || metadata.endpoint_url || ""));
-        if (!endpoint) return [];
-        const name = String(metadata.channel_name || tunnel.subdomain || metadata.runtime_id || endpoint);
-        return [{
-          id: String(metadata.runtime_id || name),
-          name,
-          endpoint,
-          machine: name.match(/\d+/)?.[0],
-          status: String(tunnel.status || "unknown"),
-          localStatus: String(tunnel.local_status || "unknown"),
-          displayName: String(metadata.display_name || metadata.runtime_id || name),
-          clientIp: String(tunnel.client_ip || metadata.client_ip || ""),
-          localPort: String(tunnel.local_port || metadata.local_port || ""),
-          channelName: String(metadata.channel_name || name),
-          channelUrl: endpoint,
-          spiBaseUrl: String(metadata.spi_base_url || `${endpoint}/api/sop`),
-          metadata: normalizeMetadata(metadata),
-          supportedSopTypes: Array.isArray(metadata.supported_sop_types) ? metadata.supported_sop_types.map(String) : [],
-        }];
-      })
+    let runtimes: Runtime[] = [];
+    try {
+      const data = await requestJson<{ runtimes?: Array<Record<string, unknown>>; items?: Array<Record<string, unknown>> }>(
+        `${controlPlaneApiUrl}/api/sop/v1/runtimes?page=1&page_size=200&status=active`
+      );
+      runtimes = (data.items || data.runtimes || []).flatMap((item) => {
+        const runtime = mapRuntime(item);
+        return runtime ? [runtime] : [];
+      });
+    } catch {
+      const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=200`);
+      runtimes = (data.tunnels || [])
+        .flatMap((tunnel): Runtime[] => {
+          const metadata = parseMetadata(tunnel.metadata);
+          if (metadata?.type !== "sop-runtime" || tunnel.status !== "active") return [];
+          const runtime = mapRuntime({
+            id: metadata.runtime_id || metadata.channel_name || tunnel.subdomain,
+            name: metadata.channel_name || tunnel.subdomain,
+            endpoint: metadata.channel_url || metadata.endpoint_url,
+            status: tunnel.status,
+            local_status: tunnel.local_status,
+            display_name: metadata.display_name,
+            client_ip: tunnel.client_ip || metadata.client_ip,
+            local_port: tunnel.local_port || metadata.local_port,
+            channel_name: metadata.channel_name,
+            spi_base_url: metadata.spi_base_url,
+            supported_sop_types: metadata.supported_sop_types,
+            metadata,
+          });
+          return runtime ? [runtime] : [];
+        });
+    }
+    return runtimes
       .sort((a, b) => {
         const healthA = a.localStatus === "ok" ? 0 : 1;
         const healthB = b.localStatus === "ok" ? 0 : 1;
