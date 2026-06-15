@@ -277,6 +277,26 @@ function statusLabel(status: StageStatus) {
   return "Waiting";
 }
 
+function runProgressFromNodes(run: Run | undefined, dag?: Dag | undefined) {
+  if (!run) return { percent: 0, done: 0, failed: 0, running: 0, total: dag?.nodes.length || 0, source: "none" };
+  const nodeIds = new Set<string>([
+    ...Object.keys(run.nodes || {}),
+    ...(dag?.nodes || []).map((node) => node.id),
+  ]);
+  const total = Number(run.nodeCount || nodeIds.size || dag?.nodes.length || 0);
+  const states = [...nodeIds].map((id) => run.nodes?.[id] || run.nodeStates?.[id]?.status).filter(Boolean) as StageStatus[];
+  const done = Number(run.doneCount || states.filter((state) => state === "done").length);
+  const failed = Number(run.failedCount || states.filter((state) => state === "failed").length);
+  const running = states.filter((state) => state === "running").length;
+  if (!total) {
+    const backend = Number(run.progress || 0);
+    return { percent: Number.isFinite(backend) ? backend : 0, done, failed, running, total: 0, source: "backend" };
+  }
+  const terminal = states.filter((state) => state === "done" || state === "failed" || state === "skipped" || state === "cancelled").length;
+  const percent = run.status === "done" ? 100 : Math.round((terminal / total) * 100);
+  return { percent, done, failed, running, total, source: "nodes" };
+}
+
 async function fetchProbe(
   id: string,
   label: string,
@@ -1088,16 +1108,13 @@ export default function App() {
     enabled: Boolean(runtime && instance && selectedManagedNode && selectedNodeModule && viewMode === "nodes"),
   });
   const nodeFilters = useMemo(() => {
-    const values = new Set<string>();
-    managedNodes.forEach((node) => values.add(String(node.ui?.category || "custom")));
-    return ["all", ...["input", "research", "build", "notify", "custom"].filter((value) => values.has(value))];
-  }, [managedNodes]);
+    return ["all", "create-runtime", "delete-runtime", "create-instance", "common", "failed"];
+  }, []);
   const visibleManagedNodes = useMemo(() => {
     const query = nodeSearch.trim().toLowerCase();
     return managedNodes.filter((node) => {
-      const category = String(node.ui?.category || "custom");
-      const searchable = [node.nodeId, node.title, node.description, category, node.case, node.executor?.type].filter(Boolean).join(" ").toLowerCase();
-      return (nodeFilter === "all" || nodeFilter === category) && (!query || searchable.includes(query));
+      const searchable = [node.nodeId, node.title, node.description, node.ui?.category, node.case, node.executor?.type, node.branch].filter(Boolean).join(" ").toLowerCase();
+      return matchesNodeGroup(node, nodeFilter) && (!query || searchable.includes(query));
     });
   }, [managedNodes, nodeFilter, nodeSearch]);
 
@@ -2900,7 +2917,7 @@ function InstanceRow({ instance, onOpen, onWorkflow }: { instance: Instance; onO
       <div className="instance-meta">
         <span>{instance.workflowBinding?.workflowName || instance.sopType || "Workflow"}</span>
         <span>{instance.repo || "-"}</span>
-        <span>{latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)} · ${latest.progress ?? 0}%` : "No execution"}</span>
+        <span>{latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)} · ${runProgressFromNodes(latest).percent}%` : "No execution"}</span>
         <span>{instance.artifactCount || 0} artifacts · {instance.pageCount || 0} pages</span>
       </div>
       <div className="instance-actions">
@@ -3078,7 +3095,7 @@ function WorkflowHome({
           </div>
         </div>
         <div className="workflow-metrics">
-          <Metric label="Progress" value={`${selectedRun?.progress ?? 0}%`} subtext={`${selectedRun?.doneCount ?? 0}/${selectedRun?.nodeCount ?? dag?.nodes.length ?? 0} nodes`} />
+          <Metric label="Progress" value={`${runProgressFromNodes(selectedRun, dag).percent}%`} subtext={`${runProgressFromNodes(selectedRun, dag).done}/${runProgressFromNodes(selectedRun, dag).total} nodes`} />
           <Metric label="Artifacts" value={selectedRun?.artifactCount ?? runArtifacts.length} subtext="run scoped" />
           <Metric label="Nodes" value={`${nodesReadyCount}/${managedNodeCount || 0}`} subtext="metadata ready" />
           <Metric label="SSE" value={streamStatus} subtext={streamStatusHint(streamStatus)} />
@@ -3199,6 +3216,7 @@ function WorkflowWorkspace({
   const displayedRuns = selectedRun && !topRuns.some((run) => run.pipelineId === selectedRun.pipelineId)
     ? [selectedRun, ...topRuns.filter((run) => run.pipelineId !== selectedRun.pipelineId)].slice(0, 8)
     : topRuns;
+  const selectedProgress = runProgressFromNodes(selectedRun, dag);
   return (
     <section className="workflow-workspace">
       {selectedRunMissing && (
@@ -3248,13 +3266,13 @@ function WorkflowWorkspace({
                 <button
                   key={run.pipelineId}
                   type="button"
-                  title={`${run.pipelineId}\n${statusLabel(run.status)} · ${run.progress ?? 0}%\n${run.sourceUrl || run.repo}\n${run.updatedAt || run.startedAt}`}
+                  title={`${run.pipelineId}\n${statusLabel(run.status)} · ${runProgressFromNodes(run, dag).percent}%\n${run.sourceUrl || run.repo}\n${run.updatedAt || run.startedAt}`}
                   className={`workflow-run-row ${run.status} ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`}
                   onClick={() => onSelectRun(run.pipelineId)}
                 >
                   <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
                   <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
-                  <small>{run.progress ?? 0}% · {run.updatedAt || run.startedAt}</small>
+                  <small>{runProgressFromNodes(run, dag).percent}% · {run.updatedAt || run.startedAt}</small>
                   <small>{run.sourceUrl || run.repo}</small>
                 </button>
               ))}
@@ -3285,10 +3303,11 @@ function WorkflowWorkspace({
                 </button>
               )}
               <div className="dag-status-strip">
-                <div className="dag-progress" aria-label={`Run progress ${selectedRun?.progress ?? 0}%`}>
-                  <span style={{ width: `${selectedRun?.progress ?? 0}%` }} />
+                <div className="dag-progress" aria-label={`Run progress ${selectedProgress.percent}%`}>
+                  <span style={{ width: `${selectedProgress.percent}%` }} />
                 </div>
-                {selectedRun && <span className="status-pill running">{selectedRun.progress ?? 0}%</span>}
+                {selectedRun && <span className="status-pill running">{selectedProgress.percent}%</span>}
+                {selectedRun && <span className="status-pill waiting">{selectedProgress.done}/{selectedProgress.total} nodes</span>}
                 <span className={`status-pill ${streamStatus === "live" ? "done" : streamStatus === "closed" ? "waiting" : "running"}`}>SSE {streamStatus}</span>
                 {selectedRun && <span className={`status-pill ${selectedRun.status}`}>{statusLabel(selectedRun.status)}</span>}
               </div>
@@ -3534,9 +3553,7 @@ function RunsPage({
   retryPending: boolean;
   cancelNodePending: boolean;
 }) {
-  const doneCount = selectedRun ? Object.values(selectedRun.nodes).filter((state) => state === "done").length : 0;
-  const totalCount = dag?.nodes.length || 0;
-  const progress = totalCount ? Math.round((doneCount / totalCount) * 100) : 0;
+  const progress = runProgressFromNodes(selectedRun, dag);
   const gitEvents = runEvents.filter((event) => event.event.startsWith("git."));
   const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram."));
   return (
@@ -3554,7 +3571,7 @@ function RunsPage({
         </div>
       </section>
       <section className="console-metrics">
-        <Metric label="Pipeline" value={`${selectedRun?.progress ?? progress}%`} subtext={`${selectedRun?.doneCount ?? doneCount}/${selectedRun?.nodeCount ?? totalCount} stages done`} />
+        <Metric label="Pipeline" value={`${progress.percent}%`} subtext={`${progress.done}/${progress.total} stages done`} />
         <Metric label="Git commits" value={selectedRun?.gitEventCount ?? gitEvents.length} subtext="run scoped" />
         <Metric label="TG events" value={selectedRun?.telegramEventCount ?? tgEvents.length} subtext="sent / skipped / failed" />
         <Metric label="Pages" value={selectedRun?.pageCount || "-"} subtext="30-40 target" />
@@ -3628,13 +3645,13 @@ function RunTable({ runs, selectedRunId, onSelect }: { runs: Run[]; selectedRunI
   if (!runs.length) return <Empty text="当前 Workspace 还没有 Run" />;
   return (
     <div className="run-table">
-      <div className="run-table-head"><span>Run</span><span>Status</span><span>Updated</span><span>Source</span><span>Action</span></div>
+      <div className="run-table-head"><span>Run</span><span>Status</span><span>Updated</span><span>Progress</span><span>Action</span></div>
       {runs.map((run) => (
         <button key={run.pipelineId} type="button" className={`run-table-row ${selectedRunId === run.pipelineId ? "active" : ""}`} onClick={() => onSelect(run.pipelineId)}>
           <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
           <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
           <span>{run.updatedAt || run.startedAt}</span>
-          <span>{run.sourceType || "youtube"}</span>
+          <span>{runProgressFromNodes(run).percent}%</span>
           <span>{run.status === "failed" ? "Retry" : "Open"}</span>
         </button>
       ))}
@@ -4427,34 +4444,47 @@ function NodesWorkspace({
   onOpenDraft: () => void;
 }) {
   const completeNodes = nodes.filter((node) => (node.missingFields || []).length === 0).length;
+  const groupCounts = Object.fromEntries(nodeFilters.map((filter) => [filter, nodes.filter((node) => matchesNodeGroup(node, filter)).length]));
   return (
     <>
       <section className="node-summary">
         <div>
-          <span className="status-pill running"><Boxes size={14} />Node Studio</span>
-          <h1>节点资产中心</h1>
-          <p>{instance?.title || "SOP Nodes"} · 按输入、执行、产物和附属能力组织节点。</p>
+          <span className="status-pill running"><Boxes size={14} />Node Catalog</span>
+          <h1>Workflow 节点目录</h1>
+          <p>{instance?.title || "SOP Nodes"} · 按 create runtime、delete runtime、create instance 和 common 能力组织节点。</p>
           <div className="overview-tags">
-            <span>Input</span>
-            <span>Research</span>
-            <span>Build</span>
-            <span>Notify</span>
+            <span>Create Runtime</span>
+            <span>Delete Runtime</span>
+            <span>Create Instance</span>
+            <span>Common</span>
           </div>
         </div>
         <Metric label="Nodes" value={nodes.length} subtext="registered in SOP" />
         <Metric label="Complete" value={`${completeNodes}/${nodes.length || 0}`} subtext="metadata ready" />
         <Metric label="Drafts" value={drafts.length} subtext="not published" />
-        <Metric label="Publish" value="off" subtext="draft only" />
+        <Metric label="Review" value={groupCounts.failed || 0} subtext="nodes need metadata" />
       </section>
 
-      <section className="node-module-workbench">
+      <section className="node-module-workbench node-catalog-workbench">
         <aside className="node-list-panel">
-          <div className="panel-head compact"><div><strong>Node List</strong><span>{visibleNodes.length}/{nodes.length} registered</span></div><button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Create</button></div>
+          <div className="panel-head compact">
+            <div><strong>Groups</strong><span>{visibleNodes.length}/{nodes.length} nodes</span></div>
+            <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Draft</button>
+          </div>
           <div className="node-list-tools">
             <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node" /></label>
-            <div className="lifecycle-tabs" role="tablist" aria-label="Node category">
-              {nodeFilters.map((filter) => <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>{filter === "all" ? "All" : categoryLabel(filter)}</button>)}
+            <div className="node-group-list" role="tablist" aria-label="Node group">
+              {nodeFilters.map((filter) => (
+                <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>
+                  <strong>{nodeGroupLabel(filter)}</strong>
+                  <span className={`status-pill ${filter === "failed" && (groupCounts[filter] || 0) ? "waiting" : "done"}`}>{groupCounts[filter] || 0}</span>
+                </button>
+              ))}
             </div>
+          </div>
+          <div className="node-catalog-heading">
+            <strong>Nodes</strong>
+            <span>{nodeGroupLabel(nodeFilter)}</span>
           </div>
           {loading ? <Skeleton /> : (
             <div className="node-picker-list">
@@ -4475,7 +4505,14 @@ function NodesWorkspace({
         </aside>
 
         <section className="node-modules-panel">
-          <div className="panel-head compact"><div><strong>Node Modules</strong><span>{selectedNode?.nodeId || "No node"}</span></div></div>
+          <div className="panel-head compact">
+            <div><strong>Node Views</strong><span>{selectedNode?.nodeId || "No node"}</span></div>
+            <div className="segmented compact">
+              <button type="button" className="active">List</button>
+              <button type="button" disabled>DAG</button>
+              <button type="button" disabled>Contracts</button>
+            </div>
+          </div>
           <div className="node-module-list">
             {modules.map((module) => (
               <button key={module.id} type="button" className={`node-module-row ${selectedModule?.id === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
@@ -5500,6 +5537,27 @@ function categoryLabel(category: string) {
   if (category === "notify") return "Notify";
   if (category === "custom") return "Custom";
   return category;
+}
+
+function nodeGroupLabel(group: string) {
+  if (group === "all") return "All nodes";
+  if (group === "create-runtime") return "Create Runtime";
+  if (group === "delete-runtime") return "Delete Runtime";
+  if (group === "create-instance") return "Create Instance";
+  if (group === "common") return "Common";
+  if (group === "failed") return "Needs review";
+  return group;
+}
+
+function matchesNodeGroup(node: NodeRegistryItem, group: string): boolean {
+  if (group === "all") return true;
+  if (group === "failed") return Boolean((node.missingFields || []).length);
+  const text = [node.nodeId, node.title, node.description, node.branch, node.case, node.ui?.category].filter(Boolean).join(" ").toLowerCase();
+  if (group === "create-runtime") return text.includes("create-runtime") || (text.includes("create") && text.includes("runtime"));
+  if (group === "delete-runtime") return text.includes("delete-runtime") || (text.includes("delete") && text.includes("runtime"));
+  if (group === "create-instance") return text.includes("create-instance") || (text.includes("create") && text.includes("instance"));
+  if (group === "common") return !matchesNodeGroup(node, "create-runtime") && !matchesNodeGroup(node, "delete-runtime") && !matchesNodeGroup(node, "create-instance");
+  return true;
 }
 
 function contractSummary(node: NodeRegistryItem) {
