@@ -3574,7 +3574,7 @@ function WorkflowWorkspace({
           }} />
         </article>
         <article className="workflow-definition-card">
-          <span className="status-pill waiting"><Boxes size={14} />Node Run State Boundary</span>
+          <span className="status-pill waiting"><Boxes size={14} />Node Definition / Run State</span>
           <strong>{selectedStage?.title || "Select a node"}</strong>
           <small>{selectedStage?.id || "Node Definition and Run State are inspected separately."}</small>
           <KeyValues data={{
