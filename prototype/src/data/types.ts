@@ -111,6 +111,11 @@ export interface MachineList {
   total: number;
 }
 
+export interface MachineSecretConfig extends MachineConfig {
+  privateKey: string;
+  password: string;
+}
+
 export interface DagNode {
   id: string;
   title: string;

@@ -1,4 +1,4 @@
-import type { MachineConfig, MachineList, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput } from "./types";
+import type { MachineConfig, MachineList, MachineSecretConfig, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput } from "./types";
 
 const DEFAULT_CONTROL_PLANE_API = "https://sop-control-plane.hb67egcim4.workers.dev";
 
@@ -66,6 +66,15 @@ function mapMachine(raw: Record<string, unknown>): MachineConfig {
   };
 }
 
+function mapMachineSecret(raw: Record<string, unknown>): MachineSecretConfig {
+  const machine = mapMachine(raw);
+  return {
+    ...machine,
+    privateKey: raw.private_key ? String(raw.private_key) : raw.privateKey ? String(raw.privateKey) : "",
+    password: raw.password ? String(raw.password) : "",
+  };
+}
+
 export const controlPlaneProvider = {
   apiUrl: controlPlaneApiUrl,
 
@@ -121,6 +130,13 @@ export const controlPlaneProvider = {
     const machine = raw.machine as Record<string, unknown> | undefined;
     if (!machine) throw new Error(String(raw.error || "Machine save failed"));
     return mapMachine(machine);
+  },
+
+  async getMachineSecret(id: string): Promise<MachineSecretConfig> {
+    const raw = await requestJson<Record<string, unknown>>(`${controlPlaneApiUrl}/api/machines/${encodeURIComponent(id)}/resolve`);
+    const machine = raw.machine as Record<string, unknown> | undefined;
+    if (!machine) throw new Error(String(raw.error || "Machine secret load failed"));
+    return mapMachineSecret(machine);
   },
 
   async testMachine(id: string): Promise<Record<string, unknown>> {

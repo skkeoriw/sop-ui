@@ -1049,15 +1049,31 @@ export default function App() {
     }
   });
 
+  const resolveMachineSshPayload = async (machineId: string, sshCommand: string, privateKey: string) => {
+    if (!machineId) {
+      return {
+        ssh_command: sshCommand,
+        private_key_b64: encodeSecretB64(privateKey),
+      };
+    }
+    const machine = await controlPlaneProvider.getMachineSecret(machineId);
+    const resolvedPrivateKey = privateKey.trim() || machine.privateKey || "";
+    return {
+      machine_id: machineId,
+      ssh_command: sshCommand.trim() || machine.sshCommand,
+      private_key_b64: encodeSecretB64(resolvedPrivateKey),
+      ssh_password: machine.authType === "password" ? machine.password : "",
+    };
+  };
+
   const createRuntimeMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      const sshPayload = await resolveMachineSshPayload(runtimeCreateMachineId, runtimeCreateSshCommand, runtimeCreatePrivateKey);
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-runtime",
-          machine_id: runtimeCreateMachineId || undefined,
-          ssh_command: runtimeCreateSshCommand,
-          private_key_b64: encodeSecretB64(runtimeCreatePrivateKey),
+          ...sshPayload,
           ...parseRuntimeEnvOverrides(runtimeCreateEnvText),
           ...Object.fromEntries(Object.entries(runtimeCreateConfigOverrides).filter(([, value]) => value.trim()).map(([key, value]) => [key, value.trim()])),
         }),
@@ -1088,13 +1104,12 @@ export default function App() {
   const deleteRuntimeMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      const sshPayload = await resolveMachineSshPayload(runtimeDeleteMachineId, runtimeDeleteSshCommand, runtimeDeletePrivateKey);
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-runtime",
-          machine_id: runtimeDeleteMachineId || undefined,
           runtime_id: runtimeDeleteId,
-          ssh_command: runtimeDeleteSshCommand,
-          private_key_b64: encodeSecretB64(runtimeDeletePrivateKey),
+          ...sshPayload,
           force: runtimeDeleteForce,
         }),
         minimumDelay(450),
@@ -1132,14 +1147,13 @@ export default function App() {
       };
       if (!instancePayload.instance_id) throw new Error("请填写 Instance ID");
       if (!instancePayload.repo) throw new Error("请填写 Instance Repo");
+      const sshPayload = await resolveMachineSshPayload(runtimeCreateMachineId, runtimeCreateSshCommand, runtimeCreatePrivateKey);
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "create-instance",
-          machine_id: runtimeCreateMachineId || undefined,
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
-          ssh_command: runtimeCreateSshCommand,
-          private_key_b64: encodeSecretB64(runtimeCreatePrivateKey),
+          ...sshPayload,
           instance_id: instancePayload.instance_id,
           repo: instancePayload.repo,
           instance_repo: instancePayload.repo,
@@ -1178,14 +1192,13 @@ export default function App() {
       const targetId = instanceDeleteId.trim();
       if (!targetId) throw new Error("请填写 Instance ID");
       const targetRepo = instanceDeleteRepo.trim() || `skkeoriw/${targetId}`;
+      const sshPayload = await resolveMachineSshPayload(runtimeDeleteMachineId, runtimeDeleteSshCommand, runtimeDeletePrivateKey);
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-instance",
-          machine_id: runtimeDeleteMachineId || undefined,
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
-          ssh_command: runtimeDeleteSshCommand,
-          private_key_b64: encodeSecretB64(runtimeDeletePrivateKey),
+          ...sshPayload,
           instance_id: targetId,
           repo: targetRepo,
           instance_repo: targetRepo,
