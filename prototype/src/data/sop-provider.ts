@@ -3,6 +3,7 @@ import { controlPlaneApiUrl } from "./control-plane-provider";
 import type {
   Dag,
   Instance,
+  InstanceList,
   NodeConfig,
   NodeDetail,
   NodeDraft,
@@ -701,6 +702,77 @@ async function listWorkflowRuns(runtime: Runtime, instanceId: string, options?: 
   }
 }
 
+function filterInstances(items: Instance[], options?: ListQueryOptions) {
+  const search = (options?.q || "").trim().toLowerCase();
+  const statusFilter = options?.status && options.status !== "all" ? options.status : "";
+  return items.filter((item) => {
+    if (statusFilter && item.status !== statusFilter) return false;
+    if (!search) return true;
+    return [item.instanceId, item.title, item.repo, item.sopType, item.status, item.workflowBinding?.workflowName]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(search);
+  });
+}
+
+async function listRuntimeInstances(runtime: Runtime, options?: ListQueryOptions): Promise<InstanceList> {
+  const page = options?.page || 1;
+  const pageSize = options?.pageSize || 100;
+  let data: {
+    sops?: Array<Record<string, unknown>>;
+    instances?: Array<Record<string, unknown>>;
+    items?: Array<Record<string, unknown>>;
+    runtime?: Record<string, unknown>;
+    runtime_info?: Record<string, unknown>;
+    total?: number;
+    page?: number;
+    page_size?: number;
+    has_more?: boolean;
+    source?: string;
+  };
+  let source = "runtime-spi-v1";
+  try {
+    data = await requestJson<typeof data>(
+      `${runtime.endpoint}/api/sop/v1/instances${toQuery(options)}`
+    );
+  } catch {
+    source = "legacy-runtime-spi";
+    data = await requestJson<typeof data>(
+      `${runtime.endpoint}/api/sop/instances${toQuery(options)}`
+    );
+  }
+  const rawItems = data.items || data.instances || data.sops || [];
+  const mapped = rawItems.map(mapInstance);
+  const backendHasPaging = data.total !== undefined || data.page !== undefined || data.page_size !== undefined || data.has_more !== undefined || Array.isArray(data.items);
+  if (backendHasPaging) {
+    const total = Number(data.total ?? mapped.length);
+    return {
+      instances: mapped,
+      total,
+      page: Number(data.page || page),
+      pageSize: Number(data.page_size || pageSize),
+      hasMore: Boolean(data.has_more ?? ((page - 1) * pageSize + mapped.length < total)),
+      source: data.source || source,
+    };
+  }
+  const filtered = filterInstances(mapped, options);
+  const offset = (page - 1) * pageSize;
+  const instances = filtered.slice(offset, offset + pageSize);
+  const runtimeInfo = data.runtime || data.runtime_info || {};
+  const runtimeInstanceCount = Number(runtimeInfo.instance_count || runtimeInfo.instanceCount || 0);
+  const hasClientFilter = Boolean((options?.q || "").trim() || (options?.status && options.status !== "all"));
+  const total = hasClientFilter ? filtered.length : (runtimeInstanceCount || filtered.length || mapped.length);
+  return {
+    instances,
+    total,
+    page,
+    pageSize,
+    hasMore: offset + instances.length < total,
+    source: data.source || `${source}-local-page`,
+  };
+}
+
 export const sopProvider: SopDataProvider = {
   mode: "real",
 
@@ -710,19 +782,10 @@ export const sopProvider: SopDataProvider = {
     return (await listRuntimeHosts(options)).runtimes;
   },
 
+  listRuntimeInstances,
+
   async listInstances(runtime, options) {
-    let data: { sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> };
-    try {
-      data = await requestJson<{ sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> }>(
-        `${runtime.endpoint}/api/sop/v1/instances${toQuery(options)}`
-      );
-    } catch {
-      data = await requestJson<{ sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> }>(
-        `${runtime.endpoint}/api/sop/instances${toQuery(options)}`
-      );
-    }
-    const items = data.instances || data.sops || [];
-    return items.map(mapInstance);
+    return (await listRuntimeInstances(runtime, options)).instances;
   },
 
   async getDag(runtime, instanceId) {

@@ -4,6 +4,7 @@ import type {
   Dag,
   Artifact,
   Instance,
+  InstanceList,
   NodeConfig,
   NodeContract,
   NodeTestInput,
@@ -305,9 +306,35 @@ export const mockProvider: SopDataProvider = {
     return (await this.listRuntimeHosts!(options)).runtimes;
   },
 
-  async listInstances(target) {
+  async listRuntimeInstances(target, options): Promise<InstanceList> {
     await delay();
-    return [instance(target.id)];
+    const query = (options?.q || "").trim().toLowerCase();
+    const statusFilter = options?.status && options.status !== "all" ? options.status : "";
+    const page = options?.page || 1;
+    const pageSize = options?.pageSize || 100;
+    const filtered = [instance(target.id)].filter((item) => {
+      if (statusFilter && item.status !== statusFilter) return false;
+      if (!query) return true;
+      return [item.instanceId, item.title, item.repo, item.sopType, item.status, item.workflowBinding?.workflowName]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+    const offset = (page - 1) * pageSize;
+    const instances = filtered.slice(offset, offset + pageSize);
+    return {
+      instances,
+      total: filtered.length,
+      page,
+      pageSize,
+      hasMore: offset + instances.length < filtered.length,
+      source: "mock",
+    };
+  },
+
+  async listInstances(target, options) {
+    return (await this.listRuntimeInstances!(target, options)).instances;
   },
 
   async getDag(target) {

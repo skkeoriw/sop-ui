@@ -69,6 +69,15 @@ export interface Instance {
   updatedAt?: string;
 }
 
+export interface InstanceList {
+  instances: Instance[];
+  total: number;
+  page?: number;
+  pageSize?: number;
+  hasMore?: boolean;
+  source?: string;
+}
+
 export interface ListQueryOptions {
   page?: number;
   pageSize?: number;
@@ -536,6 +545,7 @@ export interface SopDataProvider {
   mode: DataMode;
   listRuntimeHosts?(options?: ListQueryOptions): Promise<RuntimeList>;
   listRuntimes(options?: ListQueryOptions): Promise<Runtime[]>;
+  listRuntimeInstances?(runtime: Runtime, options?: ListQueryOptions): Promise<InstanceList>;
   listInstances(runtime: Runtime, options?: ListQueryOptions): Promise<Instance[]>;
   getDag(runtime: Runtime, instanceId: string): Promise<Dag>;
   getRunDag(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Dag>;

@@ -927,10 +927,25 @@ export default function App() {
 
   const instancesQuery = useQuery({
     queryKey: queryKeys.instances(mode, runtime),
-    queryFn: () => provider.listInstances(runtime, { pageSize: 100, sort: "updated_at", order: "desc" }),
+    queryFn: async () => {
+      const options = { page: 1, pageSize: 100, sort: "updated_at", order: "desc" as const };
+      if (provider.listRuntimeInstances) return provider.listRuntimeInstances(runtime, options);
+      const instances = await provider.listInstances(runtime, options);
+      return {
+        instances,
+        total: instances.length,
+        page: 1,
+        pageSize: 100,
+        hasMore: false,
+        source: "legacy-provider",
+      };
+    },
     enabled: shouldLoadInstances,
   });
-  const instances = instancesQuery.data || [];
+  const instances = instancesQuery.data?.instances || [];
+  const instanceTotal = Math.max(instancesQuery.data?.total ?? instances.length, instances.length);
+  const instanceSource = instancesQuery.data?.source || "";
+  const instanceHasMore = Boolean(instancesQuery.data?.hasMore);
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
   const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
   const isRuntimeManagementInstance = Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
@@ -1870,7 +1885,7 @@ export default function App() {
         </div>
         <nav className="rail-nav" aria-label="Primary">
           <button type="button" className={viewMode === "runtime" ? "active" : ""} onClick={() => navigateTo("runtime")}>
-            <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimeTotal || "-"} hosts` : `${instances.length || "-"} instances`}</small>
+            <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimeTotal || "-"} hosts` : `${instanceTotal || "-"} instances`}</small>
           </button>
           <button type="button" className={viewMode === "instance" ? "active" : ""} onClick={() => navigateTo("instance")}>
             <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
@@ -1944,7 +1959,7 @@ export default function App() {
           )}
         </section>
         <section>
-          <div className="section-title"><span>Workspaces</span><span>{instances.length}</span></div>
+          <div className="section-title"><span>Workspaces</span><span>{instances.length}/{instanceTotal}</span></div>
           {instances.map((item) => (
             <button key={item.instanceId} type="button" className={`list-card ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => setInstanceId(item.instanceId)}>
               <strong>{item.title}</strong><span>{item.instanceId}</span><span>{item.repo}</span>
@@ -2001,6 +2016,9 @@ export default function App() {
             runtimes={runtimes}
             selectedInstance={instance}
             instances={instances}
+            instanceTotal={instanceTotal}
+            instanceSource={instanceSource}
+            instanceHasMore={instanceHasMore}
             runs={workflowExecutions}
             dag={dag}
             selectedRun={selectedRun}
@@ -2031,6 +2049,8 @@ export default function App() {
             runtime={runtime}
             instance={instance}
             instances={instances}
+            instanceTotal={instanceTotal}
+            instanceSource={instanceSource}
             runs={runs}
             dag={dag}
             managedNodes={managedNodes}
@@ -2553,6 +2573,9 @@ function RuntimeOverview({
   runtimes,
   selectedInstance,
   instances,
+  instanceTotal,
+  instanceSource,
+  instanceHasMore,
   runs,
   dag,
   selectedRun,
@@ -2568,6 +2591,9 @@ function RuntimeOverview({
   runtimes: Runtime[];
   selectedInstance: Instance | undefined;
   instances: Instance[];
+  instanceTotal: number;
+  instanceSource: string;
+  instanceHasMore: boolean;
   runs: Run[];
   dag: Dag | undefined;
   selectedRun: Run | undefined;
@@ -2827,7 +2853,7 @@ function RuntimeOverview({
 
       <section className="console-metrics">
         <Metric label="Runtimes" value={runtimes.length} subtext="discovered channels" />
-        <Metric label="Instances" value={instances.length} subtext={`${readyCount} ready`} />
+        <Metric label="Instances" value={instanceTotal} subtext={`${instances.length} loaded · ${readyCount} ready`} />
         <Metric label="Running" value={runningCount} subtext={`${failedCount} failed workspace`} />
         <Metric label="SPI" value={runtime?.localStatus || runtime?.status || "-"} subtext={runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`} />
       </section>
@@ -2847,16 +2873,17 @@ function RuntimeOverview({
             <span>{relationshipPath || "选择 Runtime 后查看 Host / Instance / Workflow Definition / Latest Execution 摘要"}</span>
           </div>
           <div className="runtime-relationship-actions">
-            <span>{instances.length} instances</span>
+            <span>{instances.length}/{instanceTotal} instances</span>
             <span>{workflowDefinitionCount} workflow definitions</span>
             <span>{latestExecutionCount} latest executions</span>
+            <span>{instanceSource || "runtime-spi"}</span>
           </div>
         </div>
         <div className="relationship-columns">
           <div className="relationship-column">
             <div className="relationship-column-head">
               <strong>Instances</strong>
-              <span>{instances.length}</span>
+              <span>{instances.length}/{instanceTotal}</span>
             </div>
             <div className="relationship-list">
               {instances.map((item) => (
@@ -3102,8 +3129,8 @@ function RuntimeOverview({
       <section className="runtime-main-grid runtime-main-grid-single">
         <div className="flow-panel instance-list-panel">
           <div className="panel-head">
-            <div><strong>Instance Registry</strong><span>当前 Runtime 下的业务隔离单元</span></div>
-            <span>{visibleInstances.length}/{instances.length}</span>
+            <div><strong>Instance Registry</strong><span>{instanceSource || "runtime-spi"} · 当前 Runtime 下的业务隔离单元</span></div>
+            <span>{visibleInstances.length}/{instanceTotal}{instanceHasMore ? " · more" : ""}</span>
           </div>
           <div className="execution-tools instance-tools">
             <label className="search-box">
@@ -3422,6 +3449,8 @@ function InstanceOverview({
   runtime,
   instance,
   instances,
+  instanceTotal,
+  instanceSource,
   runs,
   dag,
   managedNodes,
@@ -3434,6 +3463,8 @@ function InstanceOverview({
   runtime: Runtime | undefined;
   instance: Instance | undefined;
   instances: Instance[];
+  instanceTotal: number;
+  instanceSource: string;
   runs: Run[];
   dag: Dag | undefined;
   managedNodes: NodeRegistryItem[];
@@ -3550,7 +3581,7 @@ function InstanceOverview({
         </div>
 
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Other Instances</strong><span>同一 Runtime Host 下的工作区</span></div></div>
+          <div className="panel-head"><div><strong>Other Instances</strong><span>{instances.length}/{instanceTotal} loaded · {instanceSource || "runtime-spi"}</span></div></div>
           <div className="runtime-list compact">
             {instances.map((item) => (
               <button key={item.instanceId} type="button" className={`runtime-select-card ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => onSelectInstance(item.instanceId)}>
