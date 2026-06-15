@@ -4457,7 +4457,7 @@ function RuntimeManagementStartDrawer({
           <option key={machine.id} value={machine.id}>{machine.name} · {machine.user}@{machine.host}</option>
         ))}
       </select>
-      <span className="field-hint">{value ? "将提交 machine_id，SSH Command 作为兼容覆盖一起发送；secret 不会从浏览器回读。" : "不选择时沿用手填 SSH 或后端保存默认值。"}</span>
+      <span className="field-hint">{value ? "将提交 machine_id；SSH 凭据由 Control Plane 注入，secret 不会从浏览器回读。" : "不选择时沿用后端保存默认值，或在高级覆盖中手填 SSH。"}</span>
     </label>
   );
 
@@ -4496,16 +4496,34 @@ function RuntimeManagementStartDrawer({
           {isCreateRuntime ? (
             <div className="runtime-drawer-form">
               {renderMachineSelect(createMachineId, setCreateMachineId, setCreateSshCommand)}
-              {selectedCreateMachine && <KeyValues data={{ machine_id: selectedCreateMachine.id, host: selectedCreateMachine.host, auth: selectedCreateMachine.authType, secret: selectedCreateMachine.privateKeyPresent || selectedCreateMachine.passwordPresent ? "saved" : "missing" }} />}
-              <label>
-                <span>SSH Command</span>
-                <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
-              </label>
-              <label>
-                <span>Private Key</span>
-                <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 Private Key" rows={7} />
-                <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
-              </label>
+              {selectedCreateMachine ? (
+                <section className="selected-machine-summary">
+                  <div>
+                    <strong>{selectedCreateMachine.name}</strong>
+                    <span>{selectedCreateMachine.user}@{selectedCreateMachine.host}:{selectedCreateMachine.port}</span>
+                  </div>
+                  <KeyValues data={{
+                    machine_id: selectedCreateMachine.id,
+                    auth: selectedCreateMachine.authType,
+                    secret: selectedCreateMachine.privateKeyPresent || selectedCreateMachine.passwordPresent ? "saved" : "missing",
+                    last_check: selectedCreateMachine.lastCheckAt || "-",
+                  }} />
+                </section>
+              ) : (
+                <div className="inline-warning">未选择 Machine 时会使用后端默认 SSH 配置；需要临时覆盖时打开下面的 Manual SSH Override。</div>
+              )}
+              <details className="advanced-runtime-overrides">
+                <summary>Manual SSH Override</summary>
+                <label>
+                  <span>SSH Command</span>
+                  <input value={createSshCommand} onChange={(event) => setCreateSshCommand(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；优先使用 Machine Node" />
+                </label>
+                <label>
+                  <span>Private Key</span>
+                  <textarea value={createPrivateKey} onChange={(event) => setCreatePrivateKey(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；正常情况下由 Control Plane 注入" rows={7} />
+                  <span className="field-hint">高级覆盖项。选择 Machine Node 后正常不用填，后端会注入已保存的目标 SSH 凭据。</span>
+                </label>
+              </details>
               <RuntimeInheritancePreviewPanel
                 preview={inheritance}
                 loading={inheritanceLoading}
