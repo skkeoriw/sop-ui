@@ -2409,6 +2409,7 @@ function RuntimeOverview({
   const [hermesRunning, setHermesRunning] = useState(false);
   const [instanceSearch, setInstanceSearch] = useState("");
   const [instanceStatusFilter, setInstanceStatusFilter] = useState("all");
+  const [runtimeTab, setRuntimeTab] = useState<"overview" | "config" | "events">("overview");
   const [hermesResult, setHermesResult] = useState<{
     ok: boolean;
     httpStatus: number;
@@ -2522,6 +2523,14 @@ function RuntimeOverview({
         <Metric label="SPI" value={runtime?.localStatus || runtime?.status || "-"} subtext={runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`} />
       </section>
 
+      <div className="runtime-tabs segmented">
+        <button type="button" className={runtimeTab === "overview" ? "active" : ""} onClick={() => setRuntimeTab("overview")}>Overview</button>
+        <button type="button" className={runtimeTab === "config" ? "active" : ""} onClick={() => setRuntimeTab("config")}>Config</button>
+        <button type="button" className={runtimeTab === "events" ? "active" : ""} onClick={() => setRuntimeTab("events")}>Events</button>
+      </div>
+
+      {runtimeTab === "overview" && (
+        <>
       <section className="flow-panel runtime-catalog-panel">
         <div className="panel-head">
           <div><strong>Runtime Catalog</strong><span>顶部下拉负责切换，这里保留所有 Runtime 的可扫描列表</span></div>
@@ -2722,6 +2731,66 @@ function RuntimeOverview({
           />
         </div>
       </section>
+        </>
+      )}
+
+      {runtimeTab === "config" && (
+        <section className="runtime-detail-grid">
+          <div className="flow-panel runtime-identity-panel">
+            <div className="panel-head">
+              <div><strong>Runtime Config</strong><span>来自 tunnel metadata 和 runtime SPI 的专属配置</span></div>
+              <span className={`status-pill ${runtimeStatus}`}>{runtime?.localStatus || runtime?.status || "unknown"}</span>
+            </div>
+            <div className="runtime-detail-body">
+              <KeyValues data={{
+                runtime_id: runtime?.id || "-",
+                display_name: runtime?.displayName || runtime?.name || "-",
+                channel_name: runtime?.channelName || "-",
+                channel_url: runtime?.channelUrl || runtime?.endpoint || "-",
+                spi_base_url: runtime?.spiBaseUrl || "-",
+                hermes_webhook_url: runtime?.metadata?.hermes_webhook_url || "-",
+                webhook_public_host: runtime?.metadata?.webhook_public_host || "-",
+                hermes_webhook_port: runtime?.metadata?.hermes_webhook_port || "-",
+                client_ip: runtime?.clientIp || runtime?.machine || "-",
+                local_port: runtime?.localPort || "-",
+                supported_sop_types: supportedTypes,
+              }} />
+            </div>
+          </div>
+          <div className="flow-panel">
+            <div className="panel-head"><div><strong>Metadata</strong><span>完整 metadata 摘要</span></div></div>
+            <div className="runtime-detail-body">
+              <KeyValues data={runtime?.metadata || {}} />
+            </div>
+          </div>
+        </section>
+      )}
+
+      {runtimeTab === "events" && (
+        <section className="flow-panel">
+          <div className="panel-head"><div><strong>Runtime Events</strong><span>来自 instance latest execution 和最近探针</span></div></div>
+          <div className="runtime-events-list">
+            {instances.map((item) => (
+              <div key={item.instanceId} className="runtime-event-row">
+                <span className={`status-pill ${item.latestExecution?.status || item.status || "waiting"}`}>{item.latestExecution ? statusLabel(item.latestExecution.status) : item.status || "ready"}</span>
+                <div>
+                  <strong>{item.instanceId}</strong>
+                  <span>{item.latestExecution?.pipelineId || item.workflowBinding?.workflowName || item.sopType || "no latest execution"}</span>
+                </div>
+                <small>{item.latestExecution?.updatedAt || item.updatedAt || "-"}</small>
+              </div>
+            ))}
+            {probeResults.map((item) => (
+              <div key={item.id} className="runtime-event-row">
+                <span className={`status-pill ${item.status === "ok" ? "done" : item.status === "failed" ? "failed" : "waiting"}`}>{item.status}</span>
+                <div><strong>{item.label}</strong><span>{item.summary}</span></div>
+                <small>{item.checkedAt}</small>
+              </div>
+            ))}
+            {!instances.length && !probeResults.length && <Empty text="还没有 runtime event；可以先运行 health check。" />}
+          </div>
+        </section>
+      )}
     </section>
   );
 }
@@ -4445,6 +4514,7 @@ function NodesWorkspace({
 }) {
   const completeNodes = nodes.filter((node) => (node.missingFields || []).length === 0).length;
   const groupCounts = Object.fromEntries(nodeFilters.map((filter) => [filter, nodes.filter((node) => matchesNodeGroup(node, filter)).length]));
+  const [nodeView, setNodeView] = useState<"list" | "dag" | "contracts">("list");
   return (
     <>
       <section className="node-summary">
@@ -4508,26 +4578,53 @@ function NodesWorkspace({
           <div className="panel-head compact">
             <div><strong>Node Views</strong><span>{selectedNode?.nodeId || "No node"}</span></div>
             <div className="segmented compact">
-              <button type="button" className="active">List</button>
-              <button type="button" disabled>DAG</button>
-              <button type="button" disabled>Contracts</button>
+              <button type="button" className={nodeView === "list" ? "active" : ""} onClick={() => setNodeView("list")}>List</button>
+              <button type="button" className={nodeView === "dag" ? "active" : ""} onClick={() => setNodeView("dag")}>DAG</button>
+              <button type="button" className={nodeView === "contracts" ? "active" : ""} onClick={() => setNodeView("contracts")}>Contracts</button>
             </div>
           </div>
-          <div className="node-module-list">
-            {modules.map((module) => (
-              <button key={module.id} type="button" className={`node-module-row ${selectedModule?.id === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
-                <span className={`dot ${module.status}`} />
-                <span>
-                  <strong>{module.title}</strong>
-                  {module.lane && <small>{module.lane}</small>}
-                  <small>{module.description}</small>
-                  <small>{module.summary || "-"}</small>
-                </span>
-                <span className={`status-pill ${module.status}`}>{module.status}</span>
-              </button>
-            ))}
-            {!modules.length && <Empty text="该节点暂未返回 modules" />}
-          </div>
+          {nodeView === "list" && (
+            <div className="node-module-list">
+              {modules.map((module) => (
+                <button key={module.id} type="button" className={`node-module-row ${selectedModule?.id === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
+                  <span className={`dot ${module.status}`} />
+                  <span>
+                    <strong>{module.title}</strong>
+                    {module.lane && <small>{module.lane}</small>}
+                    <small>{module.description}</small>
+                    <small>{module.summary || "-"}</small>
+                  </span>
+                  <span className={`status-pill ${module.status}`}>{module.status}</span>
+                </button>
+              ))}
+              {!modules.length && <Empty text="该节点暂未返回 modules" />}
+            </div>
+          )}
+          {nodeView === "dag" && (
+            <div className="node-catalog-dag">
+              {visibleNodes.map((node) => (
+                <button key={node.nodeId} type="button" className={`node-dag-card ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId, selectedModule?.id || "basic")}>
+                  <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+                  <strong>{node.title || node.nodeId}</strong>
+                  <small>{contractSummary(node)}</small>
+                </button>
+              ))}
+              {!visibleNodes.length && <Empty text="没有匹配的 Node" />}
+            </div>
+          )}
+          {nodeView === "contracts" && (
+            <div className="node-contract-list">
+              {visibleNodes.map((node) => (
+                <button key={node.nodeId} type="button" className={`node-contract-card ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId, selectedModule?.id || "basic")}>
+                  <strong>{node.nodeId}</strong>
+                  <span>{Object.keys(node.inputs || {}).length} inputs</span>
+                  <span>{Object.keys(node.outputs || {}).length} outputs</span>
+                  <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "review" : "ok"}</span>
+                </button>
+              ))}
+              {!visibleNodes.length && <Empty text="没有契约数据" />}
+            </div>
+          )}
           {selectedNode && instance ? (
             <div className="node-test-strip">
               <div className="section-title"><span>Test this node</span><span>独立测试</span></div>

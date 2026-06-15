@@ -1677,6 +1677,64 @@ pre {
   box-shadow: inset 3px 0 0 var(--blue);
 }
 
+.node-catalog-dag,
+.node-contract-list {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  max-height: 620px;
+  overflow: auto;
+}
+
+.node-dag-card {
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+  text-align: left;
+  background: #ffffff;
+}
+
+.node-dag-card strong,
+.node-dag-card small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-dag-card small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-dag-card.active,
+.node-contract-card.active {
+  border-color: #93b4f8;
+  background: var(--blue-soft);
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.node-contract-card {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  background: #ffffff;
+}
+
+.node-contract-card strong,
+.node-contract-card span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .draft-strip {
   padding: 12px;
   border-top: 1px solid var(--line-2);
@@ -4411,6 +4469,50 @@ pre {
   font-size: 11px;
 }
 
+.runtime-tabs {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.runtime-events-list {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.runtime-event-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(120px, auto);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.runtime-event-row div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.runtime-event-row strong,
+.runtime-event-row span,
+.runtime-event-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-event-row div span,
+.runtime-event-row small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .runtime-main-grid {
   display: grid;
   grid-template-columns: minmax(260px, .72fr) minmax(0, 1.58fr);
@@ -5507,5 +5609,11 @@ pre {
 
   .machine-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .runtime-event-row,
+  .node-contract-card {
+    grid-template-columns: 1fr;
+    align-items: start;
   }
 }
