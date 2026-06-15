@@ -963,8 +963,8 @@ export default function App() {
     instanceDeleteForce,
   ]);
 
-  const shouldLoadWorkflowShape = viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes";
-  const shouldLoadRuns = viewMode === "instance" || viewMode === "workflow";
+  const shouldLoadWorkflowShape = viewMode === "runtime" || viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes";
+  const shouldLoadRuns = viewMode === "runtime" || viewMode === "instance" || viewMode === "workflow";
   const shouldLoadRunDetail = viewMode === "workflow" && Boolean(route.pipelineId);
   const dagQuery = useQuery({
     queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""),
@@ -1912,19 +1912,27 @@ export default function App() {
           <RuntimeOverview
             runtime={runtime}
             runtimes={runtimes}
+            selectedInstance={instance}
             instances={instances}
+            runs={workflowExecutions}
+            dag={dag}
+            selectedRun={selectedRun}
             loading={runtimesQuery.isLoading || instancesQuery.isLoading}
             mode={mode}
+            onSelectRelationshipInstance={(id) => selectInstance(id)}
             onOpenInstance={(id) => selectInstance(id, true)}
             managementInstance={managementInstance}
-            onOpenWorkflow={(id) => {
+            onOpenWorkflow={(id, pipelineId = "", nodeId = "") => {
               setInstanceId(id);
               const baseRuntime = runtime?.id || runtimeId || "runtime";
-              const nextUrl = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(id)}/workflow${window.location.search}`;
+              let nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(id)}/workflow`;
+              if (pipelineId) nextPath += `/runs/${encodeURIComponent(pipelineId)}`;
+              if (nodeId) nextPath += `/${encodeURIComponent(nodeId)}`;
+              const nextUrl = `${nextPath}${window.location.search}`;
               if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-              setRoute({ view: "workflow", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
-              setSelectedRunId("");
-              setSelectedStageId("");
+              setRoute({ view: "workflow", nodeId, pipelineId, artifactId: "", moduleId: "" });
+              setSelectedRunId(pipelineId);
+              setSelectedStageId(nodeId);
             }}
             onOpenManagement={(action) => {
               setRuntimeManagementAction(action);
@@ -2404,9 +2412,14 @@ function RuntimeSwitcher({
 function RuntimeOverview({
   runtime,
   runtimes,
+  selectedInstance,
   instances,
+  runs,
+  dag,
+  selectedRun,
   loading,
   mode,
+  onSelectRelationshipInstance,
   onOpenInstance,
   onOpenWorkflow,
   managementInstance,
@@ -2414,11 +2427,16 @@ function RuntimeOverview({
 }: {
   runtime: Runtime | undefined;
   runtimes: Runtime[];
+  selectedInstance: Instance | undefined;
   instances: Instance[];
+  runs: Run[];
+  dag: Dag | undefined;
+  selectedRun: Run | undefined;
   loading: boolean;
   mode: DataMode;
+  onSelectRelationshipInstance: (instanceId: string) => void;
   onOpenInstance: (instanceId: string) => void;
-  onOpenWorkflow: (instanceId: string) => void;
+  onOpenWorkflow: (instanceId: string, pipelineId?: string, nodeId?: string) => void;
   managementInstance: Instance | undefined;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
@@ -2436,6 +2454,9 @@ function RuntimeOverview({
   const [instanceSearch, setInstanceSearch] = useState("");
   const [instanceStatusFilter, setInstanceStatusFilter] = useState("all");
   const [runtimeTab, setRuntimeTab] = useState<"overview" | "config" | "events">("overview");
+  const [relationshipInstanceId, setRelationshipInstanceId] = useState("");
+  const [relationshipRunId, setRelationshipRunId] = useState("");
+  const [relationshipNodeId, setRelationshipNodeId] = useState("");
   const [hermesResult, setHermesResult] = useState<{
     ok: boolean;
     httpStatus: number;
@@ -2459,6 +2480,26 @@ function RuntimeOverview({
     setHermesRunning(false);
   }, [runtime?.id]);
 
+  useEffect(() => {
+    if (selectedInstance?.instanceId) setRelationshipInstanceId(selectedInstance.instanceId);
+  }, [selectedInstance?.instanceId]);
+
+  useEffect(() => {
+    if (runs.length && (!relationshipRunId || !runs.some((run) => run.pipelineId === relationshipRunId))) {
+      setRelationshipRunId((selectedRun && runs.some((run) => run.pipelineId === selectedRun.pipelineId) ? selectedRun.pipelineId : runs[0].pipelineId));
+      return;
+    }
+    if (!runs.length && relationshipRunId) setRelationshipRunId("");
+  }, [relationshipRunId, runs, selectedRun]);
+
+  useEffect(() => {
+    if (dag?.nodes.length && (!relationshipNodeId || !dag.nodes.some((node) => node.id === relationshipNodeId))) {
+      setRelationshipNodeId(dag.nodes[0].id);
+      return;
+    }
+    if (!dag?.nodes.length && relationshipNodeId) setRelationshipNodeId("");
+  }, [dag, relationshipNodeId]);
+
   const visibleInstances = useMemo(() => {
     const query = instanceSearch.trim().toLowerCase();
     return instances.filter((item) => {
@@ -2467,6 +2508,24 @@ function RuntimeOverview({
       return matchedStatus && (!query || searchable.includes(query));
     });
   }, [instances, instanceSearch, instanceStatusFilter]);
+
+  const relationshipInstance = instances.find((item) => item.instanceId === relationshipInstanceId)
+    || selectedInstance
+    || instances[0];
+  const relationshipRun = runs.find((run) => run.pipelineId === relationshipRunId)
+    || selectedRun
+    || relationshipInstance?.latestExecution
+    || runs[0];
+  const relationshipNodes = dag?.nodes || [];
+  const relationshipNode = relationshipNodes.find((node) => node.id === relationshipNodeId) || relationshipNodes[0];
+  const relationshipProgress = runProgressFromNodes(relationshipRun, dag);
+  const relationshipNodeStatus = relationshipNode ? relationshipRun?.nodes?.[relationshipNode.id] || "waiting" : "waiting";
+  const relationshipPath = [
+    runtime?.displayName || runtime?.name || runtime?.id,
+    relationshipInstance?.instanceId,
+    relationshipRun?.pipelineId ? shortId(relationshipRun.pipelineId) : relationshipInstance?.workflowBinding?.workflowName,
+    relationshipNode?.id,
+  ].filter(Boolean).join(" / ");
 
   const handleRunProbe = async () => {
     if (!runtime) return;
@@ -2557,6 +2616,165 @@ function RuntimeOverview({
 
       {runtimeTab === "overview" && (
         <>
+      <section className="flow-panel runtime-relationship-panel">
+        <div className="panel-head runtime-relationship-head">
+          <div>
+            <strong>Runtime Relationship Explorer</strong>
+            <span>{relationshipPath || "选择 Runtime 后查看 Instance / Workflow / Node 关系"}</span>
+          </div>
+          <div className="runtime-relationship-actions">
+            <span>{instances.length} instances</span>
+            <span>{runs.length || (relationshipInstance?.latestExecution ? 1 : 0)} workflows</span>
+            <span>{relationshipNodes.length} nodes</span>
+          </div>
+        </div>
+        <div className="relationship-columns">
+          <div className="relationship-column">
+            <div className="relationship-column-head">
+              <strong>Instances</strong>
+              <span>{instances.length}</span>
+            </div>
+            <div className="relationship-list">
+              {instances.map((item) => (
+                <button
+                  key={item.instanceId}
+                  type="button"
+                  className={`relationship-item ${relationshipInstance?.instanceId === item.instanceId ? "active" : ""}`}
+                  onClick={() => {
+                    setRelationshipInstanceId(item.instanceId);
+                    setRelationshipRunId(item.latestExecution?.pipelineId || "");
+                    setRelationshipNodeId("");
+                    onSelectRelationshipInstance(item.instanceId);
+                  }}
+                >
+                  <span>
+                    <strong>{item.title || item.instanceId}</strong>
+                    <small>{item.instanceId}</small>
+                  </span>
+                  <span className={`status-pill ${item.status === "failed" ? "failed" : item.status === "running" ? "running" : "done"}`}>{item.status || "ready"}</span>
+                </button>
+              ))}
+              {!instances.length && <LoadingOrEmpty loading={loading} text="当前 Runtime 没有 Instance" />}
+            </div>
+          </div>
+
+          <div className="relationship-column">
+            <div className="relationship-column-head">
+              <strong>Workflows</strong>
+              <span>{runs.length || (relationshipInstance?.latestExecution ? 1 : 0)}</span>
+            </div>
+            <div className="relationship-list">
+              {(runs.length ? runs : relationshipInstance?.latestExecution ? [relationshipInstance.latestExecution] : []).map((run) => {
+                const progress = runProgressFromNodes(run, dag);
+                return (
+                  <button
+                    key={run.pipelineId}
+                    type="button"
+                    className={`relationship-item workflow ${relationshipRun?.pipelineId === run.pipelineId ? "active" : ""}`}
+                    onClick={() => {
+                      setRelationshipRunId(run.pipelineId);
+                      setRelationshipNodeId(relationshipNodes[0]?.id || "");
+                    }}
+                  >
+                    <span>
+                      <strong>{relationshipInstance?.workflowBinding?.workflowName || shortId(run.pipelineId)}</strong>
+                      <small>{shortId(run.pipelineId)} · {progress.percent}% · {run.updatedAt || run.startedAt}</small>
+                    </span>
+                    <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
+                  </button>
+                );
+              })}
+              {!runs.length && !relationshipInstance?.latestExecution && (
+                <Empty text={relationshipInstance ? "当前 Instance 没有 Workflow Run" : "先选择一个 Instance"} />
+              )}
+              {relationshipInstance?.workflowBinding && (
+                <div className="relationship-binding">
+                  <strong>{relationshipInstance.workflowBinding.workflowName}</strong>
+                  <span>{relationshipInstance.workflowBinding.workflowVersion || relationshipInstance.workflowBinding.bindingStatus || "binding"}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="relationship-column">
+            <div className="relationship-column-head">
+              <strong>Nodes</strong>
+              <span>{relationshipNodes.length}</span>
+            </div>
+            <div className="relationship-list">
+              {relationshipNodes.map((node) => {
+                const state = relationshipRun?.nodes?.[node.id] || "waiting";
+                const stateDetail = relationshipRun?.nodeStates?.[node.id];
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={`relationship-item node ${relationshipNode?.id === node.id ? "active" : ""} ${state}`}
+                    onClick={() => setRelationshipNodeId(node.id)}
+                  >
+                    <span>
+                      <strong>{node.title}</strong>
+                      <small>{node.id} · {node.mode} · {formatDuration(stateDetail?.durationS || 0)}</small>
+                    </span>
+                    <span className={`status-pill ${state}`}>{statusLabel(state)}</span>
+                  </button>
+                );
+              })}
+              {!relationshipNodes.length && (
+                <Empty text={relationshipInstance ? "当前 Workflow 没有 DAG 节点数据" : "先选择一个 Instance"} />
+              )}
+            </div>
+          </div>
+
+          <aside className="relationship-detail">
+            <div className="relationship-column-head">
+              <strong>Node Detail</strong>
+              <span className={`status-pill ${relationshipNodeStatus}`}>{statusLabel(relationshipNodeStatus)}</span>
+            </div>
+            {relationshipNode ? (
+              <>
+                <div className="relationship-detail-title">
+                  <strong>{relationshipNode.title}</strong>
+                  <code>{relationshipNode.id}</code>
+                </div>
+                <KeyValues data={{
+                  runtime: runtime?.id || "-",
+                  instance: relationshipInstance?.instanceId || "-",
+                  workflow: relationshipInstance?.workflowBinding?.workflowName || "-",
+                  run: relationshipRun?.pipelineId || "-",
+                  status: relationshipNodeStatus,
+                  started_at: relationshipRun?.nodeStates?.[relationshipNode.id]?.startedAt || "-",
+                  finished_at: relationshipRun?.nodeStates?.[relationshipNode.id]?.finishedAt || "-",
+                  duration: formatDuration(relationshipRun?.nodeStates?.[relationshipNode.id]?.durationS || 0),
+                  attempt: relationshipRun?.nodeStates?.[relationshipNode.id]?.attempt || "-",
+                }} />
+                {relationshipRun?.nodeStates?.[relationshipNode.id]?.error && (
+                  <pre className="log-box error-log">{relationshipRun.nodeStates[relationshipNode.id].error}</pre>
+                )}
+                <div className="relationship-detail-actions">
+                  <button type="button" onClick={() => relationshipInstance && onOpenInstance(relationshipInstance.instanceId)}>Open Instance</button>
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={!relationshipInstance}
+                    onClick={() => relationshipInstance && onOpenWorkflow(relationshipInstance.instanceId, relationshipRun?.pipelineId || "", relationshipNode.id)}
+                  >
+                    Open Workflow
+                  </button>
+                </div>
+                <div className="relationship-progress">
+                  <span>Workflow progress</span>
+                  <div className="dag-progress"><span style={{ width: `${relationshipProgress.percent}%` }} /></div>
+                  <small>{relationshipProgress.done}/{relationshipProgress.total} nodes · {relationshipProgress.percent}%</small>
+                </div>
+              </>
+            ) : (
+              <Empty text="选择一个节点查看详情" />
+            )}
+          </aside>
+        </div>
+      </section>
+
       <section className="runtime-detail-grid">
         <div className="flow-panel runtime-identity-panel">
           <div className="panel-head">
@@ -2890,11 +3108,27 @@ function InstanceOverview({
 }) {
   const binding = instance?.workflowBinding;
   const latest = instance?.latestExecution || runs[0];
+  const [runSearch, setRunSearch] = useState("");
+  const [runStatusFilter, setRunStatusFilter] = useState<"all" | StageStatus>("all");
+  const visibleInstanceRuns = useMemo(() => {
+    const query = runSearch.trim().toLowerCase();
+    return runs.filter((run) => {
+      const matchedStatus = runStatusFilter === "all" || run.status === runStatusFilter;
+      const searchable = [run.pipelineId, run.status, run.repo, run.sourceUrl, run.updatedAt].filter(Boolean).join(" ").toLowerCase();
+      return matchedStatus && (!query || searchable.includes(query));
+    });
+  }, [runSearch, runStatusFilter, runs]);
   return (
     <section className="instance-overview">
       <div className="workflow-command-bar instance-command">
         <div className="workflow-title">
           <span className={`status-pill ${instance?.status === "failed" ? "failed" : instance?.status === "running" ? "running" : "done"}`}><LayoutDashboard size={14} />Instance Workspace</span>
+          <div className="context-path">
+            <span>Runtime</span>
+            <strong>{runtime?.displayName || runtime?.name || runtime?.id || "runtime"}</strong>
+            <span>/ Instance</span>
+            <strong>{instance?.instanceId || "instance"}</strong>
+          </div>
           <div>
             <h1>{instance?.title || "选择 Instance"}</h1>
             <p>{runtime?.name || "Runtime"} · {instance?.repo || "repo pending"} · {instance?.instanceId || "-"}</p>
@@ -2944,8 +3178,21 @@ function InstanceOverview({
         </div>
 
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Latest Executions</strong><span>运行历史属于 Instance</span></div><button type="button" onClick={onOpenExecutions}>Open Executions</button></div>
-          <RunTable runs={runs.slice(0, 5)} selectedRunId={latest?.pipelineId || ""} onSelect={() => onOpenExecutions()} />
+          <div className="panel-head"><div><strong>Workflow Runs</strong><span>运行历史属于当前 Instance</span></div><button type="button" onClick={onOpenExecutions}>Open Executions</button></div>
+          <div className="execution-tools instance-run-tools">
+            <label className="search-box">
+              <Search size={14} />
+              <input value={runSearch} onChange={(event) => setRunSearch(event.target.value)} placeholder="Search workflow run" />
+            </label>
+            <label className="filter-box">
+              <SlidersHorizontal size={14} />
+              <select value={runStatusFilter} onChange={(event) => setRunStatusFilter(event.target.value as "all" | StageStatus)}>
+                <option value="all">All status</option>
+                {statusOrder.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
+              </select>
+            </label>
+          </div>
+          <RunTable runs={visibleInstanceRuns.slice(0, 8)} selectedRunId={latest?.pipelineId || ""} onSelect={() => onOpenExecutions()} />
         </div>
 
         <div className="flow-panel wide-panel">
@@ -3299,6 +3546,17 @@ function WorkflowWorkspace({
           URL 指向的 Run 不存在或当前 Runtime 未返回该 Run。页面不会静默切换到其他 Run，请从 Executions 重新选择。
         </div>
       )}
+
+      <div className="workflow-context-strip">
+        <span>Runtime</span>
+        <strong>{runtime?.displayName || runtime?.name || runtime?.id || "-"}</strong>
+        <span>/ Instance</span>
+        <strong>{instance?.instanceId || "-"}</strong>
+        <span>/ Workflow</span>
+        <strong>{instance?.workflowBinding?.workflowName || instance?.sopType || "workflow"}</strong>
+        <span>/ Run</span>
+        <strong>{selectedRun?.pipelineId ? shortId(selectedRun.pipelineId) : "-"}</strong>
+      </div>
 
       <div className="workflow-primary-grid">
         <aside className="workflow-run-panel">
