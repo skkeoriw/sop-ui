@@ -3096,6 +3096,7 @@ function InstanceOverview({
 }) {
   const binding = instance?.workflowBinding;
   const latest = instance?.latestExecution || runs[0];
+  const latestFailure = runs.find((run) => run.status === "failed") || (latest?.status === "failed" ? latest : undefined);
   const [runSearch, setRunSearch] = useState("");
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | StageStatus>("all");
   const visibleInstanceRuns = useMemo(() => {
@@ -3112,21 +3113,21 @@ function InstanceOverview({
         <div className="workflow-title">
           <span className={`status-pill ${instance?.status === "failed" ? "failed" : instance?.status === "running" ? "running" : "done"}`}><LayoutDashboard size={14} />Instance Workspace</span>
           <div className="context-path">
-            <span>Runtime</span>
-            <strong>{runtime?.displayName || runtime?.name || runtime?.id || "runtime"}</strong>
+            <span>Runtime Host</span>
+            <strong>{runtime?.displayName || runtime?.name || runtime?.id || "host"}</strong>
             <span>/ Instance</span>
             <strong>{instance?.instanceId || "instance"}</strong>
           </div>
           <div>
             <h1>{instance?.title || "选择 Instance"}</h1>
-            <p>{runtime?.name || "Runtime"} · {instance?.repo || "repo pending"} · {instance?.instanceId || "-"}</p>
+            <p>{runtime?.name || "Runtime Host"} · {instance?.repo || "repo pending"} · {instance?.instanceId || "-"}</p>
           </div>
         </div>
         <div className="workflow-metrics">
-          <Metric label="Workflow" value={binding?.workflowName || "-"} subtext={binding?.workflowVersion || binding?.bindingStatus || "binding"} />
+          <Metric label="Workflow Definition" value={binding?.workflowName || "-"} subtext={binding?.workflowVersion || binding?.bindingStatus || "binding"} />
           <Metric label="Executions" value={instance?.executionCount ?? runs.length} subtext={latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)}` : "no execution"} />
           <Metric label="Artifacts" value={instance?.artifactCount ?? runArtifacts.length} subtext={`${instance?.pageCount ?? latest?.pageCount ?? 0} pages`} />
-          <Metric label="Nodes" value={`${binding?.enabledNodeCount ?? managedNodes.length}/${binding?.nodeCount ?? dag?.nodes.length ?? 0}`} subtext="workflow binding" />
+          <Metric label="Node Definitions" value={`${binding?.enabledNodeCount ?? managedNodes.length}/${binding?.nodeCount ?? dag?.nodes.length ?? 0}`} subtext="definition catalog" />
         </div>
       </div>
 
@@ -3140,9 +3141,11 @@ function InstanceOverview({
                 status: instance.status || "unknown",
                 sop_type: instance.sopType || "-",
                 repo: instance.repo || "-",
+                repo_branch: instance.repoBranch || "-",
                 wiki_local_path: instance.wikiLocalPath || "-",
                 workspace_status: instance.workspaceStatus || "-",
                 run_index_status: instance.runIndexStatus || "-",
+                latest_failure: latestFailure?.pipelineId || "-",
               }} />
             </div>
           ) : <Empty text="请选择一个 Instance" />}
@@ -3166,11 +3169,11 @@ function InstanceOverview({
         </div>
 
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Workflow Runs</strong><span>运行历史属于当前 Instance</span></div><button type="button" onClick={onOpenExecutions}>Open Executions</button></div>
+          <div className="panel-head"><div><strong>Recent Executions</strong><span>执行历史属于当前 Instance，不是 Workflow Definition</span></div><button type="button" onClick={onOpenExecutions}>Open Executions</button></div>
           <div className="execution-tools instance-run-tools">
             <label className="search-box">
               <Search size={14} />
-              <input value={runSearch} onChange={(event) => setRunSearch(event.target.value)} placeholder="Search workflow run" />
+              <input value={runSearch} onChange={(event) => setRunSearch(event.target.value)} placeholder="Search execution" />
             </label>
             <label className="filter-box">
               <SlidersHorizontal size={14} />
@@ -3184,7 +3187,7 @@ function InstanceOverview({
         </div>
 
         <div className="flow-panel wide-panel">
-          <div className="panel-head"><div><strong>Node Registry</strong><span>当前 Workflow Binding 中的节点</span></div><button type="button" onClick={onOpenNodes}>Open Nodes</button></div>
+          <div className="panel-head"><div><strong>Node Definition Catalog</strong><span>当前 Workflow Definition 中的节点定义</span></div><button type="button" onClick={onOpenNodes}>Open Nodes</button></div>
           <div className="stage-map compact">
             {(dag?.nodes || []).map((node) => (
               <button key={node.id} type="button" className="stage-map-node waiting" onClick={onOpenNodes}>
@@ -3193,12 +3196,12 @@ function InstanceOverview({
                 <small>{node.id}</small>
               </button>
             ))}
-            {!dag?.nodes.length && <Empty text="还没有加载 Workflow DAG" />}
+            {!dag?.nodes.length && <Empty text="还没有加载 Workflow Definition DAG" />}
           </div>
         </div>
 
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Other Instances</strong><span>同一 Runtime 下的工作区</span></div></div>
+          <div className="panel-head"><div><strong>Other Instances</strong><span>同一 Runtime Host 下的工作区</span></div></div>
           <div className="runtime-list compact">
             {instances.map((item) => (
               <button key={item.instanceId} type="button" className={`runtime-select-card ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => onSelectInstance(item.instanceId)}>
@@ -3315,8 +3318,8 @@ function OverviewPage({
       <section className="console-grid">
         <div className="flow-panel compact-flow">
           <div className="panel-head">
-            <div><strong>Workflow Map</strong><span>点击节点后右侧 Inspector 聚焦</span></div>
-            <button type="button" onClick={onOpenWorkflow}>Open DAG</button>
+            <div><strong>Workflow Definition Map</strong><span>点击节点后右侧 Inspector 聚焦执行状态</span></div>
+            <button type="button" onClick={onOpenWorkflow}>Open Definition</button>
           </div>
           <div className="stage-map">
             {(dag?.nodes || []).map((node) => {
@@ -3329,12 +3332,12 @@ function OverviewPage({
                 </button>
               );
             })}
-            {!dag?.nodes.length && <Empty text="选择 Runtime 和 Workspace 后加载 Workflow Map" />}
+            {!dag?.nodes.length && <Empty text="选择 Runtime Host 和 Instance 后加载 Workflow Definition Map" />}
           </div>
         </div>
         <div className="runs-table-panel">
           <div className="panel-head">
-            <div><strong>Recent Runs</strong><span>优先显示 running / failed / latest</span></div>
+            <div><strong>Recent Executions</strong><span>优先显示 running / failed / latest</span></div>
             <button type="button" onClick={() => onOpenRun()}>View all</button>
           </div>
           <RunTable runs={recentRuns} selectedRunId={selectedRun?.pipelineId || ""} onSelect={onOpenRun} />
@@ -3398,7 +3401,7 @@ function WorkflowHome({
     <section className="workflow-home">
       <div className="workflow-command-bar">
         <div className="workflow-title">
-          <span className="status-pill running"><Workflow size={14} />Workflow</span>
+          <span className="status-pill running"><Workflow size={14} />Workflow Definition</span>
           <div>
             <h1>DAG 驱动的执行观察</h1>
             <p>{instance?.title || "SOP Workflow"} · {runtime?.endpoint || "No endpoint"} · {mode}</p>
@@ -3415,15 +3418,15 @@ function WorkflowHome({
       <section className="workflow-entry-panel">
         <div className="panel-head">
           <div>
-            <strong>Workflows</strong>
-            <span>选择一个 Workflow 后进入 DAG 运行详情</span>
+            <strong>Workflow Definition</strong>
+            <span>选择 Instance 绑定的 SOP 定义后进入执行观察</span>
           </div>
           <span>{instance ? 1 : 0}</span>
         </div>
         {instance ? (
           <button type="button" className="workflow-entry-card" onClick={onOpenWorkflow}>
             <div>
-              <span className="status-pill done"><GitBranch size={14} />Active Workflow</span>
+              <span className="status-pill done"><GitBranch size={14} />Active Definition</span>
               <h2>{instance.title || "YouTube Wiki SOP"}</h2>
               <p>{instance.repo || instance.instanceId}</p>
             </div>
@@ -3433,7 +3436,7 @@ function WorkflowHome({
             </div>
           </button>
         ) : (
-          <Empty text="当前 Runtime 没有可用 Workflow" />
+          <Empty text="当前 Runtime Host 没有可用 Workflow Definition" />
         )}
       </section>
     </section>
@@ -3527,6 +3530,7 @@ function WorkflowWorkspace({
     ? [selectedRun, ...topRuns.filter((run) => run.pipelineId !== selectedRun.pipelineId)].slice(0, 8)
     : topRuns;
   const selectedProgress = runProgressFromNodes(selectedRun, dag);
+  const workflowBinding = instance?.workflowBinding;
   return (
     <section className="workflow-workspace">
       {selectedRunMissing && (
@@ -3536,15 +3540,51 @@ function WorkflowWorkspace({
       )}
 
       <div className="workflow-context-strip">
-        <span>Runtime</span>
+        <span>Runtime Host</span>
         <strong>{runtime?.displayName || runtime?.name || runtime?.id || "-"}</strong>
         <span>/ Instance</span>
         <strong>{instance?.instanceId || "-"}</strong>
-        <span>/ Workflow</span>
-        <strong>{instance?.workflowBinding?.workflowName || instance?.sopType || "workflow"}</strong>
-        <span>/ Run</span>
+        <span>/ Workflow Definition</span>
+        <strong>{workflowBinding?.workflowName || instance?.sopType || "workflow"}</strong>
+        <span>/ Execution</span>
         <strong>{selectedRun?.pipelineId ? shortId(selectedRun.pipelineId) : "-"}</strong>
       </div>
+
+      <section className="workflow-definition-overview">
+        <article className="workflow-definition-card">
+          <span className="status-pill done"><GitBranch size={14} />Workflow Definition</span>
+          <strong>{workflowBinding?.workflowName || instance?.sopType || "No workflow binding"}</strong>
+          <small>{workflowBinding?.definitionPath || workflowBinding?.definitionSource || "agent-brains SOP definition"}</small>
+          <KeyValues data={{
+            workflow_id: workflowBinding?.workflowId || "-",
+            version: workflowBinding?.workflowVersion || "-",
+            node_definitions: workflowBinding?.nodeCount ?? dag?.nodes.length ?? 0,
+            enabled_nodes: workflowBinding?.enabledNodeCount ?? dag?.nodes.length ?? 0,
+          }} />
+        </article>
+        <article className="workflow-definition-card">
+          <span className={`status-pill ${selectedRun?.status || "waiting"}`}><ListChecks size={14} />Selected Execution</span>
+          <strong>{selectedRun?.pipelineId ? shortId(selectedRun.pipelineId) : "No execution selected"}</strong>
+          <small>{selectedRun?.updatedAt || selectedRun?.startedAt || "select an execution from the list"}</small>
+          <KeyValues data={{
+            status: selectedRun ? statusLabel(selectedRun.status) : "-",
+            progress: selectedRun ? `${selectedProgress.done}/${selectedProgress.total} nodes · ${selectedProgress.percent}%` : "-",
+            running_node: selectedRun?.runningNode || "-",
+            failed_node: selectedRun?.failedNode || "-",
+          }} />
+        </article>
+        <article className="workflow-definition-card">
+          <span className="status-pill waiting"><Boxes size={14} />Node Run State Boundary</span>
+          <strong>{selectedStage?.title || "Select a node"}</strong>
+          <small>{selectedStage?.id || "Node Definition and Run State are inspected separately."}</small>
+          <KeyValues data={{
+            definition_mode: selectedStage?.mode || "-",
+            selected_state: selectedStage ? statusLabel(selectedStatus) : "-",
+            artifacts: nodeDetail?.artifacts?.length ?? "-",
+            events: runEvents.length,
+          }} />
+        </article>
+      </section>
 
       <div className="workflow-primary-grid">
         <aside className="workflow-run-panel">
@@ -3614,8 +3654,8 @@ function WorkflowWorkspace({
         <section className="flow-panel workflow-dag-panel">
           <div className="panel-head workflow-dag-head">
             <div className="dag-title-block">
-              <strong>DAG Canvas</strong>
-              <span>{selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
+              <strong>Workflow Definition DAG</strong>
+              <span>{workflowBinding?.definitionPath || selectedRun?.pipelineId || instance?.instanceId || "-"}</span>
             </div>
             <div className="head-actions dag-actions">
               {selectedRun?.status === "running" && (
@@ -3646,8 +3686,8 @@ function WorkflowWorkspace({
         <aside className="workflow-node-inspector">
           <div className="panel-head compact">
             <div>
-              <strong>{selectedStage?.title || "Node Inspector"}</strong>
-              <span>{selectedStage?.mode || selectedStage?.id || "选择 DAG 节点"}</span>
+              <strong>{selectedStage?.title || "Node Definition / Run State"}</strong>
+              <span>{selectedStage ? `${selectedStage.mode} · ${selectedStage.id}` : "选择 DAG 节点"}</span>
             </div>
             <div className="head-actions compact-actions">
               {selectedStage && <span className={`status-pill ${selectedStatus}`}>{statusIcon(selectedStatus)}{statusLabel(selectedStatus)}</span>}
@@ -3702,7 +3742,7 @@ function WorkflowWorkspace({
                       }} />
                     </DetailBlock>
                     {nodeDetail?.plan && <DetailBlock title="Wiki Build Plan"><KeyValues data={nodeDetail.plan} /></DetailBlock>}
-                    <DetailBlock title="Test this node">
+                    <DetailBlock title="Node Definition Smoke Test">
                       <NodeTestPanel
                         provider={provider}
                         runtime={runtime}
@@ -4787,13 +4827,25 @@ function NodesWorkspace({
   const completeNodes = nodes.filter((node) => (node.missingFields || []).length === 0).length;
   const groupCounts = Object.fromEntries(nodeFilters.map((filter) => [filter, nodes.filter((node) => matchesNodeGroup(node, filter)).length]));
   const [nodeView, setNodeView] = useState<"list" | "dag" | "contracts">("list");
+  const workflowBinding = instance?.workflowBinding;
   return (
     <>
+      <div className="workflow-context-strip node-context-strip">
+        <span>Runtime Host</span>
+        <strong>{runtime?.displayName || runtime?.name || runtime?.id || "-"}</strong>
+        <span>/ Instance</span>
+        <strong>{instance?.instanceId || "-"}</strong>
+        <span>/ Workflow Definition</span>
+        <strong>{workflowBinding?.workflowName || instance?.sopType || "workflow"}</strong>
+        <span>/ Node Definitions</span>
+        <strong>{visibleNodes.length}/{nodes.length}</strong>
+      </div>
+
       <section className="node-summary">
         <div>
-          <span className="status-pill running"><Boxes size={14} />Node Catalog</span>
-          <h1>Workflow 节点目录</h1>
-          <p>{instance?.title || "SOP Nodes"} · 按 create runtime、delete runtime、create instance 和 common 能力组织节点。</p>
+          <span className="status-pill running"><Boxes size={14} />Node Definition Catalog</span>
+          <h1>Workflow Node Definitions</h1>
+          <p>{instance?.title || "SOP Nodes"} · 这里展示 SOP 中的节点定义；某次执行里的状态在 Workflow Execution 中查看。</p>
           <div className="overview-tags">
             <span>Create Runtime</span>
             <span>Delete Runtime</span>
@@ -4801,7 +4853,7 @@ function NodesWorkspace({
             <span>Common</span>
           </div>
         </div>
-        <Metric label="Nodes" value={nodes.length} subtext="registered in SOP" />
+        <Metric label="Node Definitions" value={nodes.length} subtext="registered in SOP" />
         <Metric label="Complete" value={`${completeNodes}/${nodes.length || 0}`} subtext="metadata ready" />
         <Metric label="Drafts" value={drafts.length} subtext="not published" />
         <Metric label="Review" value={groupCounts.failed || 0} subtext="nodes need metadata" />
@@ -4810,11 +4862,11 @@ function NodesWorkspace({
       <section className="node-module-workbench node-catalog-workbench">
         <aside className="node-list-panel">
           <div className="panel-head compact">
-            <div><strong>Groups</strong><span>{visibleNodes.length}/{nodes.length} nodes</span></div>
+            <div><strong>Definition Groups</strong><span>{visibleNodes.length}/{nodes.length} definitions</span></div>
             <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Draft</button>
           </div>
           <div className="node-list-tools">
-            <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node" /></label>
+            <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node definition" /></label>
             <div className="node-group-list" role="tablist" aria-label="Node group">
               {nodeFilters.map((filter) => (
                 <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>
@@ -4825,7 +4877,7 @@ function NodesWorkspace({
             </div>
           </div>
           <div className="node-catalog-heading">
-            <strong>Nodes</strong>
+            <strong>Node Definitions</strong>
             <span>{nodeGroupLabel(nodeFilter)}</span>
           </div>
           {loading ? <Skeleton /> : (
@@ -4841,14 +4893,14 @@ function NodesWorkspace({
                   <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "warning" : "ready"}</span>
                 </button>
               ))}
-              {!visibleNodes.length && <Empty text="没有匹配的 Node" />}
+              {!visibleNodes.length && <Empty text="没有匹配的 Node Definition" />}
             </div>
           )}
         </aside>
 
         <section className="node-modules-panel">
           <div className="panel-head compact">
-            <div><strong>Node Views</strong><span>{selectedNode?.nodeId || "No node"}</span></div>
+            <div><strong>Definition Views</strong><span>{selectedNode?.nodeId || "No node definition"}</span></div>
             <div className="segmented compact">
               <button type="button" className={nodeView === "list" ? "active" : ""} onClick={() => setNodeView("list")}>List</button>
               <button type="button" className={nodeView === "dag" ? "active" : ""} onClick={() => setNodeView("dag")}>DAG</button>
@@ -4881,7 +4933,7 @@ function NodesWorkspace({
                   <small>{contractSummary(node)}</small>
                 </button>
               ))}
-              {!visibleNodes.length && <Empty text="没有匹配的 Node" />}
+              {!visibleNodes.length && <Empty text="没有匹配的 Node Definition" />}
             </div>
           )}
           {nodeView === "contracts" && (
@@ -4899,7 +4951,7 @@ function NodesWorkspace({
           )}
           {selectedNode && instance ? (
             <div className="node-test-strip">
-              <div className="section-title"><span>Test this node</span><span>独立测试</span></div>
+              <div className="section-title"><span>Definition Smoke Test</span><span>skill / webhook</span></div>
               <NodeTestPanel
                 provider={provider}
                 runtime={runtime}

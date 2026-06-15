@@ -1471,6 +1471,42 @@ pre {
   font-size: 13px;
 }
 
+.workflow-definition-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.workflow-definition-card {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.workflow-definition-card strong {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.workflow-definition-card small {
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workflow-definition-card .kv-grid {
+  margin-top: 2px;
+}
+
 .workflow-primary-grid {
   min-height: 640px;
   display: grid;
@@ -3992,6 +4028,7 @@ pre {
   .relationship-columns,
   .workflow-command-bar,
   .workflow-entry-card,
+  .workflow-definition-overview,
   .workflow-primary-grid,
   .artifacts-layout,
   .settings-grid {
