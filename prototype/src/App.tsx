@@ -4470,6 +4470,7 @@ function RuntimeManagementStartDrawer({
   const submitLabel = isCreateRuntime ? "Create Runtime" : isDeleteRuntime ? "Delete Runtime" : isCreateInstance ? "Create Instance" : "Delete Instance";
   const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
   const selectedDeleteMachine = machines.find((machine) => machine.id === deleteMachineId);
+  const inferredDeleteRuntimeId = selectedDeleteMachine?.host ? `runtime-${selectedDeleteMachine.host.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")}` : "";
   const renderMachineSelect = (
     value: string,
     onChange: (value: string) => void,
@@ -4588,20 +4589,43 @@ function RuntimeManagementStartDrawer({
           ) : isDeleteRuntime ? (
             <div className="runtime-drawer-form">
               {renderMachineSelect(deleteMachineId, setDeleteMachineId, setDeleteSshCommand)}
-              {selectedDeleteMachine && <KeyValues data={{ machine_id: selectedDeleteMachine.id, host: selectedDeleteMachine.host, auth: selectedDeleteMachine.authType, secret: selectedDeleteMachine.privateKeyPresent || selectedDeleteMachine.passwordPresent ? "saved" : "missing" }} />}
-              <label>
-                <span>Runtime ID</span>
-                <input value={deleteRuntimeId} onChange={(event) => setDeleteRuntimeId(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 Runtime ID" />
-              </label>
-              <label>
-                <span>SSH Command</span>
-                <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 SSH Command" />
-              </label>
-              <label>
-                <span>Private Key</span>
-                <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="留空时使用管理端保存的 Private Key" rows={6} />
-                <span className="field-hint">覆盖项。正常情况下不用填，后端会注入已保存的目标 SSH 凭据。</span>
-              </label>
+              {selectedDeleteMachine ? (
+                <section className="selected-machine-summary">
+                  <div>
+                    <strong>{selectedDeleteMachine.name}</strong>
+                    <span>{selectedDeleteMachine.user}@{selectedDeleteMachine.host}:{selectedDeleteMachine.port}</span>
+                  </div>
+                  <KeyValues data={{
+                    machine_id: selectedDeleteMachine.id,
+                    inferred_runtime_id: inferredDeleteRuntimeId || "-",
+                    auth: selectedDeleteMachine.authType,
+                    secret: selectedDeleteMachine.privateKeyPresent || selectedDeleteMachine.passwordPresent ? "saved" : "missing",
+                    last_check: selectedDeleteMachine.lastCheckAt || "-",
+                  }} />
+                </section>
+              ) : (
+                <div className="inline-warning">未选择 Machine 时会使用后端默认删除目标；需要指定 Runtime ID 或临时 SSH 时打开下面的 Target Override。</div>
+              )}
+              <details className="advanced-runtime-overrides">
+                <summary>Target Override</summary>
+                <label>
+                  <span>Runtime ID</span>
+                  <input value={deleteRuntimeId} onChange={(event) => setDeleteRuntimeId(event.target.value)} disabled={pending} placeholder={inferredDeleteRuntimeId || "留空时按 Machine Host 推导"} />
+                  <span className="field-hint">高级覆盖项。选择 Machine Node 后正常不用填；系统会按目标机器 host 推导 runtime id。</span>
+                </label>
+              </details>
+              <details className="advanced-runtime-overrides">
+                <summary>Manual SSH Override</summary>
+                <label>
+                  <span>SSH Command</span>
+                  <input value={deleteSshCommand} onChange={(event) => setDeleteSshCommand(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；优先使用 Machine Node" />
+                </label>
+                <label>
+                  <span>Private Key</span>
+                  <textarea value={deletePrivateKey} onChange={(event) => setDeletePrivateKey(event.target.value)} disabled={pending} placeholder="仅临时覆盖时填写；正常情况下由 Control Plane 注入" rows={6} />
+                  <span className="field-hint">高级覆盖项。选择 Machine Node 后正常不用填，后端会注入已保存的目标 SSH 凭据。</span>
+                </label>
+              </details>
               <label className="inline-check drawer-inline-check">
                 <input type="checkbox" checked={deleteForce} onChange={(event) => setDeleteForce(event.target.checked)} disabled={pending} />
                 <span>Force when running executions exist</span>
