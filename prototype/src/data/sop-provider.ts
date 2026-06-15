@@ -18,6 +18,7 @@ import type {
   NodeTestResult,
   NodeTestRunResult,
   Run,
+  ListQueryOptions,
   RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
   Runtime,
@@ -43,6 +44,19 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new Error(`接口没有返回 JSON：${url}`);
   }
+}
+
+function toQuery(options?: ListQueryOptions): string {
+  const params = new URLSearchParams();
+  if (!options) return "";
+  if (options.page) params.set("page", String(options.page));
+  if (options.pageSize) params.set("page_size", String(options.pageSize));
+  if (options.q) params.set("q", options.q);
+  if (options.status && options.status !== "all") params.set("status", options.status);
+  if (options.sort) params.set("sort", options.sort);
+  if (options.order) params.set("order", options.order);
+  const text = params.toString();
+  return text ? `?${text}` : "";
 }
 
 async function postJson(url: string, body: unknown): Promise<void> {
@@ -528,20 +542,40 @@ export const sopProvider: SopDataProvider = {
       });
   },
 
-  async listInstances(runtime) {
-    const data = await requestJson<{ sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> }>(
-      `${runtime.endpoint}/api/sop/instances`
-    );
+  async listInstances(runtime, options) {
+    let data: { sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> };
+    try {
+      data = await requestJson<{ sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> }>(
+        `${runtime.endpoint}/api/sop/v1/instances${toQuery(options)}`
+      );
+    } catch {
+      data = await requestJson<{ sops?: Array<Record<string, unknown>>; instances?: Array<Record<string, unknown>>; runtime?: Record<string, unknown>; runtime_info?: Record<string, unknown> }>(
+        `${runtime.endpoint}/api/sop/instances${toQuery(options)}`
+      );
+    }
     const items = data.instances || data.sops || [];
     return items.map(mapInstance);
   },
 
   async getDag(runtime, instanceId) {
-    const data = await requestJson<{
+    let data: {
+      dag?: { nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>> };
       nodes?: Array<Record<string, unknown>>;
       edges?: Array<Record<string, unknown>>;
-    }>(`${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/dag`);
-    return mapDag(data, instanceId);
+    };
+    try {
+      data = await requestJson<{
+        dag?: { nodes?: Array<Record<string, unknown>>; edges?: Array<Record<string, unknown>> };
+        nodes?: Array<Record<string, unknown>>;
+        edges?: Array<Record<string, unknown>>;
+      }>(`${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow`);
+    } catch {
+      data = await requestJson<{
+        nodes?: Array<Record<string, unknown>>;
+        edges?: Array<Record<string, unknown>>;
+      }>(`${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/dag`);
+    }
+    return mapDag(data.dag || data, instanceId);
   },
 
   async getRunDag(runtime, instanceId, pipelineId) {
@@ -551,15 +585,15 @@ export const sopProvider: SopDataProvider = {
     return mapDag(data, instanceId);
   },
 
-  async listRuns(runtime, instanceId) {
+  async listRuns(runtime, instanceId, options) {
     let data: { runs?: Array<Record<string, unknown>>; executions?: Array<Record<string, unknown>> };
     try {
       data = await requestJson<{ runs?: Array<Record<string, unknown>>; executions?: Array<Record<string, unknown>> }>(
-        `${runtime.endpoint}/api/sop/instances/${encodeURIComponent(instanceId)}/executions`
+        `${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow/runs${toQuery(options)}`
       );
     } catch {
       data = await requestJson<{ runs?: Array<Record<string, unknown>> }>(
-        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs`
+        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs${toQuery(options)}`
       );
     }
     return (data.executions || data.runs || []).map(mapRun);
@@ -568,7 +602,7 @@ export const sopProvider: SopDataProvider = {
   async getRun(runtime, instanceId, pipelineId) {
     try {
       return mapRun(await requestJson<Record<string, unknown>>(
-        `${runtime.endpoint}/api/sop/instances/${encodeURIComponent(instanceId)}/executions/${encodeURIComponent(pipelineId)}`
+        `${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}`
       ));
     } catch {
       return mapRun(await requestJson<Record<string, unknown>>(
@@ -578,16 +612,30 @@ export const sopProvider: SopDataProvider = {
   },
 
   async getRunEvents(runtime, instanceId, pipelineId) {
-    const raw = await requestJson<{ events?: Array<Record<string, unknown>> }>(
-      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/events`
-    );
+    let raw: { events?: Array<Record<string, unknown>> };
+    try {
+      raw = await requestJson<{ events?: Array<Record<string, unknown>> }>(
+        `${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}/events`
+      );
+    } catch {
+      raw = await requestJson<{ events?: Array<Record<string, unknown>> }>(
+        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/events`
+      );
+    }
     return (raw.events || []).map(mapEvent);
   },
 
   async getRunArtifacts(runtime, instanceId, pipelineId) {
-    const raw = await requestJson<Array<Record<string, unknown>> | { artifacts?: Array<Record<string, unknown>> }>(
-      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/artifacts`
-    );
+    let raw: Array<Record<string, unknown>> | { artifacts?: Array<Record<string, unknown>> };
+    try {
+      raw = await requestJson<Array<Record<string, unknown>> | { artifacts?: Array<Record<string, unknown>> }>(
+        `${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}/artifacts`
+      );
+    } catch {
+      raw = await requestJson<Array<Record<string, unknown>> | { artifacts?: Array<Record<string, unknown>> }>(
+        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/artifacts`
+      );
+    }
     const items = Array.isArray(raw) ? raw : raw.artifacts || [];
     return items.map(mapArtifact);
   },
@@ -600,9 +648,16 @@ export const sopProvider: SopDataProvider = {
   },
 
   async getNode(runtime, instanceId, pipelineId, nodeId) {
-    const raw = await requestJson<Record<string, unknown>>(
-      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}`
-    );
+    let raw: Record<string, unknown>;
+    try {
+      raw = await requestJson<Record<string, unknown>>(
+        `${runtime.endpoint}/api/sop/v1/instances/${encodeURIComponent(instanceId)}/workflow/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}`
+      );
+    } catch {
+      raw = await requestJson<Record<string, unknown>>(
+        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/runs/${encodeURIComponent(pipelineId)}/nodes/${encodeURIComponent(nodeId)}`
+      );
+    }
     const infraRaw = raw.infra as Record<string, unknown> | undefined;
     return {
       pipelineId: String(raw.pipeline_id || pipelineId),

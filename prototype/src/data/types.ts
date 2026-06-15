@@ -60,6 +60,15 @@ export interface Instance {
   updatedAt?: string;
 }
 
+export interface ListQueryOptions {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  status?: string;
+  sort?: string;
+  order?: "asc" | "desc";
+}
+
 export interface RuntimeInheritanceItem {
   key: string;
   aliases?: string[];
@@ -503,10 +512,10 @@ export interface TriggerResult {
 export interface SopDataProvider {
   mode: DataMode;
   listRuntimes(): Promise<Runtime[]>;
-  listInstances(runtime: Runtime): Promise<Instance[]>;
+  listInstances(runtime: Runtime, options?: ListQueryOptions): Promise<Instance[]>;
   getDag(runtime: Runtime, instanceId: string): Promise<Dag>;
   getRunDag(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Dag>;
-  listRuns(runtime: Runtime, instanceId: string): Promise<Run[]>;
+  listRuns(runtime: Runtime, instanceId: string, options?: ListQueryOptions): Promise<Run[]>;
   getRun(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Run>;
   getRunEvents(runtime: Runtime, instanceId: string, pipelineId: string): Promise<NodeEvent[]>;
   getRunArtifacts(runtime: Runtime, instanceId: string, pipelineId: string): Promise<Artifact[]>;

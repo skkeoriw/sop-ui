@@ -810,7 +810,11 @@ export default function App() {
   }, [manualRuntime, runtimesQuery.data]);
   const runtime = runtimes.find((item) => item.id === runtimeId) || runtimes[0];
 
-  const instancesQuery = useQuery({ queryKey: queryKeys.instances(mode, runtime), queryFn: () => provider.listInstances(runtime), enabled: Boolean(runtime) });
+  const instancesQuery = useQuery({
+    queryKey: queryKeys.instances(mode, runtime),
+    queryFn: () => provider.listInstances(runtime, { pageSize: 100, sort: "updated_at", order: "desc" }),
+    enabled: Boolean(runtime),
+  });
   const instances = instancesQuery.data || [];
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
   const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
@@ -901,7 +905,14 @@ export default function App() {
     instanceDeleteForce,
   ]);
 
-  const dagQuery = useQuery({ queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""), queryFn: () => provider.getDag(runtime, instance.instanceId), enabled: Boolean(runtime && instance) });
+  const shouldLoadWorkflowShape = viewMode === "instance" || viewMode === "workflow" || viewMode === "nodes";
+  const shouldLoadRuns = viewMode === "instance" || viewMode === "workflow";
+  const shouldLoadRunDetail = viewMode === "workflow" && Boolean(route.pipelineId);
+  const dagQuery = useQuery({
+    queryKey: queryKeys.dag(mode, runtime, instance?.instanceId || ""),
+    queryFn: () => provider.getDag(runtime, instance.instanceId),
+    enabled: Boolean(runtime && instance && shouldLoadWorkflowShape),
+  });
   const runtimeInheritanceQuery = useQuery({
     queryKey: ["runtime-inheritance", mode, runtime?.id || "", managementInstance?.instanceId || ""],
     queryFn: () => provider.getRuntimeInheritance(runtime!, managementInstance!.instanceId),
@@ -921,9 +932,15 @@ export default function App() {
     retry: 1,
   });
   const runsQuery = useQuery({
-    queryKey: queryKeys.runs(mode, runtime, instance?.instanceId || ""),
-    queryFn: () => provider.listRuns(runtime, instance.instanceId),
-    enabled: Boolean(runtime && instance),
+    queryKey: [...queryKeys.runs(mode, runtime, instance?.instanceId || ""), executionSearch.trim(), executionFilter],
+    queryFn: () => provider.listRuns(runtime, instance.instanceId, {
+      pageSize: 80,
+      q: executionSearch.trim(),
+      status: executionFilter === "all" ? undefined : executionFilter,
+      sort: "updated_at",
+      order: "desc",
+    }),
+    enabled: Boolean(runtime && instance && shouldLoadRuns),
     refetchInterval: (query) => (query.state.data?.some((run) => run.status === "running") && streamStatus !== "live" ? 15000 : false)
   });
   const serverRuns = runsQuery.data || [];
@@ -934,26 +951,26 @@ export default function App() {
   const runQuery = useQuery({
     queryKey: queryKeys.run(mode, runtime, instance?.instanceId || "", selectedRunSummary?.pipelineId || ""),
     queryFn: () => provider.getRun(runtime!, instance!.instanceId, selectedRunSummary!.pipelineId),
-    enabled: Boolean(runtime && instance && selectedRunSummary),
+    enabled: Boolean(runtime && instance && selectedRunSummary && shouldLoadRunDetail),
     refetchInterval: (query) => (query.state.data?.status === "running" && streamStatus !== "live" ? 15000 : false)
   });
   const selectedRun = runQuery.data || selectedRunSummary;
   const runDagQuery = useQuery({
     queryKey: queryKeys.runDag(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
     queryFn: () => provider.getRunDag(runtime!, instance!.instanceId, selectedRun!.pipelineId),
-    enabled: Boolean(runtime && instance && selectedRun),
+    enabled: Boolean(runtime && instance && selectedRun && shouldLoadRunDetail),
     retry: false,
   });
   const runEventsQuery = useQuery({
     queryKey: queryKeys.runEvents(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
     queryFn: () => provider.getRunEvents(runtime!, instance!.instanceId, selectedRun!.pipelineId),
-    enabled: Boolean(runtime && instance && selectedRun),
+    enabled: Boolean(runtime && instance && selectedRun && shouldLoadRunDetail),
     refetchInterval: selectedRun?.status === "running" && streamStatus !== "live" ? 15000 : false,
   });
   const runArtifactsQuery = useQuery({
     queryKey: queryKeys.runArtifacts(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
     queryFn: () => provider.getRunArtifacts(runtime!, instance!.instanceId, selectedRun!.pipelineId),
-    enabled: Boolean(runtime && instance && selectedRun),
+    enabled: Boolean(runtime && instance && selectedRun && shouldLoadRunDetail),
   });
   const runArtifactCandidatesQuery = useQuery({
     queryKey: queryKeys.runArtifactCandidates(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || ""),
@@ -968,7 +985,7 @@ export default function App() {
   const nodeQuery = useQuery({
     queryKey: queryKeys.node(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || "", selectedStageKey),
     queryFn: () => provider.getNode(runtime!, instance!.instanceId, selectedRun!.pipelineId, selectedStageKey),
-    enabled: Boolean(runtime && instance && selectedRun && selectedStage)
+    enabled: Boolean(runtime && instance && selectedRun && selectedStage && shouldLoadRunDetail)
   });
   const logQuery = useQuery({
     queryKey: queryKeys.log(mode, runtime, instance?.instanceId || "", selectedRun?.pipelineId || "", selectedStageKey),
@@ -1820,6 +1837,10 @@ export default function App() {
             provider={provider}
             mode={mode}
             runs={workflowExecutions}
+            executionSearch={executionSearch}
+            executionFilter={executionFilter}
+            onExecutionSearch={setExecutionSearch}
+            onExecutionFilter={setExecutionFilter}
             selectedRun={selectedRun}
             selectedRunMissing={routeRunMissing}
             selectedStage={selectedStage}
@@ -2212,6 +2233,8 @@ function RuntimeOverview({
   const [hermesMessage, setHermesMessage] = useState("你好 你是谁");
   const [hermesUrl, setHermesUrl] = useState(buildHermesWebhookUrl(runtime));
   const [hermesRunning, setHermesRunning] = useState(false);
+  const [instanceSearch, setInstanceSearch] = useState("");
+  const [instanceStatusFilter, setInstanceStatusFilter] = useState("all");
   const [hermesResult, setHermesResult] = useState<{
     ok: boolean;
     httpStatus: number;
@@ -2234,6 +2257,15 @@ function RuntimeOverview({
     setHermesResult(null);
     setHermesRunning(false);
   }, [runtime?.id]);
+
+  const visibleInstances = useMemo(() => {
+    const query = instanceSearch.trim().toLowerCase();
+    return instances.filter((item) => {
+      const matchedStatus = instanceStatusFilter === "all" || item.status === instanceStatusFilter;
+      const searchable = [item.instanceId, item.title, item.repo, item.sopType, item.status].filter(Boolean).join(" ").toLowerCase();
+      return matchedStatus && (!query || searchable.includes(query));
+    });
+  }, [instances, instanceSearch, instanceStatusFilter]);
 
   const handleRunProbe = async () => {
     if (!runtime) return;
@@ -2427,11 +2459,28 @@ function RuntimeOverview({
         <div className="flow-panel instance-list-panel">
           <div className="panel-head">
             <div><strong>Instance Registry</strong><span>当前 Runtime 下的业务隔离单元</span></div>
-            <span>{instances.length}</span>
+            <span>{visibleInstances.length}/{instances.length}</span>
+          </div>
+          <div className="execution-tools instance-tools">
+            <label className="search-box">
+              <Search size={14} />
+              <input value={instanceSearch} onChange={(event) => setInstanceSearch(event.target.value)} placeholder="Search instance" />
+            </label>
+            <label className="filter-box">
+              <SlidersHorizontal size={14} />
+              <select value={instanceStatusFilter} onChange={(event) => setInstanceStatusFilter(event.target.value)}>
+                <option value="all">All status</option>
+                <option value="ready">Ready</option>
+                <option value="running">Running</option>
+                <option value="failed">Failed</option>
+                <option value="disabled">Disabled</option>
+                <option value="initializing">Initializing</option>
+              </select>
+            </label>
           </div>
           <div className="instance-table">
-            {instances.map((item) => <InstanceRow key={item.instanceId} instance={item} onOpen={() => onOpenInstance(item.instanceId)} onWorkflow={() => onOpenWorkflow(item.instanceId)} />)}
-            {!instances.length && <LoadingOrEmpty loading={loading} text="当前 Runtime 没有 enabled Instance" />}
+            {visibleInstances.map((item) => <InstanceRow key={item.instanceId} instance={item} onOpen={() => onOpenInstance(item.instanceId)} onWorkflow={() => onOpenWorkflow(item.instanceId)} />)}
+            {!visibleInstances.length && <LoadingOrEmpty loading={loading} text={instances.length ? "没有匹配的 Instance" : "当前 Runtime 没有 enabled Instance"} />}
           </div>
         </div>
       </section>
@@ -2893,6 +2942,10 @@ function WorkflowWorkspace({
   provider,
   mode,
   runs,
+  executionSearch,
+  executionFilter,
+  onExecutionSearch,
+  onExecutionFilter,
   selectedRun,
   selectedRunMissing,
   selectedStage,
@@ -2925,6 +2978,10 @@ function WorkflowWorkspace({
   provider: SopDataProvider;
   mode: DataMode;
   runs: Run[];
+  executionSearch: string;
+  executionFilter: "all" | StageStatus;
+  onExecutionSearch: (value: string) => void;
+  onExecutionFilter: (value: "all" | StageStatus) => void;
   selectedRun: Run | undefined;
   selectedRunMissing: boolean;
   selectedStage: DagNode | undefined;
@@ -2976,6 +3033,19 @@ function WorkflowWorkspace({
                 <span>{runningExecutionCount ? `${runningExecutionCount} running · 当前 run 置顶` : "当前 run 置顶，running 优先"}</span>
               </div>
               <span>{runs.length}</span>
+            </div>
+            <div className="execution-tools workflow-tools">
+              <label className="search-box">
+                <Search size={14} />
+                <input value={executionSearch} onChange={(event) => onExecutionSearch(event.target.value)} placeholder="Search execution" />
+              </label>
+              <label className="filter-box">
+                <SlidersHorizontal size={14} />
+                <select value={executionFilter} onChange={(event) => onExecutionFilter(event.target.value as "all" | StageStatus)}>
+                  <option value="all">All status</option>
+                  {statusOrder.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}
+                </select>
+              </label>
             </div>
             <div className="workflow-run-list">
               {displayedRuns.map((run) => (
