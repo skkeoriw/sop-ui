@@ -997,7 +997,7 @@ export default function App() {
       page: 1,
       pageSize: 100,
       q: "",
-      status: "all",
+      status: "active",
       sort: "updated_at",
       order: "desc" as const,
     };
