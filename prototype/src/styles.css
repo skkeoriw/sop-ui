@@ -177,35 +177,40 @@ pre {
 .rail-nav,
 .rail-section {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   align-content: start;
 }
 
 .rail-nav button,
 .rail-runtime {
   width: 100%;
-  min-height: 44px;
+  min-height: 42px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
-  border-color: transparent;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
   text-align: left;
+  padding: 8px 9px;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
 .rail-nav button:hover,
 .rail-runtime:hover {
-  border-color: var(--line);
-  background: var(--surface-2);
+  border-color: #d8e2ef;
+  background: #f8fafc;
+  color: #0f172a;
 }
 
 .rail-nav button.active,
 .rail-runtime.active {
-  border-color: #b8ccfb;
-  background: var(--blue-soft);
-  color: var(--blue);
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #075985;
+  box-shadow: inset 3px 0 0 #0284c7;
 }
 
 .rail-nav button span,
@@ -218,9 +223,17 @@ pre {
 }
 
 .rail-nav button small {
-  color: currentColor;
-  opacity: .72;
+  justify-self: end;
+  max-width: 74px;
+  overflow: hidden;
+  color: var(--muted);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-nav button.active small {
+  color: #0369a1;
 }
 
 .control-rail .section-title {
@@ -5779,30 +5792,38 @@ pre {
   gap: 10px;
 }
 
+.machine-list {
+  max-height: min(720px, calc(100vh - 352px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
 .machine-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
-  padding: 10px 12px;
-  border: 1px solid #cbd5e1;
+  padding: 0;
+  border: 1px solid #dbe4ef;
   border-radius: 8px;
   background: #ffffff;
   color: #0f172a;
+  overflow: hidden;
 }
 
 .machine-row-main {
   min-width: 0;
-  min-height: 0;
+  min-height: 74px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 10px 11px 8px;
   color: inherit;
   text-align: left;
+  cursor: pointer;
 }
 
 .machine-row-main:hover,
@@ -5811,10 +5832,38 @@ pre {
   border-color: transparent;
 }
 
-.machine-row div {
+.machine-avatar {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  border: 1px solid #dbe4ef;
+  background: #f8fafc;
+  color: #2563eb;
+}
+
+.machine-row-copy {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 6px;
+}
+
+.machine-row-title {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.machine-row-title strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .machine-row code {
@@ -5826,12 +5875,57 @@ pre {
   border: 1px solid #cbd5e1;
   border-radius: 5px;
   padding: 2px 6px;
+  font-size: 11px;
 }
 
-.machine-row span {
+.machine-row span,
+.machine-row em {
   color: #334155;
   font-size: 12px;
   white-space: nowrap;
+}
+
+.machine-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534 !important;
+  font-size: 11px !important;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.machine-state.offline {
+  background: #fef3c7;
+  color: #92400e !important;
+}
+
+.machine-state.disabled,
+.machine-state.deleted {
+  background: #f1f5f9;
+  color: #475569 !important;
+}
+
+.machine-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.machine-row-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #475569;
+  line-height: 1;
 }
 
 .machine-row-actions,
@@ -5839,17 +5933,24 @@ pre {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.machine-row-actions {
+  justify-content: flex-end;
+  padding: 0 8px 8px;
 }
 
 .machine-row-actions button {
-  width: 32px;
-  min-width: 32px;
-  min-height: 32px;
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
   display: grid;
   place-items: center;
   padding: 0;
-  background: #ffffff;
+  border-color: #dbe4ef;
+  background: #f8fafc;
+  color: #475569;
 }
 
 .machine-row-actions button:hover {
@@ -5862,6 +5963,70 @@ pre {
   color: #b91c1c;
   border-color: #fecaca;
   background: #fef2f2;
+}
+
+.machine-detail-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.machine-detail-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.machine-detail-title strong,
+.machine-detail-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.machine-detail-actions {
+  justify-content: flex-end;
+  padding: 4px;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.machine-action-btn {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-color: transparent;
+  background: transparent;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.machine-action-btn:hover {
+  border-color: #cbd5e1;
+  background: #ffffff;
+}
+
+.machine-action-btn.primary-action {
+  border-color: #bfdbfe;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.machine-action-btn.primary-action:hover {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+}
+
+.machine-action-btn.danger {
+  color: #b91c1c;
 }
 
 .machine-editor {
@@ -5915,18 +6080,19 @@ pre {
 
 .machines-workspace {
   display: grid;
-  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
 .machines-list-panel,
 .machine-detail-panel {
-  border: 1px solid #cbd5e1;
+  border: 1px solid #dbe4ef;
   border-radius: 8px;
-  background: #f8fafc;
+  background: #ffffff;
   color: #0f172a;
-  padding: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .machines-list-panel .panel-head strong,
@@ -5951,13 +6117,13 @@ pre {
 .machine-row-button:hover,
 .machine-row-button:focus-visible {
   border-color: #0284c7;
-  background: #eef6ff;
+  background: #f8fbff;
   outline: none;
 }
 
 .machine-row-button.active {
   border-color: #0284c7;
-  background: #e0f2fe;
+  background: #eff6ff;
   box-shadow: inset 3px 0 0 #0284c7;
 }
 
@@ -6066,8 +6232,18 @@ pre {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .machine-row-actions {
+  .machine-detail-head {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .machine-detail-actions {
     justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .machine-row-actions {
+    justify-content: flex-end;
   }
 
   .machine-editor-grid {

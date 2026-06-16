@@ -1884,22 +1884,22 @@ export default function App() {
           </button>
         </div>
         <nav className="rail-nav" aria-label="Primary">
-          <button type="button" className={viewMode === "runtime" ? "active" : ""} onClick={() => navigateTo("runtime")}>
+          <button type="button" className={`rail-nav-item ${viewMode === "runtime" ? "active" : ""}`} onClick={() => navigateTo("runtime")}>
             <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimeTotal || "-"} hosts` : `${instanceTotal || "-"} instances`}</small>
           </button>
-          <button type="button" className={viewMode === "instance" ? "active" : ""} onClick={() => navigateTo("instance")}>
+          <button type="button" className={`rail-nav-item ${viewMode === "instance" ? "active" : ""}`} onClick={() => navigateTo("instance")}>
             <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
           </button>
-          <button type="button" className={viewMode === "workflow" ? "active" : ""} onClick={() => navigateTo("workflow")}>
+          <button type="button" className={`rail-nav-item ${viewMode === "workflow" ? "active" : ""}`} onClick={() => navigateTo("workflow")}>
             <Network size={17} /><span>Runs</span><small>{runs.length || "-"} workflow runs</small>
           </button>
-          <button type="button" className={viewMode === "nodes" ? "active" : ""} onClick={() => navigateTo("nodes")}>
+          <button type="button" className={`rail-nav-item ${viewMode === "nodes" ? "active" : ""}`} onClick={() => navigateTo("nodes")}>
             <Boxes size={17} /><span>Node Defs</span><small>{managedNodes.length || "-"} definitions</small>
           </button>
-          <button type="button" className={viewMode === "machines" ? "active" : ""} onClick={() => navigateTo("machines")}>
+          <button type="button" className={`rail-nav-item ${viewMode === "machines" ? "active" : ""}`} onClick={() => navigateTo("machines")}>
             <Server size={17} /><span>Machines</span><small>{machinesQuery.data?.total ?? "-"}</small>
           </button>
-          <button type="button" className={viewMode === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
+          <button type="button" className={`rail-nav-item ${viewMode === "settings" ? "active" : ""}`} onClick={() => navigateTo("settings")}>
             <Settings size={17} /><span>Settings</span><small>{mode}</small>
           </button>
         </nav>
@@ -4918,7 +4918,7 @@ function MachinesPage({
       {(error || saveMachineError || testError) && <div className="inline-error">{error || saveMachineError || testError}</div>}
       <section className="machines-workspace">
         <aside className="machines-list-panel">
-          <div className="panel-head">
+          <div className="panel-head machines-list-head">
             <div><strong>Machine List</strong><span>{loading ? "loading" : `${machines.length}/${machineTotal} records`}</span></div>
             <button type="button" className="ghost-btn compact" onClick={clearForm}>New</button>
           </div>
@@ -4981,14 +4981,25 @@ function MachinesPage({
             </label>
           </div>
           <div className="machine-list">
-            {machines.map((machine) => (
+            {machines.map((machine) => {
+              const isSelected = selectedMachine?.id === machine.id;
+              const secretSaved = machine.privateKeyPresent || machine.passwordPresent;
+              return (
               <div key={machine.id} className={`machine-row machine-row-button ${selectedMachine?.id === machine.id ? "active" : ""}`}>
-                <button type="button" className="machine-row-main" onClick={() => loadMachine(machine)}>
-                  <div>
-                    <strong>{machine.name}</strong>
+                <button type="button" className="machine-row-main" aria-pressed={isSelected} onClick={() => loadMachine(machine)}>
+                  <span className="machine-avatar"><Server size={15} /></span>
+                  <div className="machine-row-copy">
+                    <span className="machine-row-title">
+                      <strong>{machine.name}</strong>
+                      <em className={`machine-state ${machine.status || "active"}`}>{machine.status || "active"}</em>
+                    </span>
                     <code>{machine.user}@{machine.host}:{machine.port}</code>
+                    <span className="machine-row-meta">
+                      <span>{machine.role || "target"}</span>
+                      <span>{machine.authType === "password" ? "password" : "private key"}</span>
+                      <span>{secretSaved ? "secret saved" : "secret missing"}</span>
+                    </span>
                   </div>
-                  <span>{machine.authType === "password" ? "password" : "private key"}</span>
                 </button>
                 <div className="machine-row-actions" aria-label={`${machine.name} actions`}>
                   <button type="button" title="Test SSH" onClick={() => onTestMachine(machine.id)} disabled={testPending}>
@@ -5008,7 +5019,8 @@ function MachinesPage({
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
             {!machines.length && <LoadingOrEmpty loading={loading} text="还没有机器节点配置" />}
           </div>
           <div className="list-pagination">
@@ -5022,22 +5034,25 @@ function MachinesPage({
           </div>
         </aside>
         <section className="machine-detail-panel">
-          <div className="panel-head">
-            <div><strong>Machine Detail</strong><span>{selectedMachine?.id || "new machine"}</span></div>
+          <div className="panel-head machine-detail-head">
+            <div className="machine-detail-title">
+              <strong>Machine Detail</strong>
+              <span>{selectedMachine?.id || "new machine"}</span>
+            </div>
             {selectedMachine && (
               <div className="machine-detail-actions">
-                <button type="button" className="ghost-btn compact" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
+                <button type="button" className="machine-action-btn primary-action" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
                   {testPending ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}
                   Test
                 </button>
-                <button type="button" className="ghost-btn compact" onClick={() => copySsh(selectedMachine)}>
+                <button type="button" className="machine-action-btn" onClick={() => copySsh(selectedMachine)}>
                   <Copy size={14} />Copy SSH
                 </button>
-                <button type="button" className="ghost-btn compact" onClick={() => duplicateMachine(selectedMachine)} disabled={duplicatePending}>
+                <button type="button" className="machine-action-btn" onClick={() => duplicateMachine(selectedMachine)} disabled={duplicatePending}>
                   {duplicatePending ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
                   Duplicate
                 </button>
-                <button type="button" className="ghost-btn compact danger" onClick={() => onDeleteMachine(selectedMachine.id)} disabled={deletePending}>
+                <button type="button" className="machine-action-btn danger" onClick={() => onDeleteMachine(selectedMachine.id)} disabled={deletePending}>
                   <Trash2 size={14} />Delete
                 </button>
               </div>
