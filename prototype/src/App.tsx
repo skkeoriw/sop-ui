@@ -817,7 +817,7 @@ export default function App() {
   const [selectedMachineId, setSelectedMachineId] = useState("");
   const [machineTestResult, setMachineTestResult] = useState<Record<string, unknown> | null>(null);
   const [machineSearch, setMachineSearch] = useState("");
-  const [machineStatusFilter, setMachineStatusFilter] = useState("all");
+  const [machineStatusFilter, setMachineStatusFilter] = useState("active");
   const [machineRoleFilter, setMachineRoleFilter] = useState("all");
   const [machineAuthFilter, setMachineAuthFilter] = useState("all");
   const [machinePage, setMachinePage] = useState(1);

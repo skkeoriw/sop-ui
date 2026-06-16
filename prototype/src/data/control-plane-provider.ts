@@ -151,7 +151,7 @@ export const controlPlaneProvider = {
       page: options?.page || 1,
       pageSize: options?.pageSize || 25,
       q: options?.q || "",
-      status: options?.status || "all",
+      status: options?.status || "active",
       role: options?.role || "",
       authType: options?.authType || "",
       sort: options?.sort,
