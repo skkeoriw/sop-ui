@@ -4855,10 +4855,12 @@ function MachinesPage({
   onDuplicateMachine: (id: string, reuseSecret: boolean) => void;
   onToast: (message: string) => void;
 }) {
+  const [creatingMachine, setCreatingMachine] = useState(false);
   const selectedMachine = selectedMachineId ? machines.find((machine) => machine.id === selectedMachineId) : undefined;
   const machineTotal = machineList?.total ?? machines.length;
   const hasNextPage = Boolean(machineList?.hasMore);
   const loadMachine = (machine: MachineConfig) => {
+    setCreatingMachine(false);
     setSelectedMachineId(machine.id);
     setMachineName(machine.name);
     setMachineSshCommand(machine.sshCommand);
@@ -4869,6 +4871,7 @@ function MachinesPage({
     setMachinePassword("");
   };
   const clearForm = () => {
+    setCreatingMachine(true);
     setSelectedMachineId("");
     setMachineName("");
     setMachineSshCommand("");
@@ -4878,6 +4881,11 @@ function MachinesPage({
     setMachinePrivateKey("");
     setMachinePassword("");
   };
+  useEffect(() => {
+    if (!creatingMachine && !selectedMachineId && machines.length) {
+      loadMachine(machines[0]);
+    }
+  }, [creatingMachine, machines, selectedMachineId]);
   const copySsh = async (machine: MachineConfig) => {
     try {
       await navigator.clipboard.writeText(machine.sshCommand || `ssh ${machine.user}@${machine.host}`);
@@ -4903,7 +4911,7 @@ function MachinesPage({
   };
   return (
     <>
-      <section className="concept-hero">
+      <section className="concept-hero machines-hero">
         <div>
           <span className="status-pill waiting"><Server size={14} />Machines</span>
           <h1>机器节点管理</h1>
@@ -5036,7 +5044,7 @@ function MachinesPage({
         <section className="machine-detail-panel">
           <div className="panel-head machine-detail-head">
             <div className="machine-detail-title">
-              <strong>Machine Detail</strong>
+              <strong>{selectedMachine ? selectedMachine.name : "Create Machine"}</strong>
               <span>{selectedMachine?.id || "new machine"}</span>
             </div>
             {selectedMachine && (
@@ -5048,6 +5056,10 @@ function MachinesPage({
                 <button type="button" className="machine-action-btn" onClick={() => copySsh(selectedMachine)}>
                   <Copy size={14} />Copy SSH
                 </button>
+                <label className="machine-inline-toggle">
+                  <input type="checkbox" checked={duplicateReuseSecret} onChange={(event) => setDuplicateReuseSecret(event.target.checked)} />
+                  <span>Reuse secret</span>
+                </label>
                 <button type="button" className="machine-action-btn" onClick={() => duplicateMachine(selectedMachine)} disabled={duplicatePending}>
                   {duplicatePending ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
                   Duplicate
@@ -5059,23 +5071,31 @@ function MachinesPage({
             )}
           </div>
           {selectedMachine ? (
-            <KeyValues data={{
-              id: selectedMachine.id,
-              host: selectedMachine.host,
-              port: selectedMachine.port,
-              user: selectedMachine.user,
-              auth: selectedMachine.authType,
-              secret: selectedMachine.privateKeyPresent || selectedMachine.passwordPresent ? "saved" : "missing",
-              status: selectedMachine.status,
-              updated: selectedMachine.updatedAt || "",
-            }} />
-          ) : <Empty text="选择机器或创建新机器" />}
+            <div className="machine-summary-strip">
+              <div>
+                <span>Host</span>
+                <strong>{selectedMachine.host}:{selectedMachine.port}</strong>
+              </div>
+              <div>
+                <span>User</span>
+                <strong>{selectedMachine.user}</strong>
+              </div>
+              <div>
+                <span>Auth</span>
+                <strong>{selectedMachine.authType === "password" ? "Password" : "Private Key"}</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <strong>{selectedMachine.status || "active"}</strong>
+              </div>
+              <div>
+                <span>Secret</span>
+                <strong>{selectedMachine.privateKeyPresent || selectedMachine.passwordPresent ? "Saved" : "Missing"}</strong>
+              </div>
+            </div>
+          ) : <Empty text="填写下面字段创建新机器" />}
           {testResult && <MachineTestResult result={testResult} />}
           <form className="machine-editor" onSubmit={onSaveMachine}>
-            <label className="machine-secret-reuse">
-              <input type="checkbox" checked={duplicateReuseSecret} onChange={(event) => setDuplicateReuseSecret(event.target.checked)} />
-              <span>Duplicate action reuses saved secret on the server; secret will not be shown in the page.</span>
-            </label>
             <label>
               <span>Name</span>
               <input value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="Runtime target machine" disabled={saveMachinePending} />
