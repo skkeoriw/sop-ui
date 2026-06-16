@@ -119,6 +119,7 @@ type RuntimeManagementFormDefaults = {
   createSshCommand: string;
   createPrivateKey: string;
   createEnvText: string;
+  deleteTargetRuntimeId: string;
   deleteRuntimeId: string;
   deleteSshCommand: string;
   deletePrivateKey: string;
@@ -140,11 +141,41 @@ function machineRuntimeId(machine: MachineConfig | undefined) {
   return `runtime-${machine.host.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")}`;
 }
 
+function runtimeHost(runtime: Runtime | undefined) {
+  return runtime?.clientIp || runtime?.machine || runtime?.metadata?.client_ip || "";
+}
+
+function runtimeChannelUrl(runtime: Runtime | undefined) {
+  return runtime?.channelUrl || runtime?.endpoint || "";
+}
+
+function runtimeSpiBaseUrl(runtime: Runtime | undefined) {
+  return runtime?.spiBaseUrl || (runtime?.endpoint ? `${runtime.endpoint}/api/sop` : "");
+}
+
+function isRuntimeDeleteCandidate(target: Runtime, executor: Runtime | undefined) {
+  const metadataType = target.metadata?.type;
+  if (target.manual) return false;
+  if (metadataType && metadataType !== "sop-runtime") return false;
+  if (target.status !== "active" || target.localStatus !== "ok") return false;
+  if (!executor) return true;
+  if (target.id === executor.id) return false;
+  if (normalizeEndpoint(target.endpoint) && normalizeEndpoint(target.endpoint) === normalizeEndpoint(executor.endpoint)) return false;
+  return true;
+}
+
+function machineMatchesRuntime(machine: MachineConfig, target: Runtime | undefined) {
+  const host = runtimeHost(target);
+  if (!host) return false;
+  return machine.host === host || machineRuntimeId(machine) === target?.id;
+}
+
 function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
   const defaults = {
     createSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
     createPrivateKey: "",
     createEnvText: "",
+    deleteTargetRuntimeId: "",
     deleteRuntimeId: DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID,
     deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
     deletePrivateKey: "",
@@ -164,6 +195,7 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
       createSshCommand: stringFromStorage(stored.createSshCommand, defaults.createSshCommand),
       createPrivateKey: stringFromStorage(stored.createPrivateKey, defaults.createPrivateKey),
       createEnvText: stringFromStorage(stored.createEnvText, defaults.createEnvText),
+      deleteTargetRuntimeId: stringFromStorage(stored.deleteTargetRuntimeId, defaults.deleteTargetRuntimeId),
       deleteRuntimeId: stringFromStorage(stored.deleteRuntimeId, defaults.deleteRuntimeId),
       deleteSshCommand: stringFromStorage(stored.deleteSshCommand, defaults.deleteSshCommand),
       deletePrivateKey: stringFromStorage(stored.deletePrivateKey, defaults.deletePrivateKey),
@@ -794,11 +826,13 @@ export default function App() {
   const [runtimeCreateEnvText, setRuntimeCreateEnvText] = useState(runtimeManagementDefaults.createEnvText);
   const [runtimeCreateConfigOverrides, setRuntimeCreateConfigOverrides] = useState<Record<string, string>>({});
   const [runtimeCreateMachineId, setRuntimeCreateMachineId] = useState("");
+  const [runtimeDeleteTargetRuntimeId, setRuntimeDeleteTargetRuntimeId] = useState(runtimeManagementDefaults.deleteTargetRuntimeId);
   const [runtimeDeleteId, setRuntimeDeleteId] = useState(runtimeManagementDefaults.deleteRuntimeId);
   const [runtimeDeleteSshCommand, setRuntimeDeleteSshCommand] = useState(runtimeManagementDefaults.deleteSshCommand);
   const [runtimeDeletePrivateKey, setRuntimeDeletePrivateKey] = useState(runtimeManagementDefaults.deletePrivateKey);
   const [runtimeDeleteMachineId, setRuntimeDeleteMachineId] = useState("");
   const [runtimeDeleteForce, setRuntimeDeleteForce] = useState(runtimeManagementDefaults.deleteForce);
+  const [runtimeDeleteConfirmed, setRuntimeDeleteConfirmed] = useState(false);
   const [instanceCreateId, setInstanceCreateId] = useState(runtimeManagementDefaults.instanceId);
   const [instanceCreateRepo, setInstanceCreateRepo] = useState(runtimeManagementDefaults.instanceRepo);
   const [instanceCreateSopType, setInstanceCreateSopType] = useState(runtimeManagementDefaults.instanceSopType);
@@ -953,6 +987,7 @@ export default function App() {
     createSshCommand: runtimeCreateSshCommand,
     createPrivateKey: runtimeCreatePrivateKey,
     createEnvText: runtimeCreateEnvText,
+    deleteTargetRuntimeId: runtimeDeleteTargetRuntimeId,
     deleteRuntimeId: runtimeDeleteId,
     deleteSshCommand: runtimeDeleteSshCommand,
     deletePrivateKey: runtimeDeletePrivateKey,
@@ -975,6 +1010,7 @@ export default function App() {
       createSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
       createPrivateKey: "",
       createEnvText: "",
+      deleteTargetRuntimeId: "",
       deleteRuntimeId: DEFAULT_RUNTIME_MANAGEMENT_RUNTIME_ID,
       deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
       deletePrivateKey: "",
@@ -990,10 +1026,12 @@ export default function App() {
     setRuntimeCreateSshCommand(cleanDefaults.createSshCommand);
     setRuntimeCreatePrivateKey(cleanDefaults.createPrivateKey);
     setRuntimeCreateEnvText(cleanDefaults.createEnvText);
+    setRuntimeDeleteTargetRuntimeId(cleanDefaults.deleteTargetRuntimeId);
     setRuntimeDeleteId(cleanDefaults.deleteRuntimeId);
     setRuntimeDeleteSshCommand(cleanDefaults.deleteSshCommand);
     setRuntimeDeletePrivateKey(cleanDefaults.deletePrivateKey);
     setRuntimeDeleteForce(cleanDefaults.deleteForce);
+    setRuntimeDeleteConfirmed(false);
     setInstanceCreateId(cleanDefaults.instanceId);
     setInstanceCreateRepo(cleanDefaults.instanceRepo);
     setInstanceCreateSopType(cleanDefaults.instanceSopType);
@@ -1008,6 +1046,7 @@ export default function App() {
       createSshCommand: runtimeCreateSshCommand,
       createPrivateKey: runtimeCreatePrivateKey,
       createEnvText: runtimeCreateEnvText,
+      deleteTargetRuntimeId: runtimeDeleteTargetRuntimeId,
       deleteRuntimeId: runtimeDeleteId,
       deleteSshCommand: runtimeDeleteSshCommand,
       deletePrivateKey: runtimeDeletePrivateKey,
@@ -1023,6 +1062,7 @@ export default function App() {
     runtimeCreateSshCommand,
     runtimeCreatePrivateKey,
     runtimeCreateEnvText,
+    runtimeDeleteTargetRuntimeId,
     runtimeDeleteId,
     runtimeDeleteSshCommand,
     runtimeDeletePrivateKey,
@@ -1081,6 +1121,37 @@ export default function App() {
     enabled: viewMode === "settings" || viewMode === "machines" || triggerOpen,
     retry: 1,
   });
+  const runtimeDeleteCandidates = useMemo(() => {
+    return runtimes.filter((item) => isRuntimeDeleteCandidate(item, runtime));
+  }, [runtime, runtimes]);
+  const selectedDeleteRuntime = useMemo(() => {
+    return runtimeDeleteCandidates.find((item) => item.id === runtimeDeleteTargetRuntimeId);
+  }, [runtimeDeleteCandidates, runtimeDeleteTargetRuntimeId]);
+  const selectedDeleteRuntimeMachine = useMemo(() => {
+    if (!selectedDeleteRuntime) return undefined;
+    return (machinesQuery.data?.machines || []).find((machine) => machineMatchesRuntime(machine, selectedDeleteRuntime));
+  }, [machinesQuery.data, selectedDeleteRuntime]);
+
+  useEffect(() => {
+    if (!runtimeDeleteTargetRuntimeId) return;
+    if (!runtimeDeleteCandidates.some((item) => item.id === runtimeDeleteTargetRuntimeId)) {
+      setRuntimeDeleteTargetRuntimeId("");
+      setRuntimeDeleteId("");
+      setRuntimeDeleteMachineId("");
+      setRuntimeDeleteConfirmed(false);
+    }
+  }, [runtimeDeleteCandidates, runtimeDeleteTargetRuntimeId]);
+
+  useEffect(() => {
+    if (!selectedDeleteRuntime) return;
+    setRuntimeDeleteId(selectedDeleteRuntime.id);
+    if (selectedDeleteRuntimeMachine) {
+      setRuntimeDeleteMachineId(selectedDeleteRuntimeMachine.id);
+      if (selectedDeleteRuntimeMachine.sshCommand) setRuntimeDeleteSshCommand(selectedDeleteRuntimeMachine.sshCommand);
+    } else {
+      setRuntimeDeleteMachineId("");
+    }
+  }, [selectedDeleteRuntime, selectedDeleteRuntimeMachine]);
   const runsQuery = useQuery({
     queryKey: [...queryKeys.runs(mode, runtime, instance?.instanceId || ""), executionSearch.trim(), executionFilter, executionPage, executionPageSize],
     queryFn: async () => {
@@ -1317,15 +1388,29 @@ export default function App() {
   const deleteRuntimeMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
-      const sshPayload = await resolveMachineSshPayload(runtimeDeleteMachineId, runtimeDeleteSshCommand, runtimeDeletePrivateKey);
-      const selectedMachine = (machinesQuery.data?.machines || []).find((machine) => machine.id === runtimeDeleteMachineId);
-      const resolvedRuntimeId = runtimeDeleteId.trim() || machineRuntimeId(selectedMachine);
+      if (!runtimeDeleteConfirmed) throw new Error("请先确认要删除的目标 Runtime");
+      const selectedMachine = (machinesQuery.data?.machines || []).find((machine) => machine.id === runtimeDeleteMachineId) || selectedDeleteRuntimeMachine;
+      const resolvedRuntimeId = runtimeDeleteId.trim() || selectedDeleteRuntime?.id || machineRuntimeId(selectedMachine);
+      const targetHost = runtimeHost(selectedDeleteRuntime) || selectedMachine?.host || "";
+      const channelUrl = runtimeChannelUrl(selectedDeleteRuntime);
+      const spiBaseUrl = runtimeSpiBaseUrl(selectedDeleteRuntime);
+      if (!resolvedRuntimeId) throw new Error("请选择要删除的 Runtime");
+      if (resolvedRuntimeId === runtime?.id) throw new Error("不能从当前执行 Runtime 删除自身");
+      if (!targetHost) throw new Error("目标 Runtime 缺少 target_host，无法生成 delete-runtime 入参");
+      if (!runtimeDeleteMachineId && !runtimeDeleteSshCommand.trim()) {
+        throw new Error("缺少该目标 Runtime 的 SSH 凭据：请先在 Machines 中保存该机器，或在高级 SSH 覆盖里填写 ssh_command");
+      }
+      const sshPayload = await resolveMachineSshPayload(runtimeDeleteMachineId || selectedMachine?.id || "", runtimeDeleteSshCommand, runtimeDeletePrivateKey);
       const globalPayload = await resolveGlobalWorkflowPayload();
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-runtime",
           ...globalPayload,
           runtime_id: resolvedRuntimeId,
+          target_host: targetHost,
+          channel_name: selectedDeleteRuntime?.channelName || resolvedRuntimeId,
+          channel_url: channelUrl,
+          spi_base_url: spiBaseUrl,
           ...sshPayload,
           force: runtimeDeleteForce,
         }),
@@ -2221,6 +2306,8 @@ export default function App() {
           createMachineId={runtimeCreateMachineId}
           setCreateMachineId={setRuntimeCreateMachineId}
           deleteRuntimeId={runtimeDeleteId}
+          deleteTargetRuntimeId={runtimeDeleteTargetRuntimeId}
+          setDeleteTargetRuntimeId={setRuntimeDeleteTargetRuntimeId}
           setDeleteRuntimeId={setRuntimeDeleteId}
           deleteSshCommand={runtimeDeleteSshCommand}
           setDeleteSshCommand={setRuntimeDeleteSshCommand}
@@ -2230,6 +2317,10 @@ export default function App() {
           setDeleteMachineId={setRuntimeDeleteMachineId}
           deleteForce={runtimeDeleteForce}
           setDeleteForce={setRuntimeDeleteForce}
+          deleteConfirmed={runtimeDeleteConfirmed}
+          setDeleteConfirmed={setRuntimeDeleteConfirmed}
+          deleteCandidates={runtimeDeleteCandidates}
+          deleteCandidatesLoading={runtimesQuery.isLoading}
           machines={machinesQuery.data?.machines || []}
           machinesLoading={machinesQuery.isLoading}
           instanceCreateId={instanceCreateId}
@@ -5721,6 +5812,8 @@ function RuntimeManagementStartDrawer({
   createMachineId,
   setCreateMachineId,
   deleteRuntimeId,
+  deleteTargetRuntimeId,
+  setDeleteTargetRuntimeId,
   setDeleteRuntimeId,
   deleteSshCommand,
   setDeleteSshCommand,
@@ -5730,6 +5823,10 @@ function RuntimeManagementStartDrawer({
   setDeleteMachineId,
   deleteForce,
   setDeleteForce,
+  deleteConfirmed,
+  setDeleteConfirmed,
+  deleteCandidates,
+  deleteCandidatesLoading,
   machines,
   machinesLoading,
   instanceCreateId,
@@ -5774,6 +5871,8 @@ function RuntimeManagementStartDrawer({
   createMachineId: string;
   setCreateMachineId: (value: string) => void;
   deleteRuntimeId: string;
+  deleteTargetRuntimeId: string;
+  setDeleteTargetRuntimeId: (value: string) => void;
   setDeleteRuntimeId: (value: string) => void;
   deleteSshCommand: string;
   setDeleteSshCommand: (value: string) => void;
@@ -5783,6 +5882,10 @@ function RuntimeManagementStartDrawer({
   setDeleteMachineId: (value: string) => void;
   deleteForce: boolean;
   setDeleteForce: (value: boolean) => void;
+  deleteConfirmed: boolean;
+  setDeleteConfirmed: (value: boolean) => void;
+  deleteCandidates: Runtime[];
+  deleteCandidatesLoading: boolean;
   machines: MachineConfig[];
   machinesLoading: boolean;
   instanceCreateId: string;
@@ -5813,7 +5916,6 @@ function RuntimeManagementStartDrawer({
 }) {
   const pending = createPending || deletePending;
   const createReady = true;
-  const deleteReady = true;
   const isCreateRuntime = action === "create-runtime";
   const isDeleteRuntime = action === "delete-runtime";
   const isCreateInstance = action === "create-instance";
@@ -5822,7 +5924,11 @@ function RuntimeManagementStartDrawer({
   const submitLabel = isCreateRuntime ? "Create Runtime" : isDeleteRuntime ? "Delete Runtime" : isCreateInstance ? "Create Instance" : "Delete Instance";
   const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
   const selectedDeleteMachine = machines.find((machine) => machine.id === deleteMachineId);
+  const selectedDeleteRuntime = deleteCandidates.find((item) => item.id === deleteTargetRuntimeId);
   const inferredDeleteRuntimeId = machineRuntimeId(selectedDeleteMachine);
+  const targetHost = runtimeHost(selectedDeleteRuntime) || selectedDeleteMachine?.host || "";
+  const deleteHasCredential = Boolean(selectedDeleteMachine?.privateKeyPresent || selectedDeleteMachine?.passwordPresent || deleteSshCommand.trim());
+  const deleteReady = isDeleteRuntime ? Boolean(selectedDeleteRuntime && deleteConfirmed && deleteHasCredential) : true;
   const operationBoundaryTitle = isCreateRuntime || isDeleteRuntime ? "Target Machine Boundary" : "Current Runtime Boundary";
   const operationBoundaryText = isCreateRuntime || isDeleteRuntime
     ? "Runtime 创建/删除需要目标机器；优先选择 Machine Node，Control Plane 会注入保存的 SSH 凭据。"
@@ -5945,7 +6051,69 @@ function RuntimeManagementStartDrawer({
             </div>
           ) : isDeleteRuntime ? (
             <div className="runtime-drawer-form">
-              {renderMachineSelect(deleteMachineId, setDeleteMachineId, setDeleteSshCommand)}
+              <section className="runtime-delete-boundary">
+                <div className="runtime-delete-boundary-card executor">
+                  <strong>Executor Runtime</strong>
+                  <span>{runtime.id}</span>
+                  <KeyValues data={{
+                    channel_url: runtime.channelUrl || runtime.endpoint || "-",
+                    client_ip: runtime.clientIp || runtime.machine || "-",
+                  }} />
+                </div>
+                <div className="runtime-delete-boundary-card target">
+                  <strong>Delete Target</strong>
+                  <span>{selectedDeleteRuntime?.id || "Select a runtime below"}</span>
+                  <KeyValues data={{
+                    channel_url: selectedDeleteRuntime ? runtimeChannelUrl(selectedDeleteRuntime) : "-",
+                    client_ip: targetHost || "-",
+                  }} />
+                </div>
+              </section>
+              <label>
+                <span>Runtime Target</span>
+                <select
+                  value={deleteTargetRuntimeId}
+                  onChange={(event) => {
+                    const nextRuntimeId = event.target.value;
+                    setDeleteTargetRuntimeId(nextRuntimeId);
+                    const target = deleteCandidates.find((item) => item.id === nextRuntimeId);
+                    setDeleteRuntimeId(target?.id || "");
+                    setDeleteConfirmed(false);
+                    const matchedMachine = target ? machines.find((machine) => machineMatchesRuntime(machine, target)) : undefined;
+                    setDeleteMachineId(matchedMachine?.id || "");
+                    if (matchedMachine?.sshCommand) setDeleteSshCommand(matchedMachine.sshCommand);
+                  }}
+                  disabled={pending || deleteCandidatesLoading}
+                >
+                  <option value="">{deleteCandidatesLoading ? "Loading active runtimes..." : "Select active runtime to delete"}</option>
+                  {deleteCandidates.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>
+                      {candidate.id} · {candidate.clientIp || candidate.machine || "no host"} · {candidate.localStatus}
+                    </option>
+                  ))}
+                </select>
+                <span className="field-hint">列表来自 Runtime discovery，只展示 active/local ok 的 SOP Runtime，并排除当前执行 Runtime。</span>
+              </label>
+              {!deleteCandidates.length && (
+                <div className="inline-warning">当前没有可删除的其他 active Runtime。需要先确认 runtime discovery 是否正常，或目标是否已经离线。</div>
+              )}
+              {selectedDeleteRuntime ? (
+                <section className="selected-machine-summary delete-runtime-summary">
+                  <div>
+                    <strong>{selectedDeleteRuntime.displayName || selectedDeleteRuntime.id}</strong>
+                    <span>{runtimeChannelUrl(selectedDeleteRuntime)}</span>
+                  </div>
+                  <KeyValues data={{
+                    runtime_id: selectedDeleteRuntime.id,
+                    target_host: targetHost || "-",
+                    channel_name: selectedDeleteRuntime.channelName || "-",
+                    spi_base_url: runtimeSpiBaseUrl(selectedDeleteRuntime) || "-",
+                    machine_credentials: deleteHasCredential ? "resolved" : "missing",
+                  }} />
+                </section>
+              ) : (
+                <div className="inline-warning">请先选择要删除的 Runtime。当前执行 Runtime 不会出现在目标列表中。</div>
+              )}
               {selectedDeleteMachine ? (
                 <section className="selected-machine-summary">
                   <div>
@@ -5961,7 +6129,7 @@ function RuntimeManagementStartDrawer({
                   }} />
                 </section>
               ) : (
-                <div className="inline-warning">未选择 Machine 时会使用后端默认删除目标；需要指定 Runtime ID 或临时 SSH 时打开下面的 Target Override。</div>
+                <div className="inline-warning">没有匹配到 Machine Node。需要在 Machines 中保存该目标机器，或在 Manual SSH Override 填写临时 SSH。</div>
               )}
               <details className="advanced-runtime-overrides">
                 <summary>Target Override</summary>
@@ -5987,6 +6155,13 @@ function RuntimeManagementStartDrawer({
                 <input type="checkbox" checked={deleteForce} onChange={(event) => setDeleteForce(event.target.checked)} disabled={pending} />
                 <span>Force when running executions exist</span>
               </label>
+              <label className="inline-check drawer-inline-check delete-confirm-check">
+                <input type="checkbox" checked={deleteConfirmed} onChange={(event) => setDeleteConfirmed(event.target.checked)} disabled={pending || !selectedDeleteRuntime || !deleteHasCredential} />
+                <span>Confirm deleting {selectedDeleteRuntime?.id || "selected runtime"} from {runtime.id}</span>
+              </label>
+              {selectedDeleteRuntime && !deleteHasCredential && (
+                <div className="inline-error">缺少该目标 Runtime 的 SSH 凭据：请先选择/保存 Machine Node，或填写 Manual SSH Override。</div>
+              )}
             </div>
           ) : isCreateInstance ? (
             <div className="runtime-drawer-form">

@@ -3444,6 +3444,64 @@ pre {
   color: #166534;
 }
 
+.runtime-delete-boundary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.runtime-delete-boundary-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.runtime-delete-boundary-card.target {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.runtime-delete-boundary-card strong {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.runtime-delete-boundary-card > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.delete-runtime-summary {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.delete-runtime-summary strong {
+  color: #7f1d1d;
+}
+
+.delete-runtime-summary span {
+  color: #991b1b;
+  overflow-wrap: anywhere;
+}
+
+.delete-confirm-check {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+@media (max-width: 720px) {
+  .runtime-delete-boundary {
+    grid-template-columns: 1fr;
+  }
+}
+
 .inline-warning {
   padding: 10px 12px;
   border: 1px solid #facc15;
