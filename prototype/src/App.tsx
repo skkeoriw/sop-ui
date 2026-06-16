@@ -5051,10 +5051,10 @@ function MachinesPage({
               <div className="machine-detail-actions">
                 <button type="button" className="machine-action-btn primary-action" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
                   {testPending ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}
-                  Test
+                  <span className="machine-action-label">Test</span>
                 </button>
                 <button type="button" className="machine-action-btn" onClick={() => copySsh(selectedMachine)}>
-                  <Copy size={14} />Copy SSH
+                  <Copy size={14} /><span className="machine-action-label">Copy SSH</span>
                 </button>
                 <label className="machine-inline-toggle">
                   <input type="checkbox" checked={duplicateReuseSecret} onChange={(event) => setDuplicateReuseSecret(event.target.checked)} />
@@ -5062,10 +5062,10 @@ function MachinesPage({
                 </label>
                 <button type="button" className="machine-action-btn" onClick={() => duplicateMachine(selectedMachine)} disabled={duplicatePending}>
                   {duplicatePending ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
-                  Duplicate
+                  <span className="machine-action-label">Duplicate</span>
                 </button>
                 <button type="button" className="machine-action-btn danger" onClick={() => onDeleteMachine(selectedMachine.id)} disabled={deletePending}>
-                  <Trash2 size={14} />Delete
+                  <Trash2 size={14} /><span className="machine-action-label">Delete</span>
                 </button>
               </div>
             )}

@@ -5946,10 +5946,11 @@ pre {
 }
 
 .machine-row-actions {
-  display: grid;
-  grid-template-columns: repeat(2, 28px);
+  display: flex;
+  grid-template-columns: initial;
   justify-content: end;
   padding: 0;
+  gap: 5px;
 }
 
 .machine-row-actions button {
@@ -6024,6 +6025,10 @@ pre {
   font-size: 12px;
   font-weight: 750;
   white-space: nowrap;
+}
+
+.machine-action-label {
+  display: inline;
 }
 
 .machine-action-btn:hover {
@@ -6303,11 +6308,11 @@ pre {
   }
 
   .machine-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .machine-row-actions {
-    grid-template-columns: repeat(5, 28px);
+    justify-content: flex-start;
   }
 
   .panel-head.machine-detail-head {
@@ -6341,17 +6346,27 @@ pre {
 
 @media (max-width: 560px) {
   .panel-head .machine-detail-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    overflow-x: visible;
+    display: flex;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-right: 0;
   }
 
   .machine-action-btn,
   .machine-inline-toggle {
-    width: 100%;
+    width: auto;
   }
 
   .machine-inline-toggle {
     justify-content: center;
+  }
+
+  .machine-action-label {
+    display: none;
+  }
+
+  .machine-row-actions {
+    justify-content: flex-start;
   }
 }

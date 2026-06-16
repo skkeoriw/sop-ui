@@ -556,6 +556,59 @@ function sortRuntimeHosts(items: Runtime[]) {
   });
 }
 
+async function listRuntimeHostsFromTunnelAdmin(page: number, pageSize: number, options?: ListQueryOptions): Promise<RuntimeList> {
+  const fallbackLimit = Math.max(pageSize, 200);
+  const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=${fallbackLimit}`);
+  const search = (options?.q || "").trim().toLowerCase();
+  const statusFilter = options?.status && options.status !== "all" ? options.status : "active";
+  const filtered = (data.tunnels || [])
+    .flatMap((tunnel): Runtime[] => {
+      const metadata = parseMetadata(tunnel.metadata);
+      if (metadata?.type !== "sop-runtime") return [];
+      if (statusFilter && tunnel.status !== statusFilter) return [];
+      const runtime = mapRuntime({
+        id: metadata.runtime_id || metadata.channel_name || tunnel.subdomain,
+        name: metadata.channel_name || tunnel.subdomain,
+        endpoint: metadata.channel_url || metadata.endpoint_url,
+        status: tunnel.status,
+        local_status: tunnel.local_status,
+        display_name: metadata.display_name,
+        client_ip: tunnel.client_ip || metadata.client_ip,
+        local_port: tunnel.local_port || metadata.local_port,
+        channel_name: metadata.channel_name,
+        spi_base_url: metadata.spi_base_url,
+        supported_sop_types: metadata.supported_sop_types,
+        metadata,
+      });
+      return runtime ? [runtime] : [];
+    })
+    .filter((runtime) => {
+      if (!search) return true;
+      return [
+        runtime.id,
+        runtime.name,
+        runtime.displayName,
+        runtime.endpoint,
+        runtime.clientIp,
+        runtime.localStatus,
+        runtime.status,
+        runtime.metadata?.hermes_webhook_url,
+        runtime.metadata?.webhook_public_host,
+      ].filter(Boolean).join(" ").toLowerCase().includes(search);
+    });
+  const sorted = sortRuntimeHosts(filtered);
+  const offset = (page - 1) * pageSize;
+  const runtimes = sorted.slice(offset, offset + pageSize);
+  return {
+    runtimes,
+    total: sorted.length,
+    page,
+    pageSize,
+    hasMore: offset + runtimes.length < sorted.length,
+    source: "tunnel-admin-fallback",
+  };
+}
+
 async function listRuntimeHosts(options?: ListQueryOptions): Promise<RuntimeList> {
   const page = options?.page || 1;
   const pageSize = options?.pageSize || 200;
@@ -581,6 +634,9 @@ async function listRuntimeHosts(options?: ListQueryOptions): Promise<RuntimeList
       const runtime = mapRuntime(item);
       return runtime ? [runtime] : [];
     }));
+    if (runtimes.length === 0) {
+      return listRuntimeHostsFromTunnelAdmin(page, pageSize, options);
+    }
     return {
       runtimes,
       total: Number(data.total ?? runtimes.length),
@@ -590,56 +646,7 @@ async function listRuntimeHosts(options?: ListQueryOptions): Promise<RuntimeList
       source: data.source || "control-plane",
     };
   } catch {
-    const fallbackLimit = Math.max(pageSize, 200);
-    const data = await requestJson<{ tunnels?: Array<Record<string, unknown>> }>(`${TUNNEL_API}/admin/tunnels?limit=${fallbackLimit}`);
-    const search = (options?.q || "").trim().toLowerCase();
-    const statusFilter = options?.status && options.status !== "all" ? options.status : "active";
-    const filtered = (data.tunnels || [])
-      .flatMap((tunnel): Runtime[] => {
-        const metadata = parseMetadata(tunnel.metadata);
-        if (metadata?.type !== "sop-runtime") return [];
-        if (statusFilter && tunnel.status !== statusFilter) return [];
-        const runtime = mapRuntime({
-          id: metadata.runtime_id || metadata.channel_name || tunnel.subdomain,
-          name: metadata.channel_name || tunnel.subdomain,
-          endpoint: metadata.channel_url || metadata.endpoint_url,
-          status: tunnel.status,
-          local_status: tunnel.local_status,
-          display_name: metadata.display_name,
-          client_ip: tunnel.client_ip || metadata.client_ip,
-          local_port: tunnel.local_port || metadata.local_port,
-          channel_name: metadata.channel_name,
-          spi_base_url: metadata.spi_base_url,
-          supported_sop_types: metadata.supported_sop_types,
-          metadata,
-        });
-        return runtime ? [runtime] : [];
-      })
-      .filter((runtime) => {
-        if (!search) return true;
-        return [
-          runtime.id,
-          runtime.name,
-          runtime.displayName,
-          runtime.endpoint,
-          runtime.clientIp,
-          runtime.localStatus,
-          runtime.status,
-          runtime.metadata?.hermes_webhook_url,
-          runtime.metadata?.webhook_public_host,
-        ].filter(Boolean).join(" ").toLowerCase().includes(search);
-      });
-    const sorted = sortRuntimeHosts(filtered);
-    const offset = (page - 1) * pageSize;
-    const runtimes = sorted.slice(offset, offset + pageSize);
-    return {
-      runtimes,
-      total: sorted.length,
-      page,
-      pageSize,
-      hasMore: offset + runtimes.length < sorted.length,
-      source: "tunnel-admin-fallback",
-    };
+    return listRuntimeHostsFromTunnelAdmin(page, pageSize, options);
   }
 }
 
