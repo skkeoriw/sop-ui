@@ -2923,6 +2923,8 @@ function RuntimeOverview({
   const relationshipNode = relationshipNodes.find((node) => node.id === relationshipNodeId) || relationshipNodes[0];
   const relationshipProgress = runProgressFromNodes(relationshipRun, dag);
   const relationshipNodeStatus = relationshipNode ? relationshipRun?.nodes?.[relationshipNode.id] || "waiting" : "waiting";
+  const runtimeChannelUrl = runtime?.channelUrl || runtime?.endpoint || "";
+  const runtimeSpiUrl = runtime?.spiBaseUrl || (runtimeChannelUrl ? `${runtimeChannelUrl.replace(/\/+$/, "")}/api/sop` : "");
   const relationshipPath = [
     runtime?.displayName || runtime?.name || runtime?.id,
     relationshipInstance?.instanceId,
@@ -3066,24 +3068,29 @@ function RuntimeOverview({
 
   return (
     <section className="runtime-overview">
-      <div className="concept-hero runtime-hero">
-        <div>
-          <span className="status-pill running"><Server size={14} />Runtime Host Overview</span>
-          <h1>Runtime 承载执行能力，Instance 承载业务隔离。</h1>
-          <p>先确认机器、通道、SPI 和 Hermes 所在的运行环境，再进入某个 Instance 查看 Workflow Definition、Workflow Runs、Node Definitions 和 Artifacts。</p>
+      <section className="runtime-compact-header">
+        <div className="runtime-compact-title">
+          <span className="status-pill running"><Server size={14} />Runtime Host</span>
+          <div>
+            <h1>{runtime?.displayName || runtime?.name || runtime?.id || "No runtime selected"}</h1>
+            <code>{runtimeChannelUrl || "No endpoint"}</code>
+          </div>
         </div>
-        <div className="context-card">
-          <strong>{runtime?.displayName || runtime?.name || "No runtime"}</strong>
-          <span>{runtime?.endpoint || "未选择 endpoint"}</span>
-          <code>{mode} · {runtime?.localStatus || runtime?.status || "unknown"}</code>
+        <div className="runtime-compact-meta">
+          <span className={`status-pill ${runtimeStatus}`}>{runtime?.localStatus || runtime?.status || "unknown"}</span>
+          <span className="runtime-meta-chip">{mode}</span>
+          <span className="runtime-meta-chip">SPI {runtimeSpiUrl ? "configured" : "missing"}</span>
+          <button type="button" className="ghost-btn compact" onClick={handleRunProbe} disabled={!runtime || probeRunning}>
+            {probeRunning ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}Run Checks
+          </button>
         </div>
-      </div>
+      </section>
 
-      <section className="console-metrics">
-        <Metric label="Runtimes" value={runtimes.length} subtext="discovered channels" />
-        <Metric label="Instances" value={instanceTotal} subtext={`${instances.length} loaded · ${readyCount} ready`} />
-        <Metric label="Running" value={runningCount} subtext={`${failedCount} failed workspace`} />
-        <Metric label="SPI" value={runtime?.localStatus || runtime?.status || "-"} subtext={runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`} />
+      <section className="runtime-status-strip" aria-label="Runtime status summary">
+        <RuntimeStatusItem label="Runtimes" value={runtimes.length} detail="discovered" />
+        <RuntimeStatusItem label="Instances" value={instanceTotal} detail={`${instances.length} loaded · ${readyCount} ready`} />
+        <RuntimeStatusItem label="Running" value={runningCount} detail={`${failedCount} failed`} tone={failedCount ? "warn" : "default"} />
+        <RuntimeStatusItem label="SPI" value={runtime?.localStatus || runtime?.status || "-"} detail={runtimeSpiUrl || "-"} tone={runtime?.localStatus === "ok" ? "ok" : "default"} />
       </section>
 
       <div className="runtime-tabs segmented">
@@ -3101,10 +3108,7 @@ function RuntimeOverview({
             <span>{relationshipPath || "选择 Runtime 后查看 Host / Instance / Workflow Definition / Latest Workflow Run 摘要"}</span>
           </div>
           <div className="runtime-relationship-actions">
-            <span>{instances.length}/{instanceTotal} instances</span>
-            <span>{workflowDefinitionCount} workflow definitions</span>
-            <span>{latestExecutionCount} latest workflow runs</span>
-            <span>{instanceSource || "runtime-spi"}</span>
+            <span>{instances.length}/{instanceTotal} instances · {workflowDefinitionCount} workflows · {latestExecutionCount} latest runs · {instanceSource || "runtime-spi"}</span>
           </div>
         </div>
         <div className="relationship-columns compact">
@@ -3200,17 +3204,12 @@ function RuntimeOverview({
                   <strong>{relationshipInstance.title || relationshipInstance.instanceId}</strong>
                   <code>{relationshipInstance.instanceId}</code>
                 </div>
-                <KeyValues data={{
-                  runtime: runtime?.id || "-",
-                  instance: relationshipInstance?.instanceId || "-",
-                  workflow_definition: relationshipWorkflow?.workflowName || "-",
-                  definition_path: relationshipWorkflow?.definitionPath || "-",
-                  run: relationshipRun?.pipelineId || "-",
-                  run_status: relationshipRun ? statusLabel(relationshipRun.status) : "-",
-                  progress: relationshipRun ? `${runProgressFromNodes(relationshipRun).percent}%` : "-",
-                  repo: relationshipInstance.repo || "-",
-                  artifacts: relationshipInstance.artifactCount ?? "-",
-                }} />
+                <div className="relationship-inspector-summary">
+                  <div><span>Workflow</span><strong>{relationshipWorkflow?.workflowName || relationshipInstance.sopType || "-"}</strong></div>
+                  <div><span>Run</span><strong>{relationshipRun?.pipelineId ? shortId(relationshipRun.pipelineId) : "No run"}</strong></div>
+                  <div><span>Repo</span><strong>{relationshipInstance.repo || "-"}</strong></div>
+                  <div><span>Artifacts</span><strong>{relationshipInstance.artifactCount ?? 0}</strong></div>
+                </div>
                 <div className="relationship-detail-actions">
                   <button type="button" onClick={() => relationshipInstance && onOpenInstance(relationshipInstance.instanceId)}>Open Instance</button>
                   <button
@@ -3227,6 +3226,20 @@ function RuntimeOverview({
                   <div className="dag-progress"><span style={{ width: `${relationshipProgress.percent}%` }} /></div>
                   <small>{relationshipProgress.done}/{relationshipProgress.total} nodes · {relationshipProgress.percent}%</small>
                 </div>
+                <details className="relationship-detail-more">
+                  <summary>More context</summary>
+                  <KeyValues data={{
+                    runtime: runtime?.id || "-",
+                    instance: relationshipInstance?.instanceId || "-",
+                    workflow_definition: relationshipWorkflow?.workflowName || "-",
+                    definition_path: relationshipWorkflow?.definitionPath || "-",
+                    run: relationshipRun?.pipelineId || "-",
+                    run_status: relationshipRun ? statusLabel(relationshipRun.status) : "-",
+                    progress: relationshipRun ? `${runProgressFromNodes(relationshipRun).percent}%` : "-",
+                    repo: relationshipInstance.repo || "-",
+                    artifacts: relationshipInstance.artifactCount ?? "-",
+                  }} />
+                </details>
               </>
             ) : (
               <Empty text="选择一个 Instance 查看边界摘要" />
@@ -3500,6 +3513,26 @@ function RuntimeProbeList({ results, running }: { results: RuntimeProbeResult[];
   );
 }
 
+function RuntimeStatusItem({
+  label,
+  value,
+  detail,
+  tone = "default",
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  tone?: "default" | "ok" | "warn";
+}) {
+  return (
+    <div className={`runtime-status-item ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
 function RuntimeHostDetailGroups({
   runtime,
   metadataRows,
@@ -3555,7 +3588,7 @@ function RuntimeHostDetailGroups({
   return (
     <div className="runtime-detail-groups">
       <RuntimeDetailGroup title="Identity" summary={runtime?.id || "runtime"} defaultOpen data={identity} />
-      <RuntimeDetailGroup title="Network / Channel" summary={channelUrl || "missing channel"} defaultOpen data={network} />
+      <RuntimeDetailGroup title="Network / Channel" summary={channelUrl || "missing channel"} data={network} />
       <RuntimeDetailGroup title="SOP SPI" summary={spiUrl || "missing spi"} data={spi} />
       <RuntimeDetailGroup title="Hermes" summary={hermes.hermes_webhook_url !== "-" ? "webhook configured" : "webhook metadata"} data={hermes} />
       <RuntimeDetailGroup title="Commands" summary={`${Object.keys(commandRows).length} command fields`} data={commandRows} />
