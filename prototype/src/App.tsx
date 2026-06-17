@@ -2119,10 +2119,10 @@ export default function App() {
             <Info size={16} />Architecture
           </button>
           <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => {
-            if (isRuntimeManagementInstance) setRuntimeManagementOpen(true);
+            if (viewMode === "runtime" || isRuntimeManagementInstance) setRuntimeManagementOpen(true);
             else setTriggerOpen(true);
           }}>
-            <Play size={16} />{isRuntimeManagementInstance ? "Host Operations" : "New Workflow Run"}
+            <Play size={16} />{viewMode === "runtime" || isRuntimeManagementInstance ? "Host Operations" : "New Workflow Run"}
           </button>
         </div>
       </header>
@@ -2240,6 +2240,8 @@ export default function App() {
           <InstanceOverview
             runtime={runtime}
             instance={instance}
+            provider={provider}
+            mode={mode}
             instances={instances}
             directoryMode={isInstanceDirectory}
             instanceTotal={instanceTotal}
@@ -3918,9 +3920,85 @@ function ManagementActionCard({
   );
 }
 
+function InstanceHealthTestButton({
+  provider,
+  runtime,
+  instance,
+  mode,
+  kind,
+}: {
+  provider: SopDataProvider;
+  runtime?: Runtime;
+  instance?: Instance;
+  mode: DataMode;
+  kind: "github" | "telegram";
+}) {
+  const nodeId = kind === "github" ? "test-instance-github" : "test-instance-telegram";
+  const [pipelineId, setPipelineId] = useState("");
+  const [error, setError] = useState("");
+  const label = kind === "github" ? "Test GitHub" : "Test Telegram";
+  const mutation = useMutation({
+    mutationFn: () => provider.triggerNodeTest(runtime!, "runtime-management", nodeId, {
+      confirmMutating: true,
+      requestOverrides: {
+        action: "create-instance",
+        management_action: "create-instance",
+        runtime_id: runtime?.id || runtime?.name || "",
+        channel_url: runtime?.endpoint || "",
+        instances: [{
+          instance_id: instance?.instanceId || "",
+          repo: instance?.repo || "",
+          workspace_kind: "execution-workspace",
+        }],
+      },
+    }),
+    onSuccess: (result) => {
+      setError("");
+      setPipelineId(result.pipelineId || "");
+      if (result.status !== "triggered") setError(result.reason || result.status);
+    },
+    onError: (err: unknown) => {
+      setPipelineId("");
+      setError(err instanceof Error ? err.message : String(err));
+    },
+  });
+  const resultQuery = useQuery({
+    queryKey: queryKeys.nodeTestResult(mode, runtime, "runtime-management", nodeId, pipelineId),
+    queryFn: () => provider.getNodeTestResult(runtime!, "runtime-management", nodeId, pipelineId),
+    enabled: Boolean(runtime && pipelineId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return !status || status === "running" ? 1500 : false;
+    },
+  });
+  const result = resultQuery.data;
+  const instanceReport = Array.isArray(result?.detail?.instances) ? result.detail.instances[0] as Record<string, unknown> : undefined;
+  const ok = result?.status === "done" || instanceReport?.ok === true || instanceReport?.sent === true;
+  const terminal = result?.status && result.status !== "running";
+  const disabled = !runtime || !instance || !instance.repo || mutation.isPending || result?.status === "running";
+  const reason = String(instanceReport?.reason || result?.reason || error || "");
+  const httpStatus = instanceReport?.http_status ? `HTTP ${instanceReport.http_status}` : "";
+
+  return (
+    <div className={`instance-health-test ${terminal ? (ok ? "ok" : "failed") : ""}`}>
+      <button type="button" className={kind === "github" ? "primary" : ""} disabled={disabled} onClick={() => mutation.mutate()}>
+        {mutation.isPending || result?.status === "running" ? <Loader2 size={14} className="spin" /> : kind === "github" ? <Github size={14} /> : <Send size={14} />}
+        {label}
+      </button>
+      <div>
+        <strong>{terminal ? (ok ? "passed" : "failed") : pipelineId ? "running" : "not tested"}</strong>
+        <span>{pipelineId ? shortId(pipelineId) : kind === "github" ? "repo read/write probe" : "sendMessage probe"}</span>
+        {(httpStatus || reason) && <small className={ok ? "" : "error-text"}>{[httpStatus, reason].filter(Boolean).join(" · ")}</small>}
+      </div>
+    </div>
+  );
+}
+
 function InstanceOverview({
   runtime,
   instance,
+  provider,
+  mode,
   instances,
   directoryMode,
   instanceTotal,
@@ -3936,6 +4014,8 @@ function InstanceOverview({
 }: {
   runtime: Runtime | undefined;
   instance: Instance | undefined;
+  provider: SopDataProvider;
+  mode: DataMode;
   instances: Instance[];
   directoryMode: boolean;
   instanceTotal: number;
@@ -4114,6 +4194,10 @@ function InstanceOverview({
             telegram: capabilityStatus("telegram"),
             run_index: instance?.runIndexStatus || "-",
           }} />
+          <div className="instance-health-actions">
+            <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="github" />
+            <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="telegram" />
+          </div>
         </div>
 
         <div className="flow-panel">
