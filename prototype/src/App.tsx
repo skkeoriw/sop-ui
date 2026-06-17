@@ -837,6 +837,7 @@ export default function App() {
   const [selectedStageId, setSelectedStageId] = useState("");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
   const [triggerOpen, setTriggerOpen] = useState(false);
+  const [runtimeManagementOpen, setRuntimeManagementOpen] = useState(false);
   const [triggerUrl, setTriggerUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   const runtimeManagementDefaults = useMemo(readRuntimeManagementFormDefaults, []);
   const [runtimeManagementAction, setRuntimeManagementAction] = useState<RuntimeManagementAction>("create-runtime");
@@ -976,7 +977,8 @@ export default function App() {
     viewMode === "instance" ||
     viewMode === "workflow" ||
     viewMode === "nodes" ||
-    triggerOpen;
+    triggerOpen ||
+    runtimeManagementOpen;
   const shouldLoadInstances = Boolean(runtime && !routeRuntimePending && shouldLoadRuntimeScopedData);
 
   const instancesQuery = useQuery({
@@ -1006,7 +1008,7 @@ export default function App() {
   const workflowsQuery = useQuery({
     queryKey: ["workflow-definitions", mode, runtime?.id || ""],
     queryFn: async () => provider.listWorkflowDefinitions ? provider.listWorkflowDefinitions(runtime) : [],
-    enabled: viewMode === "workflows" || triggerOpen,
+    enabled: viewMode === "workflows" || runtimeManagementOpen,
   });
   const workflowDefinitions = workflowsQuery.data || [];
   const currentRuntimeManagementDefaults = (): RuntimeManagementFormDefaults => ({
@@ -1113,13 +1115,13 @@ export default function App() {
   const runtimeInheritanceQuery = useQuery({
     queryKey: ["runtime-inheritance", mode, runtime?.id || "", managementInstance?.instanceId || ""],
     queryFn: () => provider.getRuntimeInheritance(runtime!, managementInstance!.instanceId),
-    enabled: Boolean(runtime && managementInstance && triggerOpen),
+    enabled: Boolean(runtime && managementInstance && runtimeManagementOpen),
     retry: 1,
   });
   const runtimeManagementConfigQuery = useQuery({
     queryKey: ["control-plane-settings", mode],
     queryFn: () => controlPlaneProvider.getSettings(),
-    enabled: viewMode === "settings" || triggerOpen,
+    enabled: viewMode === "settings" || runtimeManagementOpen,
     retry: 1,
   });
   const machineQueryOptions = viewMode === "machines"
@@ -1144,13 +1146,13 @@ export default function App() {
   const machinesQuery = useQuery({
     queryKey: ["control-plane-machines", mode, machineQueryOptions.page, machineQueryOptions.pageSize, machineQueryOptions.q, machineQueryOptions.status, machineQueryOptions.role, machineQueryOptions.authType],
     queryFn: () => controlPlaneProvider.listMachines(machineQueryOptions),
-    enabled: viewMode === "settings" || viewMode === "machines" || triggerOpen,
+    enabled: viewMode === "settings" || viewMode === "machines" || runtimeManagementOpen,
     retry: 1,
   });
   const githubReposQuery = useQuery({
     queryKey: ["control-plane-github-repos", mode],
     queryFn: () => controlPlaneProvider.listGithubRepos(),
-    enabled: mode === "real" && triggerOpen && runtimeManagementAction === "create-instance",
+    enabled: mode === "real" && runtimeManagementOpen && runtimeManagementAction === "create-instance",
     retry: 1,
   });
   const runtimeDeleteCandidates = useMemo(() => {
@@ -1408,7 +1410,7 @@ export default function App() {
         setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
       }
       setToast(pipelineId ? `Runtime 创建任务已启动：${shortId(pipelineId)}` : "Runtime 创建任务已启动");
-      setTriggerOpen(false);
+      setRuntimeManagementOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
       if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
     },
@@ -1461,7 +1463,7 @@ export default function App() {
         setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
       }
       setToast(pipelineId ? `Runtime 删除任务已启动：${shortId(pipelineId)}` : "Runtime 删除任务已启动");
-      setTriggerOpen(false);
+      setRuntimeManagementOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
       if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
     },
@@ -1519,7 +1521,7 @@ export default function App() {
         setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
       }
       setToast(pipelineId ? `Instance 创建任务已启动：${shortId(pipelineId)}` : "Instance 创建任务已启动");
-      setTriggerOpen(false);
+      setRuntimeManagementOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
       if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
     },
@@ -1559,7 +1561,7 @@ export default function App() {
         setRoute({ view: "workflow", nodeId: "", pipelineId, artifactId: "", moduleId: "" });
       }
       setToast(pipelineId ? `Instance 删除任务已启动：${shortId(pipelineId)}` : "Instance 删除任务已启动");
-      setTriggerOpen(false);
+      setRuntimeManagementOpen(false);
       await queryClient.invalidateQueries({ queryKey: queryKeys.instances(mode, runtime) });
       if (managementInstance) await queryClient.invalidateQueries({ queryKey: queryKeys.runs(mode, runtime, managementInstance.instanceId) });
     },
@@ -2058,7 +2060,10 @@ export default function App() {
           <button type="button" onClick={() => window.open(RUNTIME_HOST_ARCHITECTURE_DOC_URL, "_blank", "noopener,noreferrer")}>
             <Info size={16} />Architecture
           </button>
-          <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => setTriggerOpen(true)}>
+          <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => {
+            if (isRuntimeManagementInstance) setRuntimeManagementOpen(true);
+            else setTriggerOpen(true);
+          }}>
             <Play size={16} />{isRuntimeManagementInstance ? "Host Operations" : "New Workflow Run"}
           </button>
         </div>
@@ -2130,7 +2135,7 @@ export default function App() {
             onOpenExecutions={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
             onOpenManagement={(action) => {
               setRuntimeManagementAction(action);
-              setTriggerOpen(true);
+              setRuntimeManagementOpen(true);
             }}
           />
         ) : viewMode === "runtime" && isRuntimeDirectory ? (
@@ -2181,7 +2186,7 @@ export default function App() {
             }}
             onOpenManagement={(action) => {
               setRuntimeManagementAction(action);
-              setTriggerOpen(true);
+              setRuntimeManagementOpen(true);
             }}
           />
         ) : viewMode === "instance" ? (
@@ -2343,11 +2348,11 @@ export default function App() {
         )}
       </main>
 
-      {triggerOpen && runtime && instance && isRuntimeManagementInstance && (
+      {runtimeManagementOpen && runtime && managementInstance && (
         <RuntimeManagementStartDrawer
           mode={mode}
           runtime={runtime}
-          instance={instance}
+          instance={managementInstance}
           action={runtimeManagementAction}
           setAction={setRuntimeManagementAction}
           createSshCommand={runtimeCreateSshCommand}
@@ -2412,7 +2417,7 @@ export default function App() {
             : deleteInstanceMutation.error ? String(deleteInstanceMutation.error.message)
             : ""
           }
-          onClose={() => setTriggerOpen(false)}
+          onClose={() => setRuntimeManagementOpen(false)}
           onCreate={(event) => {
             event.preventDefault();
             if (runtimeManagementAction === "create-instance") createInstanceMutation.mutate();
