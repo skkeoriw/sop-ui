@@ -4796,9 +4796,20 @@ function WorkflowWorkspace({
                         <pre className="log-box error-log">{nodeDetail.error}</pre>
                       </DetailBlock>
                     )}
+                    {(nodeDetail?.reportReason || (nodeDetail?.reportDetail && Object.keys(nodeDetail.reportDetail).length > 0)) && (
+                      <DetailBlock title="Node Report">
+                        {nodeDetail.reportReason && <pre className="log-box error-log">{nodeDetail.reportReason}</pre>}
+                        {nodeDetail.reportDetail && Object.keys(nodeDetail.reportDetail).length > 0 && <KeyValues data={nodeDetail.reportDetail} />}
+                      </DetailBlock>
+                    )}
                     {nodeDetail?.manualFixHint && (
                       <DetailBlock title="Manual Fix Hint">
                         <pre className="log-box">{nodeDetail.manualFixHint}</pre>
+                      </DetailBlock>
+                    )}
+                    {nodeDetail?.reportManualFixHint && nodeDetail.reportManualFixHint !== nodeDetail.manualFixHint && (
+                      <DetailBlock title="Report Fix Hint">
+                        <pre className="log-box">{nodeDetail.reportManualFixHint}</pre>
                       </DetailBlock>
                     )}
                     <DetailBlock title="Operations">

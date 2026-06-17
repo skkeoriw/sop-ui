@@ -250,6 +250,9 @@ export interface NodeDetail {
   branch?: string;
   retryable?: boolean;
   manualFixHint?: string;
+  reportReason?: string;
+  reportManualFixHint?: string;
+  reportDetail?: Record<string, unknown>;
   runId?: string;
   status: StageStatus;
   mode?: string;
