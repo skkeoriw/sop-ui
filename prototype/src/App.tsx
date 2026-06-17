@@ -3763,6 +3763,17 @@ function WorkflowCatalog({
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
+  const [workflowSearch, setWorkflowSearch] = useState("");
+  const [workflowTypeFilter, setWorkflowTypeFilter] = useState("all");
+  const filteredWorkflows = useMemo(() => {
+    const query = workflowSearch.trim().toLowerCase();
+    return workflows.filter((item) => {
+      const matchedType = workflowTypeFilter === "all" || item.interpreter === workflowTypeFilter || item.workflowType === workflowTypeFilter;
+      const searchable = [item.workflowId, item.name, item.title, item.description, item.interpreter, item.workflowType, item.definitionPath].filter(Boolean).join(" ").toLowerCase();
+      return matchedType && (!query || searchable.includes(query));
+    });
+  }, [workflowSearch, workflowTypeFilter, workflows]);
+  const workflowTypes = useMemo(() => Array.from(new Set(workflows.flatMap((item) => [item.interpreter, item.workflowType]).filter(Boolean))).sort(), [workflows]);
   const selectedWorkflow = workflows.find((item) => item.workflowId === selectedWorkflowId) || workflows[0];
   const managementWorkflow = selectedWorkflow?.workflowId === "runtime-management";
   const defaultInstance = instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
@@ -3771,34 +3782,45 @@ function WorkflowCatalog({
   }, [selectedWorkflowId, workflows]);
   return (
     <section className="workflow-catalog-page">
-      <div className="concept-hero workflow-catalog-hero">
-        <div>
-          <span className="status-pill running"><Workflow size={14} />Workflow Definition Catalog</span>
-          <h1>Workflow 是无状态定义，Run 才绑定 Runtime 和 Instance。</h1>
-          <p>从 agent-brains SOP 集合选择 Workflow Definition；执行时再选择 Runtime Host 和 Instance Workspace，运行状态与产物写入所选 Instance。</p>
+      <section className="ops-page-header">
+        <div className="ops-page-title">
+          <span className="status-pill running"><Workflow size={14} />Workflow Catalog</span>
+          <div>
+            <h1>Workflow Definitions</h1>
+            <p>agent-brains SOP catalog · {runtime?.displayName || runtime?.id || "No runtime selected"}</p>
+          </div>
         </div>
-        <div className="context-card">
-          <strong>{workflows.length || "-"} workflow definitions</strong>
-          <span>{runtime?.displayName || runtime?.id || "No runtime selected"}</span>
-          <code>{selectedWorkflow?.interpreter || "interpreter pending"}</code>
+        <div className="ops-header-chips">
+          <span>{workflows.length || 0} definitions</span>
+          <span>{selectedWorkflow?.interpreter || "interpreter pending"}</span>
+          <span>{instances.length} instances</span>
+          <span>{runtime?.id || "no runtime"}</span>
         </div>
-      </div>
+      </section>
 
-      <section className="console-metrics">
-        <Metric label="Definitions" value={workflows.length} subtext="from catalog or compatibility fallback" />
-        <Metric label="Interpreter" value={selectedWorkflow?.interpreter || "-"} subtext={selectedWorkflow?.workflowType || "workflow type"} />
-        <Metric label="Runtime" value={runtime?.id || "-"} subtext={`${runtimes.length || 0} hosts loaded`} />
-        <Metric label="Instances" value={instances.length} subtext="execution workspaces" />
+      <section className="ops-toolbar">
+        <label className="search-box">
+          <Search size={14} />
+          <input value={workflowSearch} onChange={(event) => setWorkflowSearch(event.target.value)} placeholder="Search workflow definition" />
+        </label>
+        <label className="filter-box">
+          <SlidersHorizontal size={14} />
+          <select value={workflowTypeFilter} onChange={(event) => setWorkflowTypeFilter(event.target.value)}>
+            <option value="all">All interpreters</option>
+            {workflowTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select>
+        </label>
+        <span className="ops-toolbar-count">{filteredWorkflows.length}/{workflows.length} definitions</span>
       </section>
 
       <section className="workflow-catalog-grid">
         <div className="flow-panel workflow-catalog-list-panel">
           <div className="panel-head">
-            <div><strong>Workflow Catalog</strong><span>无状态 SOP 定义，不属于某个 Instance</span></div>
-            <span>{loading ? "loading" : `${workflows.length} definitions`}</span>
+            <div><strong>Definition List</strong><span>无状态 SOP 定义，不属于某个 Instance</span></div>
+            <span>{loading ? "loading" : `${filteredWorkflows.length} shown`}</span>
           </div>
           <div className="workflow-definition-list">
-            {workflows.map((item) => (
+            {filteredWorkflows.map((item) => (
               <button
                 key={item.workflowId}
                 type="button"
@@ -3814,7 +3836,7 @@ function WorkflowCatalog({
                 </span>
               </button>
             ))}
-            {!workflows.length && <LoadingOrEmpty loading={loading} text="没有加载到 Workflow Definition" />}
+            {!filteredWorkflows.length && <LoadingOrEmpty loading={loading} text={workflows.length ? "没有匹配的 Workflow Definition" : "没有加载到 Workflow Definition"} />}
           </div>
         </div>
 
@@ -5064,6 +5086,7 @@ function SettingsPage({
   globalTunnelApiUrl: string;
   globalTunnelAdminUrl: string;
 }) {
+  const [selectedSettingsSection, setSelectedSettingsSection] = useState("cloudflare");
   const itemByKey = useMemo(() => {
     const items = new Map<string, RuntimeInheritancePreview["items"][number]>();
     (managementConfig?.items || []).forEach((item) => {
@@ -5100,8 +5123,8 @@ function SettingsPage({
       ],
     },
     {
-      id: "hermes-model",
-      title: "Hermes Model",
+      id: "hermes-auth",
+      title: "Hermes Auth",
       subtitle: "Hermes CLI / gateway 默认 OpenAI-compatible 模型配置",
       icon: <Bot size={18} />,
       keys: [
@@ -5109,6 +5132,38 @@ function SettingsPage({
         { key: "HERMES_MODEL", label: "Default Model", placeholder: "deepseek-v4-flash 或 deepseek-v4-pro" },
         { key: "HERMES_MODEL_BASE_URL", label: "Base URL", placeholder: "https://api-proxy.chxyka.ccwu.cc/v1" },
         { key: "HERMES_OPENAI_API_KEY", label: "OpenAI-compatible API Key", placeholder: "Bearer token，不要带 Bearer 前缀" },
+      ],
+    },
+    {
+      id: "telegram-defaults",
+      title: "Telegram Defaults",
+      subtitle: "作为 create-instance 的默认 TG 通知配置，可被 Instance 覆盖",
+      icon: <Send size={18} />,
+      keys: [
+        { key: "YOUTUBE_WIKI_TG_TOKEN", label: "Default TG Bot Token", placeholder: "create-instance 默认 Telegram bot token" },
+        { key: "YOUTUBE_WIKI_TG_CHAT_ID", label: "Default TG Chat ID", placeholder: "create-instance 默认 Telegram chat id" },
+      ],
+    },
+    {
+      id: "runtime-defaults",
+      title: "Runtime Defaults",
+      subtitle: "create-runtime / runtime-management 初始化默认值",
+      icon: <Server size={18} />,
+      keys: [
+        { key: "BRIDGE_PORT", label: "Bridge Port", placeholder: "18121" },
+        { key: "HERMES_WEBHOOK_PORT", label: "Hermes Webhook Port", placeholder: "8644" },
+        { key: "WEBHOOK_PUBLIC_HOST", label: "Webhook Public Host", placeholder: "runtime 初始化后写入" },
+      ],
+    },
+    {
+      id: "instance-defaults",
+      title: "Instance Defaults",
+      subtitle: "create-instance 默认仓库、模型和业务配置",
+      icon: <LayoutDashboard size={18} />,
+      keys: [
+        { key: "WIKI_GITHUB_REPO", label: "Default Wiki Repo", placeholder: "skkeoriw/runtime-management" },
+        { key: "WIKI_LLM_PROVIDER", label: "Wiki LLM Provider", placeholder: "vertex" },
+        { key: "WIKI_VERTEX_MODEL", label: "Vertex Model", placeholder: "gemini-1.5-pro" },
       ],
     },
     {
@@ -5133,8 +5188,8 @@ function SettingsPage({
       ],
     },
     {
-      id: "runtime-control",
-      title: "Control Plane",
+      id: "machine-defaults",
+      title: "Machine Defaults",
       subtitle: "SOP UI 和当前控制面状态",
       icon: <ShieldCheck size={18} />,
       keys: [
@@ -5159,6 +5214,24 @@ function SettingsPage({
       label: item.key.replace(/_/g, " "),
       placeholder: item.present ? "已配置；填写则覆盖" : "填写全局配置值",
     }));
+  const settingsSections = [
+    ...configCards.map((card) => ({
+      id: card.id,
+      title: card.title,
+      subtitle: card.subtitle,
+      count: card.keys.filter((field) => itemByKey.get(field.key)?.present).length,
+      total: card.keys.length,
+    })),
+    ...(extraConfigFields.length ? [{
+      id: "other",
+      title: "Other Settings",
+      subtitle: "未归入固定分组的配置项",
+      count: extraConfigFields.filter((field) => itemByKey.get(field.key)?.present).length,
+      total: extraConfigFields.length,
+    }] : []),
+    { id: "machines", title: "Machine Nodes", subtitle: "SSH 节点入口", count: machines.length, total: machines.length },
+  ];
+  const activeConfigCard = configCards.find((card) => card.id === selectedSettingsSection);
   const renderConfigField = (field: { key: string; label: string; placeholder: string }) => {
     const item = itemByKey.get(field.key);
     const edited = Boolean(managementConfigValues[field.key]?.trim());
@@ -5193,76 +5266,76 @@ function SettingsPage({
   };
   return (
     <>
-      <section className="concept-hero">
-        <div>
+      <section className="ops-page-header settings-compact-header">
+        <div className="ops-page-title">
           <span className="status-pill waiting"><Settings size={14} />Global Settings</span>
-          <h1>Global Control Plane Settings</h1>
-          <p>全局配置只从 Control Plane / D1 读取和保存，不绑定任意 Runtime Host，也不拉取 Runtime SPI 的实例、工作流或节点数据。</p>
+          <div>
+            <h1>Control Plane Settings</h1>
+            <p>{managementConfig?.updatedAt ? `updated ${managementConfig.updatedAt}` : "server-side config"} · {editedCount} edited</p>
+          </div>
         </div>
-        <div className="context-card">
-          <strong>Control Plane</strong>
-          <span>{mode} · global scope</span>
-          <code>{controlPlaneApiUrl}</code>
-        </div>
-      </section>
-      <section className="global-settings-toolbar">
-        <div>
-          <strong>Control Plane / D1 Global Config</strong>
-          <span>{managementConfig?.updatedAt ? `updated ${managementConfig.updatedAt}` : "server-side config"} · {editedCount} edited</span>
-        </div>
-        <div className="settings-actions">
+        <div className="ops-header-chips">
+          <span>{mode} · global</span>
+          <span>{managementConfig?.backend || "d1"}</span>
+          <span>{machines.length} machines</span>
           <button type="button" className="ghost-btn compact" onClick={onRefreshManagementConfig} disabled={managementConfigLoading}>
             {managementConfigLoading ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
             Refresh
           </button>
         </div>
       </section>
+      <section className="global-settings-toolbar">
+        <div>
+          <strong>{settingsSections.find((section) => section.id === selectedSettingsSection)?.title || "Settings"}</strong>
+          <span>{settingsSections.find((section) => section.id === selectedSettingsSection)?.subtitle || controlPlaneApiUrl}</span>
+        </div>
+        <div className="settings-actions">
+          <button type="submit" form="global-settings-form" disabled={saveManagementConfigPending || !editedCount}>
+            {saveManagementConfigPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
+            Save {editedCount ? `(${editedCount})` : ""}
+          </button>
+        </div>
+      </section>
       {(managementConfigError || saveManagementConfigError || machinesError) && (
         <div className="inline-error">{managementConfigError || saveManagementConfigError || machinesError}</div>
       )}
-      <form className="global-settings-layout" onSubmit={onSaveManagementConfig}>
-        <aside className="global-settings-summary">
-          <div className="settings-summary-card">
-            <strong>Scope</strong>
-            <KeyValues data={{
-              mode,
-              scope: "global",
-              runtime_dependency: "none",
-              settings_backend: managementConfig?.backend || "d1",
-              settings_store: managementConfig?.d1?.enabled ? managementConfig.d1.database_name || "runtime-settings-db" : "runtime-settings-db",
-              control_plane_api: controlPlaneApiUrl,
-              tunnel_admin: globalTunnelAdminUrl,
-              tunnel_api: globalTunnelApiUrl,
-              machine_count: machines.length,
-            }} />
-            <button type="button" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>打开 Tunnel Admin</button>
-          </div>
-          <button type="submit" disabled={saveManagementConfigPending || !editedCount}>
-            {saveManagementConfigPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
-            Save Global Config
-          </button>
-          {editedCount > 0 && <button type="button" className="ghost-btn" onClick={() => setManagementConfigValues({})}>Clear edits</button>}
+      <form id="global-settings-form" className="global-settings-layout settings-section-layout" onSubmit={onSaveManagementConfig}>
+        <aside className="global-settings-summary settings-section-nav">
+          {settingsSections.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={selectedSettingsSection === section.id ? "active" : ""}
+              onClick={() => setSelectedSettingsSection(section.id)}
+            >
+              <strong>{section.title}</strong>
+              <span>{section.subtitle}</span>
+              <em>{section.count}/{section.total}</em>
+            </button>
+          ))}
+          <button type="button" className="ghost-btn compact" onClick={() => window.open(globalTunnelAdminUrl, "_blank", "noopener,noreferrer")}>Tunnel Admin</button>
+          {editedCount > 0 && <button type="button" className="ghost-btn compact" onClick={() => setManagementConfigValues({})}>Clear edits</button>}
         </aside>
-        <section className="global-config-card-grid">
-          {configCards.map((card) => {
-            const readyCount = card.keys.filter((field) => itemByKey.get(field.key)?.present).length;
-            return (
-              <article key={card.id} className="global-config-card">
-                <div className="global-config-card-head">
-                  <span>{card.icon}</span>
-                  <div>
-                    <strong>{card.title}</strong>
-                    <small>{card.subtitle}</small>
-                  </div>
-                  <em>{readyCount}/{card.keys.length}</em>
+        <section className="global-config-card-grid settings-active-card-grid">
+          {activeConfigCard && (
+            <article className="global-config-card settings-wide">
+              <div className="global-config-card-head">
+                <span>{activeConfigCard.icon}</span>
+                <div>
+                  <strong>{activeConfigCard.title}</strong>
+                  <small>{activeConfigCard.subtitle}</small>
                 </div>
-                <div className="global-config-fields">
-                  {card.keys.map(renderConfigField)}
-                </div>
-              </article>
-            );
-          })}
-          {extraConfigFields.length > 0 && (
+                <em>{activeConfigCard.keys.filter((field) => itemByKey.get(field.key)?.present).length}/{activeConfigCard.keys.length}</em>
+              </div>
+              <div className="settings-scope-note">
+                {activeConfigCard.id === "telegram-defaults" ? "Used by create-instance as default notification config; each Instance can override it." : "Global default stored in Control Plane D1; leave secret fields blank to keep saved values."}
+              </div>
+              <div className="global-config-fields">
+                {activeConfigCard.keys.map(renderConfigField)}
+              </div>
+            </article>
+          )}
+          {selectedSettingsSection === "other" && extraConfigFields.length > 0 && (
             <article className="global-config-card settings-wide">
               <div className="global-config-card-head">
                 <span><SlidersHorizontal size={18} /></span>
@@ -5277,27 +5350,27 @@ function SettingsPage({
               </div>
             </article>
           )}
+          {selectedSettingsSection === "machines" && (
+            <article className="global-config-card settings-wide">
+              <div className="global-config-card-head">
+                <span><Server size={18} /></span>
+                <div>
+                  <strong>Machine Nodes</strong>
+                  <small>SSH 节点配置来自 Control Plane D1，Runtime 创建/删除时可以选择节点</small>
+                </div>
+                <em>{machines.length}</em>
+              </div>
+              <div className="machine-settings-link">
+                <KeyValues data={{ machines: machines.length, store: "runtime-settings-db", api: controlPlaneApiUrl }} />
+                <button type="button" className="primary" onClick={onOpenMachines}>
+                  <Server size={14} />
+                  Open Machine Manager
+                </button>
+              </div>
+            </article>
+          )}
         </section>
       </form>
-      <section className="global-config-card-grid machine-config-grid">
-        <article className="global-config-card settings-wide">
-          <div className="global-config-card-head">
-            <span><Server size={18} /></span>
-            <div>
-              <strong>Machine Nodes</strong>
-              <small>SSH 节点配置来自 Control Plane D1，Runtime 创建/删除时可以选择节点</small>
-            </div>
-            <em>{machines.length}</em>
-          </div>
-          <div className="machine-settings-link">
-            <KeyValues data={{ machines: machines.length, store: "runtime-settings-db", api: controlPlaneApiUrl }} />
-            <button type="button" className="primary" onClick={onOpenMachines}>
-              <Server size={14} />
-              Open Machine Manager
-            </button>
-          </div>
-        </article>
-      </section>
       <section className="settings-note-panel">
         <Info size={15} />
         <span>Secret 字段不会从后端返回明文；输入框留空会保留当前值，填写内容才会覆盖保存。</span>
@@ -5398,11 +5471,13 @@ function MachinesPage({
   onToast: (message: string) => void;
 }) {
   const [creatingMachine, setCreatingMachine] = useState(false);
+  const [editingMachine, setEditingMachine] = useState(false);
   const selectedMachine = selectedMachineId ? machines.find((machine) => machine.id === selectedMachineId) : undefined;
   const machineTotal = machineList?.total ?? machines.length;
   const hasNextPage = Boolean(machineList?.hasMore);
   const loadMachine = (machine: MachineConfig) => {
     setCreatingMachine(false);
+    setEditingMachine(false);
     setSelectedMachineId(machine.id);
     setMachineName(machine.name);
     setMachineSshCommand(machine.sshCommand);
@@ -5414,6 +5489,7 @@ function MachinesPage({
   };
   const clearForm = () => {
     setCreatingMachine(true);
+    setEditingMachine(true);
     setSelectedMachineId("");
     setMachineName("");
     setMachineSshCommand("");
@@ -5450,19 +5526,24 @@ function MachinesPage({
     setMachinePrivateKey("");
     setMachinePassword("");
     onToast("已复制非敏感字段，请补充 secret 后保存为新机器");
+    setCreatingMachine(true);
+    setEditingMachine(true);
   };
   return (
     <>
-      <section className="concept-hero machines-hero">
-        <div>
+      <section className="ops-page-header machines-compact-header">
+        <div className="ops-page-title">
           <span className="status-pill waiting"><Server size={14} />Machines</span>
-          <h1>机器节点管理</h1>
-          <p>集中管理可被 Runtime 创建/删除流程选择的 SSH 节点，密钥和密码只保存到 Control Plane D1，页面不回显明文。</p>
+          <div>
+            <h1>Machine Nodes</h1>
+            <p>SSH targets for runtime lifecycle workflows · secrets stay in Control Plane D1</p>
+          </div>
         </div>
-        <div className="context-card">
-          <strong>Control Plane</strong>
+        <div className="ops-header-chips">
           <span>{machineTotal} machines</span>
-          <code>{controlPlaneApiUrl}</code>
+          <span>{machines.filter((machine) => machine.status === "active").length} active</span>
+          <span>{machines.filter((machine) => machine.privateKeyPresent || machine.passwordPresent).length} secrets</span>
+          <button type="button" className="primary compact" onClick={clearForm}><Plus size={14} />New Machine</button>
         </div>
       </section>
       {(error || saveMachineError || testError) && <div className="inline-error">{error || saveMachineError || testError}</div>}
@@ -5470,7 +5551,7 @@ function MachinesPage({
         <aside className="machines-list-panel">
           <div className="panel-head machines-list-head">
             <div><strong>Machine List</strong><span>{loading ? "loading" : `${machines.length}/${machineTotal} records`}</span></div>
-            <button type="button" className="ghost-btn compact" onClick={clearForm}>New</button>
+            <span className="machine-filter-note">{machineStatusFilter === "deleted" ? "showing deleted" : "deleted hidden"}</span>
           </div>
           <div className="execution-tools machine-tools">
             <label className="search-box">
@@ -5548,6 +5629,7 @@ function MachinesPage({
                       <span>{machine.role || "target"}</span>
                       <span>{machine.authType === "password" ? "password" : "private key"}</span>
                       <span>{secretSaved ? "secret saved" : "secret missing"}</span>
+                      <span>{machine.lastCheckAt ? `checked ${shortId(machine.lastCheckAt)}` : "not checked"}</span>
                     </span>
                   </div>
                 </button>
@@ -5561,7 +5643,7 @@ function MachinesPage({
                   <button type="button" title="Duplicate Machine" onClick={() => duplicateMachine(machine)} disabled={duplicatePending}>
                     {duplicatePending ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
                   </button>
-                  <button type="button" title="Edit" onClick={() => loadMachine(machine)}>
+                <button type="button" title="Edit" onClick={() => loadMachine(machine)}>
                     <Edit3 size={14} />
                   </button>
                   <button type="button" title="Delete" className="danger-icon" onClick={() => onDeleteMachine(machine.id)} disabled={deletePending}>
@@ -5586,27 +5668,30 @@ function MachinesPage({
         <section className="machine-detail-panel">
           <div className="panel-head machine-detail-head">
             <div className="machine-detail-title">
-              <strong>{selectedMachine ? selectedMachine.name : "Create Machine"}</strong>
-              <span>{selectedMachine?.id || "new machine"}</span>
+              <strong>{creatingMachine ? "Create Machine" : selectedMachine ? selectedMachine.name : "Machine Detail"}</strong>
+              <span>{creatingMachine ? "new machine" : selectedMachine?.id || "select a machine"}</span>
             </div>
             {selectedMachine && (
               <div className="machine-detail-actions">
-                <button type="button" className="machine-action-btn primary-action" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
+                <button type="button" title="Test SSH" className="machine-action-btn primary-action" onClick={() => onTestMachine(selectedMachine.id)} disabled={testPending}>
                   {testPending ? <Loader2 size={14} className="spin" /> : <Activity size={14} />}
                   <span className="machine-action-label">Test</span>
                 </button>
-                <button type="button" className="machine-action-btn" onClick={() => copySsh(selectedMachine)}>
+                <button type="button" title="Copy SSH" className="machine-action-btn" onClick={() => copySsh(selectedMachine)}>
                   <Copy size={14} /><span className="machine-action-label">Copy SSH</span>
                 </button>
                 <label className="machine-inline-toggle">
                   <input type="checkbox" checked={duplicateReuseSecret} onChange={(event) => setDuplicateReuseSecret(event.target.checked)} />
                   <span>Reuse secret</span>
                 </label>
-                <button type="button" className="machine-action-btn" onClick={() => duplicateMachine(selectedMachine)} disabled={duplicatePending}>
+                <button type="button" title="Duplicate Machine" className="machine-action-btn" onClick={() => duplicateMachine(selectedMachine)} disabled={duplicatePending}>
                   {duplicatePending ? <Loader2 size={14} className="spin" /> : <Plus size={14} />}
                   <span className="machine-action-label">Duplicate</span>
                 </button>
-                <button type="button" className="machine-action-btn danger" onClick={() => onDeleteMachine(selectedMachine.id)} disabled={deletePending}>
+                <button type="button" title={editingMachine ? "View" : "Edit"} className="machine-action-btn" onClick={() => setEditingMachine((value) => !value)}>
+                  <Edit3 size={14} /><span className="machine-action-label">{editingMachine ? "View" : "Edit"}</span>
+                </button>
+                <button type="button" title="Delete Machine" className="machine-action-btn danger" onClick={() => onDeleteMachine(selectedMachine.id)} disabled={deletePending}>
                   <Trash2 size={14} /><span className="machine-action-label">Delete</span>
                 </button>
               </div>
@@ -5637,7 +5722,23 @@ function MachinesPage({
             </div>
           ) : <Empty text="填写下面字段创建新机器" />}
           {testResult && <MachineTestResult result={testResult} />}
-          <form className="machine-editor" onSubmit={onSaveMachine}>
+          {!creatingMachine && selectedMachine && !editingMachine && (
+            <div className="machine-readonly-detail">
+              <KeyValues data={{
+                name: selectedMachine.name,
+                ssh_command: selectedMachine.sshCommand,
+                role: selectedMachine.role || "target",
+                status: selectedMachine.status || "active",
+                auth_type: selectedMachine.authType,
+                private_key: selectedMachine.privateKeyPresent ? "saved" : "missing",
+                password: selectedMachine.passwordPresent ? "saved" : "missing",
+                last_check: selectedMachine.lastCheckAt || "-",
+                updated_at: selectedMachine.updatedAt || "-",
+              }} />
+              <button type="button" className="primary compact" onClick={() => setEditingMachine(true)}><Edit3 size={14} />Edit Machine</button>
+            </div>
+          )}
+          {(creatingMachine || editingMachine || !selectedMachine) && <form className="machine-editor" onSubmit={onSaveMachine}>
             <label>
               <span>Name</span>
               <input value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="Runtime target machine" disabled={saveMachinePending} />
@@ -5686,7 +5787,7 @@ function MachinesPage({
               {saveMachinePending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
               {selectedMachineId ? "Save Changes" : "Create Machine"}
             </button>
-          </form>
+          </form>}
         </section>
       </section>
     </>
@@ -5799,33 +5900,20 @@ function NodesWorkspace({
   const workflowBinding = instance?.workflowBinding;
   return (
     <>
-      <div className="workflow-context-strip node-context-strip">
-        <span>Runtime Host</span>
-        <strong>{runtime?.displayName || runtime?.name || runtime?.id || "-"}</strong>
-        <span>/ Instance</span>
-        <strong>{instance?.instanceId || "-"}</strong>
-        <span>/ Workflow Definition</span>
-        <strong>{workflowBinding?.workflowName || instance?.sopType || "workflow"}</strong>
-        <span>/ Node Definitions</span>
-        <strong>{visibleNodes.length}/{nodes.length}</strong>
-      </div>
-
-      <section className="node-summary">
-        <div>
-          <span className="status-pill running"><Boxes size={14} />Node Definition Catalog</span>
-          <h1>Workflow Node Definitions</h1>
-          <p>{instance?.title || "SOP Nodes"} · 这里展示 SOP 中的节点定义；某次执行里的状态在 Workflow Run 中查看。</p>
-          <div className="overview-tags">
-            <span>Create Runtime</span>
-            <span>Delete Runtime</span>
-            <span>Create Instance</span>
-            <span>Common</span>
+      <section className="ops-page-header node-compact-header">
+        <div className="ops-page-title">
+          <span className="status-pill running"><Boxes size={14} />Node Catalog</span>
+          <div>
+            <h1>Node Definition Catalog</h1>
+            <p>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowBinding?.workflowName || instance?.sopType || "workflow"}</p>
           </div>
         </div>
-        <Metric label="Node Definitions" value={nodes.length} subtext="registered in SOP" />
-        <Metric label="Complete" value={`${completeNodes}/${nodes.length || 0}`} subtext="metadata ready" />
-        <Metric label="Drafts" value={drafts.length} subtext="not published" />
-        <Metric label="Review" value={groupCounts.failed || 0} subtext="nodes need metadata" />
+        <div className="ops-header-chips">
+          <span>{visibleNodes.length}/{nodes.length} definitions</span>
+          <span>{completeNodes}/{nodes.length || 0} ready</span>
+          <span>{drafts.length} drafts</span>
+          <span>{groupCounts.failed || 0} review</span>
+        </div>
       </section>
 
       <section className="node-module-workbench node-catalog-workbench">
