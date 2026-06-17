@@ -129,7 +129,6 @@ type RuntimeManagementFormDefaults = {
   deleteForce: boolean;
   instanceId: string;
   instanceRepo: string;
-  instanceSopType: string;
   deleteInstanceId: string;
   deleteInstanceRepo: string;
   deleteInstanceForce: boolean;
@@ -152,9 +151,9 @@ function slugifyInstanceSeed(value: string) {
     .slice(0, 42) || "workspace";
 }
 
-function generateInstanceId(repo: string, sopType: string) {
-  const seed = repo.split("/").pop() || sopType || "workspace";
-  const suffix = Math.abs(Array.from(`${repo}:${sopType}`).reduce((sum, char) => sum + char.charCodeAt(0), 0)).toString(36).slice(0, 4);
+function generateInstanceId(repo: string) {
+  const seed = repo.split("/").pop() || "workspace";
+  const suffix = Math.random().toString(36).slice(2, 7) || "new";
   return `instance-${slugifyInstanceSeed(seed)}-${suffix || "new"}`;
 }
 
@@ -201,9 +200,8 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
     deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
     deletePrivateKey: "",
     deleteForce: false,
-    instanceId: "wiki-sop-new-instance",
-    instanceRepo: "skkeoriw/wiki-sop-new-instance",
-    instanceSopType: "youtube-research-wiki",
+    instanceId: "",
+    instanceRepo: "",
     deleteInstanceId: "wiki-sop-new-instance",
     deleteInstanceRepo: "skkeoriw/wiki-sop-new-instance",
     deleteInstanceForce: false,
@@ -223,7 +221,6 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
       deleteForce: Boolean(stored.deleteForce),
       instanceId: stringFromStorage(stored.instanceId, defaults.instanceId),
       instanceRepo: stringFromStorage(stored.instanceRepo, defaults.instanceRepo),
-      instanceSopType: stringFromStorage(stored.instanceSopType, defaults.instanceSopType),
       deleteInstanceId: stringFromStorage(stored.deleteInstanceId, defaults.deleteInstanceId),
       deleteInstanceRepo: stringFromStorage(stored.deleteInstanceRepo, defaults.deleteInstanceRepo),
       deleteInstanceForce: Boolean(stored.deleteInstanceForce),
@@ -892,7 +889,7 @@ export default function App() {
   const [runtimeDeleteConfirmed, setRuntimeDeleteConfirmed] = useState(false);
   const [instanceCreateId, setInstanceCreateId] = useState(runtimeManagementDefaults.instanceId);
   const [instanceCreateRepo, setInstanceCreateRepo] = useState(runtimeManagementDefaults.instanceRepo);
-  const [instanceCreateSopType, setInstanceCreateSopType] = useState(runtimeManagementDefaults.instanceSopType);
+  const suggestedInstanceCreateId = useMemo(() => generateInstanceId(instanceCreateRepo), [instanceCreateRepo]);
   const [instanceTelegramTokenMode, setInstanceTelegramTokenMode] = useState<"global" | "override">("global");
   const [instanceTelegramToken, setInstanceTelegramToken] = useState("");
   const [instanceTelegramChatId, setInstanceTelegramChatId] = useState("");
@@ -1063,7 +1060,6 @@ export default function App() {
     deleteForce: runtimeDeleteForce,
     instanceId: instanceCreateId,
     instanceRepo: instanceCreateRepo,
-    instanceSopType: instanceCreateSopType,
     deleteInstanceId: instanceDeleteId,
     deleteInstanceRepo: instanceDeleteRepo,
     deleteInstanceForce: instanceDeleteForce,
@@ -1086,7 +1082,6 @@ export default function App() {
       deleteForce: false,
       instanceId: "",
       instanceRepo: "",
-      instanceSopType: "youtube-research-wiki",
       deleteInstanceId: "",
       deleteInstanceRepo: "",
       deleteInstanceForce: false,
@@ -1103,7 +1098,6 @@ export default function App() {
     setRuntimeDeleteConfirmed(false);
     setInstanceCreateId(cleanDefaults.instanceId);
     setInstanceCreateRepo(cleanDefaults.instanceRepo);
-    setInstanceCreateSopType(cleanDefaults.instanceSopType);
     setInstanceDeleteId(cleanDefaults.deleteInstanceId);
     setInstanceDeleteRepo(cleanDefaults.deleteInstanceRepo);
     setInstanceDeleteForce(cleanDefaults.deleteInstanceForce);
@@ -1122,7 +1116,6 @@ export default function App() {
       deleteForce: runtimeDeleteForce,
       instanceId: instanceCreateId,
       instanceRepo: instanceCreateRepo,
-      instanceSopType: instanceCreateSopType,
       deleteInstanceId: instanceDeleteId,
       deleteInstanceRepo: instanceDeleteRepo,
       deleteInstanceForce: instanceDeleteForce,
@@ -1138,7 +1131,6 @@ export default function App() {
     runtimeDeleteForce,
     instanceCreateId,
     instanceCreateRepo,
-    instanceCreateSopType,
     instanceDeleteId,
     instanceDeleteRepo,
     instanceDeleteForce,
@@ -1523,14 +1515,12 @@ export default function App() {
   const createInstanceMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
-      const sopType = instanceCreateSopType.trim() || "youtube-research-wiki";
       const repo = instanceCreateRepo.trim();
-      const resolvedInstanceId = instanceCreateId.trim() || generateInstanceId(repo, sopType);
+      const resolvedInstanceId = instanceCreateId.trim() || suggestedInstanceCreateId;
       const instancePayload = {
         instance_id: resolvedInstanceId,
         repo,
-        sop_type: sopType,
-        workflow_id: sopType,
+        workspace_kind: "execution-workspace",
         telegram: {
           chat_id: instanceTelegramChatId.trim(),
           token: instanceTelegramTokenMode === "override" ? instanceTelegramToken.trim() : "",
@@ -1553,8 +1543,6 @@ export default function App() {
           instance_id: instancePayload.instance_id,
           repo: instancePayload.repo,
           instance_repo: instancePayload.repo,
-          instance_sop_type: instancePayload.sop_type,
-          workflow_id: instancePayload.workflow_id,
           instance_telegram_chat_id: instanceTelegramChatId.trim(),
           instance_telegram_token: instanceTelegramTokenMode === "override" ? instanceTelegramToken.trim() : "",
           instances: [instancePayload],
@@ -2456,8 +2444,7 @@ export default function App() {
           setInstanceCreateId={setInstanceCreateId}
           instanceCreateRepo={instanceCreateRepo}
           setInstanceCreateRepo={setInstanceCreateRepo}
-          instanceCreateSopType={instanceCreateSopType}
-          setInstanceCreateSopType={setInstanceCreateSopType}
+          suggestedInstanceCreateId={suggestedInstanceCreateId}
           instanceTelegramTokenMode={instanceTelegramTokenMode}
           setInstanceTelegramTokenMode={setInstanceTelegramTokenMode}
           instanceTelegramToken={instanceTelegramToken}
@@ -3965,6 +3952,8 @@ function InstanceOverview({
   const binding = instance?.workflowBinding;
   const latest = instance?.latestExecution || runs[0];
   const latestFailure = runs.find((run) => run.status === "failed") || (latest?.status === "failed" ? latest : undefined);
+  const capabilityStatus = (key: string) => readableCapabilityStatus((instance?.capabilities || {})[key]);
+  const workflowBindingStatus = binding?.bindingStatus || "unbound";
   const [runSearch, setRunSearch] = useState("");
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | StageStatus>("all");
   const [instanceSearch, setInstanceSearch] = useState("");
@@ -4090,22 +4079,21 @@ function InstanceOverview({
           </div>
         </div>
         <div className="workflow-metrics">
-          <Metric label="Workflow Definition" value={binding?.workflowName || "-"} subtext={binding?.workflowVersion || binding?.bindingStatus || "binding"} />
-          <Metric label="Workflow Runs" value={instance?.executionCount ?? runs.length} subtext={latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)}` : "no run"} />
-          <Metric label="Artifacts" value={instance?.artifactCount ?? runArtifacts.length} subtext={`${instance?.pageCount ?? latest?.pageCount ?? 0} pages`} />
-          <Metric label="Node Definitions" value={`${binding?.enabledNodeCount ?? managedNodes.length}/${binding?.nodeCount ?? dag?.nodes.length ?? 0}`} subtext="definition catalog" />
+          <Metric label="Workspace" value={instance?.workspaceStatus || "unknown"} subtext={instance?.wikiLocalPath || "local path pending"} />
+          <Metric label="GitHub" value={capabilityStatus("git")} subtext={instance?.repo || "repo pending"} />
+          <Metric label="Telegram" value={capabilityStatus("telegram")} subtext="instance notification" />
+          <Metric label="Run Index" value={instance?.runIndexStatus || "unknown"} subtext={latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)}` : "no execution"} />
         </div>
       </div>
 
       <section className="instance-grid">
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Workspace Identity</strong><span>Instance 是业务工作区，不是 Workflow</span></div></div>
+          <div className="panel-head"><div><strong>Workspace Identity</strong><span>Instance 是 Runtime/Hermes 上的执行工作区，不是 Workflow</span></div></div>
           {instance ? (
             <div className="kv-stack">
               <KeyValues data={{
                 instance_id: instance.instanceId,
                 status: instance.status || "unknown",
-                sop_type: instance.sopType || "-",
                 repo: instance.repo || "-",
                 repo_branch: instance.repoBranch || "-",
                 wiki_local_path: instance.wikiLocalPath || "-",
@@ -4118,20 +4106,38 @@ function InstanceOverview({
         </div>
 
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Workflow Binding</strong><span>Instance 引用的流程定义</span></div><button type="button" onClick={() => onOpenWorkflow()}>Open Workflow</button></div>
+          <div className="panel-head"><div><strong>Instance Health</strong><span>创建 Instance 后应优先确认 GitHub 与 TG 可用</span></div></div>
           <KeyValues data={{
-            workflow_id: binding?.workflowId || "-",
-            workflow_name: binding?.workflowName || "-",
-            workflow_version: binding?.workflowVersion || "-",
-            definition_source: binding?.definitionSource || "-",
+            workspace: instance?.workspaceStatus || "-",
+            registry: instance?.enabled === false ? "disabled" : "enabled",
+            github: capabilityStatus("git"),
+            telegram: capabilityStatus("telegram"),
+            run_index: instance?.runIndexStatus || "-",
+          }} />
+        </div>
+
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Available Workflow Context</strong><span>Workflow 执行时选择；从当前 Instance 进入时会默认选中它</span></div><button type="button" onClick={() => onOpenWorkflow()}>Open Workflow</button></div>
+          <KeyValues data={{
+            binding_status: workflowBindingStatus,
+            compatibility_workflow: binding?.workflowId || "-",
+            definition_source: binding?.definitionSource || "stateless catalog",
             definition_path: binding?.definitionPath || "-",
-            binding_status: binding?.bindingStatus || "-",
           }} />
         </div>
 
         <div className="flow-panel">
           <div className="panel-head"><div><strong>Capabilities</strong><span>工作区级依赖能力</span></div></div>
           <CapabilityGrid capabilities={instance?.capabilities || {}} />
+        </div>
+
+        <div className="flow-panel">
+          <div className="panel-head"><div><strong>Execution Summary</strong><span>Run 属于当前 Instance；Workflow Definition 执行时再选择</span></div></div>
+          <div className="workflow-metrics compact-metrics">
+            <Metric label="Workflow Runs" value={instance?.executionCount ?? runs.length} subtext={latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)}` : "no run"} />
+            <Metric label="Artifacts" value={instance?.artifactCount ?? runArtifacts.length} subtext={`${instance?.pageCount ?? latest?.pageCount ?? 0} pages`} />
+            <Metric label="Catalog Nodes" value={`${binding?.enabledNodeCount ?? managedNodes.length}/${binding?.nodeCount ?? dag?.nodes.length ?? 0}`} subtext="selected workflow context" />
+          </div>
         </div>
 
         <div className="flow-panel">
@@ -4213,12 +4219,27 @@ function CapabilityGrid({ capabilities }: { capabilities: Record<string, unknown
   return (
     <div className="capability-grid">
       {entries.map(([key, value]) => {
-        const text = String(value || "unknown");
+        const text = readableCapabilityStatus(value);
         const ok = ["ok", "ready", "configured"].includes(text);
         return <span key={key} className={`capability-chip ${ok ? "ok" : ""}`}><strong>{key}</strong>{text}</span>;
       })}
     </div>
   );
+}
+
+function readableCapabilityStatus(value: unknown) {
+  if (typeof value === "string") return value || "unknown";
+  if (typeof value === "boolean") return value ? "configured" : "missing";
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const explicit = record.status || record.state || record.result;
+    if (typeof explicit === "string" && explicit) return explicit;
+    if (record.enabled === false) return "disabled";
+    if (record.present === false) return "missing";
+    if (record.configured === false) return "missing";
+    if (record.enabled === true || record.present === true || record.configured === true) return "configured";
+  }
+  return value == null ? "unknown" : String(value);
 }
 
 function OverviewPage({
@@ -6397,8 +6418,7 @@ function RuntimeManagementStartDrawer({
   setInstanceCreateId,
   instanceCreateRepo,
   setInstanceCreateRepo,
-  instanceCreateSopType,
-  setInstanceCreateSopType,
+  suggestedInstanceCreateId,
   instanceTelegramTokenMode,
   setInstanceTelegramTokenMode,
   instanceTelegramToken,
@@ -6467,8 +6487,7 @@ function RuntimeManagementStartDrawer({
   setInstanceCreateId: (value: string) => void;
   instanceCreateRepo: string;
   setInstanceCreateRepo: (value: string) => void;
-  instanceCreateSopType: string;
-  setInstanceCreateSopType: (value: string) => void;
+  suggestedInstanceCreateId: string;
   instanceTelegramTokenMode: "global" | "override";
   setInstanceTelegramTokenMode: (value: "global" | "override") => void;
   instanceTelegramToken: string;
@@ -6503,8 +6522,7 @@ function RuntimeManagementStartDrawer({
   const isCreateInstance = action === "create-instance";
   const isDeleteInstance = action === "delete-instance";
   const isCreate = isCreateRuntime || isCreateInstance;
-  const generatedCreateInstanceId = generateInstanceId(instanceCreateRepo, instanceCreateSopType || "youtube-research-wiki");
-  const resolvedCreateInstanceId = instanceCreateId.trim() || generatedCreateInstanceId;
+  const resolvedCreateInstanceId = instanceCreateId.trim() || suggestedInstanceCreateId;
   const createReady = isCreateInstance ? Boolean(instanceCreateRepo.trim()) : true;
   const submitLabel = isCreateRuntime ? "Create Runtime" : isDeleteRuntime ? "Delete Runtime" : isCreateInstance ? "Create Instance" : "Delete Instance";
   const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
@@ -6783,9 +6801,10 @@ function RuntimeManagementStartDrawer({
               {githubReposError && <div className="inline-warning">Repo 列表暂不可用：{githubReposError}。可在 Advanced 里手填 repo。</div>}
               <label>
                 <span>Instance ID</span>
-                <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder={generatedCreateInstanceId} />
-                <span className="field-hint">默认自动生成，使用 instance- 前缀；需要固定命名时可以直接修改。</span>
+                <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder={suggestedInstanceCreateId} />
+                <span className="field-hint">留空时使用下方建议 ID；需要固定命名时可以直接修改。</span>
               </label>
+              <div className="inline-warning">Will create: {resolvedCreateInstanceId || "select a repo first"}。Instance 只是当前 Runtime 上的执行工作空间，不绑定 Workflow Definition。</div>
               <section className="selected-machine-summary current-runtime-summary">
                 <div>
                   <strong>Telegram Notification</strong>
@@ -6818,11 +6837,6 @@ function RuntimeManagementStartDrawer({
                   <span>Manual Repo</span>
                   <input value={instanceCreateRepo} onChange={(event) => setInstanceCreateRepo(event.target.value)} disabled={pending} placeholder="owner/repo-name" />
                   <span className="field-hint">仅当 GitHub repo 列表不可用或要使用未列出的 repo 时填写。</span>
-                </label>
-                <label>
-                  <span>Workspace Template</span>
-                  <input value={instanceCreateSopType} onChange={(event) => setInstanceCreateSopType(event.target.value)} disabled={pending} placeholder="youtube-research-wiki" />
-                  <span className="field-hint">初始化 Instance 工作区所用模板，不表示 Workflow Definition 属于该 Instance。</span>
                 </label>
               </details>
               <RuntimeInheritancePreviewPanel

@@ -1425,6 +1425,11 @@ pre {
   min-width: 0;
 }
 
+.compact-metrics {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 12px;
+}
+
 .workflow-metrics .metric-panel {
   min-height: 104px;
   min-width: 0;
