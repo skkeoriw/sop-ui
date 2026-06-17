@@ -158,6 +158,10 @@ function generateInstanceId(repo: string, sopType: string) {
   return `instance-${slugifyInstanceSeed(seed)}-${suffix || "new"}`;
 }
 
+function workflowIdForInstance(instance: Instance | undefined) {
+  return instance?.workflowBinding?.workflowId || instance?.sopType || "workflow";
+}
+
 function runtimeHost(runtime: Runtime | undefined) {
   return runtime?.clientIp || runtime?.machine || runtime?.metadata?.client_ip || "";
 }
@@ -276,10 +280,24 @@ function readRoute(): AppRoute {
   const parts = window.location.pathname.split("/").filter(Boolean);
   const empty = { nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
   if (parts[0] === "runtimes") {
+    if (parts[2] === "workflows") return { view: "workflows", ...empty };
+    if (parts[2] === "instances" && parts[4] === "workflows") {
+      const executionIndex = parts.indexOf("executions");
+      const runsIndex = parts.indexOf("runs");
+      const nodeIndex = parts.indexOf("nodes");
+      return {
+        view: nodeIndex >= 0 ? "nodes" : "workflow",
+        ...empty,
+        pipelineId: executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 1] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 1] || "") : "",
+        nodeId: nodeIndex >= 0 ? decodeURIComponent(parts[nodeIndex + 1] || "") : executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 2] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 2] || "") : "",
+        moduleId: nodeIndex >= 0 && parts[nodeIndex + 2] === "modules" ? decodeURIComponent(parts[nodeIndex + 3] || "") : "",
+      };
+    }
     if (parts[2] === "instances" && parts[4] === "workflow") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[6] || ""), nodeId: decodeURIComponent(parts[7] || "") };
     if (parts[2] === "instances" && parts[4] === "executions") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[5] || ""), nodeId: decodeURIComponent(parts[7] || "") };
     if (parts[2] === "instances" && parts[4] === "nodes") return { view: "nodes", ...empty, nodeId: decodeURIComponent(parts[5] || ""), moduleId: parts[6] === "modules" ? decodeURIComponent(parts[7] || "") : "" };
     if (parts[2] === "instances" && parts[3]) return { view: "instance", ...empty };
+    if (parts[2] === "instances") return { view: "instance", ...empty };
     return { view: "runtime", ...empty };
   }
   if (parts[0] === "instances") return { view: parts[2] === "workflow" ? "workflow" : "instance", ...empty, pipelineId: decodeURIComponent(parts[4] || ""), nodeId: decodeURIComponent(parts[5] || "") };
@@ -307,6 +325,14 @@ function routePath(view: AppView, entityId = "", secondaryId = "") {
   if (view === "machines") return "/machines";
   if (view === "settings") return "/settings";
   return "/workflows";
+}
+
+function routeRuntimeId(runtime: Runtime | undefined, runtimeId: string) {
+  return runtime?.id || runtimeId || "runtime";
+}
+
+function routeInstanceId(instance: Instance | undefined, instanceId: string) {
+  return instance?.instanceId || instanceId || "instance";
 }
 
 function readRouteContext() {
@@ -920,6 +946,7 @@ export default function App() {
   });
 
   const isRuntimeDirectory = viewMode === "runtime" && !hasRuntimeRouteId;
+  const isInstanceDirectory = viewMode === "instance" && !routeContext.instanceId;
   const runtimeDirectoryPageSize = 25;
   const runtimeQueryOptions = isRuntimeDirectory
     ? {
@@ -1769,7 +1796,7 @@ export default function App() {
   useEffect(() => {
     const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/workflows", "/nodes", "/artifacts", "/machines", "/settings"];
     if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
-      window.history.replaceState(null, "", `${routePath("workflows")}${window.location.search}`);
+      window.history.replaceState(null, "", `/runtimes${window.location.search}`);
       setRoute(readRoute());
     }
     const onPopState = () => setRoute(readRoute());
@@ -1916,18 +1943,20 @@ export default function App() {
   }
 
   function navigateTo(view: AppView, entityId = "", secondaryId = "") {
-    const baseRuntime = runtime?.id || runtimeId || "runtime";
-    const baseInstance = instance?.instanceId || instanceId || "instance";
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const baseInstance = routeInstanceId(instance, instanceId);
+    const baseWorkflow = workflowIdForInstance(instance);
     let nextPath = routePath(view, entityId, secondaryId);
     if (view === "runtime") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}`;
-    if (view === "instance") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}`;
+    if (view === "instance") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances`;
+    if (view === "workflows") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/workflows`;
     if (view === "workflow") {
-      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflow`;
-      if (entityId) nextPath += `/runs/${encodeURIComponent(entityId)}`;
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}`;
+      if (entityId) nextPath += `/executions/${encodeURIComponent(entityId)}`;
       if (secondaryId) nextPath += `/${encodeURIComponent(secondaryId)}`;
     }
     if (view === "nodes") {
-      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/nodes`;
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes`;
       if (entityId) nextPath += `/${encodeURIComponent(entityId)}`;
       if (secondaryId) nextPath += `/modules/${encodeURIComponent(secondaryId)}`;
     }
@@ -1956,10 +1985,27 @@ export default function App() {
     const baseRuntime = runtime?.id || runtimeId || "runtime";
     const nextPath = open
       ? `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}`
-      : `/runtimes/${encodeURIComponent(baseRuntime)}`;
+      : `/runtimes/${encodeURIComponent(baseRuntime)}/instances`;
     const nextUrl = `${nextPath}${window.location.search}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-    setRoute({ view: open ? "instance" : "runtime", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
+    setRoute({ view: "instance", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
+  }
+
+  function openWorkflowForInstance(targetInstanceId = instance?.instanceId || instanceId, pipelineId = "", nodeId = "") {
+    if (!targetInstanceId) return;
+    setInstanceId(targetInstanceId);
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const targetInstance = instances.find((item) => item.instanceId === targetInstanceId)
+      || (instance?.instanceId === targetInstanceId ? instance : undefined);
+    const workflowId = workflowIdForInstance(targetInstance);
+    let nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(targetInstanceId)}/workflows/${encodeURIComponent(workflowId)}`;
+    if (pipelineId) nextPath += `/executions/${encodeURIComponent(pipelineId)}`;
+    if (nodeId) nextPath += `/${encodeURIComponent(nodeId)}`;
+    const nextUrl = `${nextPath}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "workflow", nodeId, pipelineId, artifactId: "", moduleId: "" });
+    if (pipelineId) setSelectedRunId(pipelineId);
+    if (nodeId) setSelectedStageId(nodeId);
   }
 
   function selectManagedNode(nodeId: string, moduleId = selectedNodeModuleId || "basic") {
@@ -2036,19 +2082,16 @@ export default function App() {
         </div>
         <nav className="rail-nav" aria-label="Primary">
           <button type="button" className={`rail-nav-item ${viewMode === "runtime" ? "active" : ""}`} onClick={() => navigateTo("runtime")}>
-            <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimeTotal || "-"} hosts` : `${instanceTotal || "-"} instances`}</small>
-          </button>
-          <button type="button" className={`rail-nav-item ${viewMode === "workflows" ? "active" : ""}`} onClick={() => navigateTo("workflows")}>
-            <Workflow size={17} /><span>Workflows</span><small>{workflowDefinitions.length || "-"} definitions</small>
+            <Server size={17} /><span>Runtime</span><small>{runtime?.localStatus || runtime?.status || "detail"}</small>
           </button>
           <button type="button" className={`rail-nav-item ${viewMode === "instance" ? "active" : ""}`} onClick={() => navigateTo("instance")}>
-            <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
+            <LayoutDashboard size={17} /><span>Instance</span><small>{instanceTotal || instances.length || "-"} registry</small>
           </button>
-          <button type="button" className={`rail-nav-item ${viewMode === "workflow" ? "active" : ""}`} onClick={() => navigateTo("workflow")}>
-            <Network size={17} /><span>Executions</span><small>{runs.length || "-"} runs</small>
+          <button type="button" className={`rail-nav-item ${viewMode === "workflows" || viewMode === "workflow" ? "active" : ""}`} onClick={() => navigateTo("workflows")}>
+            <Workflow size={17} /><span>Workflow</span><small>{workflowDefinitions.length || "-"} definitions</small>
           </button>
           <button type="button" className={`rail-nav-item ${viewMode === "nodes" ? "active" : ""}`} onClick={() => navigateTo("nodes")}>
-            <Boxes size={17} /><span>Node Defs</span><small>{managedNodes.length || "-"} definitions</small>
+            <Boxes size={17} /><span>Node</span><small>{managedNodes.length || "-"} definitions</small>
           </button>
           <button type="button" className={`rail-nav-item ${viewMode === "machines" ? "active" : ""}`} onClick={() => navigateTo("machines")}>
             <Server size={17} /><span>Machines</span><small>{machinesQuery.data?.total ?? "-"}</small>
@@ -2159,7 +2202,7 @@ export default function App() {
             loading={workflowsQuery.isLoading}
             onOpenRuntime={(id) => selectRuntime(id)}
             onOpenInstance={(id) => selectInstance(id, true)}
-            onOpenExecutions={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
+            onOpenExecutions={() => openWorkflowForInstance(instance?.instanceId || instanceId, selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
             onOpenManagement={(action) => {
               setRuntimeManagementAction(action);
               setRuntimeManagementOpen(true);
@@ -2196,21 +2239,10 @@ export default function App() {
             selectedRun={selectedRun}
             loading={runtimesQuery.isLoading || instancesQuery.isLoading}
             mode={mode}
-            onSelectRelationshipInstance={(id) => selectInstance(id)}
+            onSelectRelationshipInstance={(id) => setInstanceId(id)}
             onOpenInstance={(id) => selectInstance(id, true)}
             managementInstance={managementInstance}
-            onOpenWorkflow={(id, pipelineId = "", nodeId = "") => {
-              setInstanceId(id);
-              const baseRuntime = runtime?.id || runtimeId || "runtime";
-              let nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(id)}/workflow`;
-              if (pipelineId) nextPath += `/runs/${encodeURIComponent(pipelineId)}`;
-              if (nodeId) nextPath += `/${encodeURIComponent(nodeId)}`;
-              const nextUrl = `${nextPath}${window.location.search}`;
-              if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-              setRoute({ view: "workflow", nodeId, pipelineId, artifactId: "", moduleId: "" });
-              setSelectedRunId(pipelineId);
-              setSelectedStageId(nodeId);
-            }}
+            onOpenWorkflow={openWorkflowForInstance}
             onOpenManagement={(action) => {
               setRuntimeManagementAction(action);
               setRuntimeManagementOpen(true);
@@ -2221,6 +2253,7 @@ export default function App() {
             runtime={runtime}
             instance={instance}
             instances={instances}
+            directoryMode={isInstanceDirectory}
             instanceTotal={instanceTotal}
             instanceSource={instanceSource}
             runs={runs}
@@ -2228,8 +2261,14 @@ export default function App() {
             managedNodes={managedNodes}
             runArtifacts={runArtifactsQuery.data || []}
             onSelectInstance={(id) => selectInstance(id, true)}
-            onOpenWorkflow={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "", selectedStage?.id || dag?.nodes[0]?.id || "")}
-            onOpenExecutions={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
+            onOpenWorkflow={(targetInstanceId) => {
+              if (targetInstanceId) {
+                openWorkflowForInstance(targetInstanceId);
+                return;
+              }
+              openWorkflowForInstance(instance?.instanceId || instanceId, selectedRun?.pipelineId || runs[0]?.pipelineId || "", selectedStage?.id || dag?.nodes[0]?.id || "");
+            }}
+            onOpenExecutions={() => openWorkflowForInstance(instance?.instanceId || instanceId, selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
             onOpenNodes={() => navigateTo("nodes")}
           />
         ) : viewMode === "workflow" ? (
@@ -3068,7 +3107,7 @@ function RuntimeOverview({
             <span>{instanceSource || "runtime-spi"}</span>
           </div>
         </div>
-        <div className="relationship-columns">
+        <div className="relationship-columns compact">
           <div className="relationship-column">
             <div className="relationship-column-head">
               <strong>Instances</strong>
@@ -3202,20 +3241,7 @@ function RuntimeOverview({
             <div><strong>Host Detail</strong><span>机器、通道和 SPI 的当前状态</span></div>
             <span className={`status-pill ${runtimeStatus}`}>{runtime?.localStatus || runtime?.status || "unknown"}</span>
           </div>
-          <div className="runtime-detail-body">
-            <KeyValues data={{
-              runtime_id: runtime?.id || "-",
-              display_name: runtime?.displayName || runtime?.name || "-",
-              endpoint: runtime?.channelUrl || runtime?.endpoint || "-",
-              public_endpoint: runtimeMetadataRows.public || "-",
-              spi_base_url: runtime?.spiBaseUrl || `${runtime?.endpoint || ""}/api/sop`,
-              ...runtimeMetadataRows,
-              client_ip: runtime?.clientIp || runtime?.machine || "-",
-              local_port: runtime?.localPort || "-",
-              supported_sop_types: supportedTypes,
-              updated_at: runtime?.updatedAt || "-",
-            }} />
-          </div>
+          <RuntimeHostDetailGroups runtime={runtime} metadataRows={runtimeMetadataRows} supportedTypes={supportedTypes} />
         </div>
 
         <div className="flow-panel runtime-health-panel">
@@ -3471,6 +3497,94 @@ function RuntimeProbeList({ results, running }: { results: RuntimeProbeResult[];
         </div>
       ))}
     </div>
+  );
+}
+
+function RuntimeHostDetailGroups({
+  runtime,
+  metadataRows,
+  supportedTypes,
+}: {
+  runtime: Runtime | undefined;
+  metadataRows: Record<string, string>;
+  supportedTypes: string;
+}) {
+  const channelUrl = runtime?.channelUrl || runtime?.endpoint || "";
+  const spiUrl = runtime?.spiBaseUrl || (channelUrl ? `${channelUrl.replace(/\/+$/, "")}/api/sop` : "");
+  const identity = {
+    runtime_id: runtime?.id || "-",
+    display_name: runtime?.displayName || runtime?.name || "-",
+    status: runtime?.localStatus || runtime?.status || "unknown",
+    supported_sop_types: supportedTypes,
+    updated_at: runtime?.updatedAt || "-",
+  };
+  const network = {
+    client_ip: runtime?.clientIp || runtime?.machine || "-",
+    local_port: runtime?.localPort || "-",
+    channel_name: runtime?.channelName || metadataRows.channel_name || "-",
+    channel_url: channelUrl || "-",
+    public_endpoint: metadataRows.public || "-",
+  };
+  const spi = {
+    spi_base_url: spiUrl || "-",
+    endpoint_url: metadataRows.endpoint_url || "-",
+    ui_url: metadataRows.ui_url || "-",
+    wiki_repo: metadataRows.wiki_repo || "-",
+  };
+  const hermes = {
+    hermes_webhook_url: runtime?.metadata?.hermes_webhook_url || "-",
+    webhook_public_host: runtime?.metadata?.webhook_public_host || "-",
+    hermes_webhook_port: runtime?.metadata?.hermes_webhook_port || "-",
+    hermes_smoke_route: runtime?.metadata?.hermes_smoke_route || "-",
+  };
+  const commandRows = Object.fromEntries(
+    Object.entries(metadataRows).filter(([key]) => key.endsWith("_command") || key.includes("install_command"))
+  );
+  const knownKeys = new Set([
+    ...Object.keys(identity),
+    ...Object.keys(network),
+    ...Object.keys(spi),
+    ...Object.keys(hermes),
+    ...Object.keys(commandRows),
+    "runtime_id",
+    "display_name",
+    "title",
+    "type",
+  ]);
+  const extraRows = Object.fromEntries(Object.entries(metadataRows).filter(([key]) => !knownKeys.has(key)));
+  return (
+    <div className="runtime-detail-groups">
+      <RuntimeDetailGroup title="Identity" summary={runtime?.id || "runtime"} defaultOpen data={identity} />
+      <RuntimeDetailGroup title="Network / Channel" summary={channelUrl || "missing channel"} defaultOpen data={network} />
+      <RuntimeDetailGroup title="SOP SPI" summary={spiUrl || "missing spi"} data={spi} />
+      <RuntimeDetailGroup title="Hermes" summary={hermes.hermes_webhook_url !== "-" ? "webhook configured" : "webhook metadata"} data={hermes} />
+      <RuntimeDetailGroup title="Commands" summary={`${Object.keys(commandRows).length} command fields`} data={commandRows} />
+      <RuntimeDetailGroup title="Raw Metadata" summary={`${Object.keys(extraRows).length} extra fields`} data={extraRows} />
+    </div>
+  );
+}
+
+function RuntimeDetailGroup({
+  title,
+  summary,
+  data,
+  defaultOpen = false,
+}: {
+  title: string;
+  summary: string;
+  data: Record<string, unknown>;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details className="runtime-detail-group" open={defaultOpen}>
+      <summary>
+        <strong>{title}</strong>
+        <span>{summary}</span>
+      </summary>
+      <div className="runtime-detail-group-body">
+        <KeyValues data={data} />
+      </div>
+    </details>
   );
 }
 
@@ -3766,6 +3880,7 @@ function InstanceOverview({
   runtime,
   instance,
   instances,
+  directoryMode,
   instanceTotal,
   instanceSource,
   runs,
@@ -3780,6 +3895,7 @@ function InstanceOverview({
   runtime: Runtime | undefined;
   instance: Instance | undefined;
   instances: Instance[];
+  directoryMode: boolean;
   instanceTotal: number;
   instanceSource: string;
   runs: Run[];
@@ -3787,7 +3903,7 @@ function InstanceOverview({
   managedNodes: NodeRegistryItem[];
   runArtifacts: Artifact[];
   onSelectInstance: (instanceId: string) => void;
-  onOpenWorkflow: () => void;
+  onOpenWorkflow: (instanceId?: string) => void;
   onOpenExecutions: () => void;
   onOpenNodes: () => void;
 }) {
@@ -3796,6 +3912,8 @@ function InstanceOverview({
   const latestFailure = runs.find((run) => run.status === "failed") || (latest?.status === "failed" ? latest : undefined);
   const [runSearch, setRunSearch] = useState("");
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | StageStatus>("all");
+  const [instanceSearch, setInstanceSearch] = useState("");
+  const [instanceStatusFilter, setInstanceStatusFilter] = useState("all");
   const visibleInstanceRuns = useMemo(() => {
     const query = runSearch.trim().toLowerCase();
     return runs.filter((run) => {
@@ -3804,6 +3922,80 @@ function InstanceOverview({
       return matchedStatus && (!query || searchable.includes(query));
     });
   }, [runSearch, runStatusFilter, runs]);
+  const visibleInstances = useMemo(() => {
+    const query = instanceSearch.trim().toLowerCase();
+    return instances.filter((item) => {
+      const matchedStatus = instanceStatusFilter === "all" || item.status === instanceStatusFilter;
+      const searchable = [item.instanceId, item.title, item.repo, item.sopType, item.workflowBinding?.workflowName, item.status].filter(Boolean).join(" ").toLowerCase();
+      return matchedStatus && (!query || searchable.includes(query));
+    });
+  }, [instanceSearch, instanceStatusFilter, instances]);
+
+  if (directoryMode) {
+    const readyCount = instances.filter((item) => item.status === "ready" || item.status === "running").length;
+    const failedCount = instances.filter((item) => item.status === "failed").length;
+    const workflowCount = instances.filter((item) => item.workflowBinding).length;
+    return (
+      <section className="instance-overview">
+        <div className="workflow-command-bar instance-command">
+          <div className="workflow-title">
+            <span className="status-pill done"><LayoutDashboard size={14} />Instance Registry</span>
+            <div className="context-path">
+              <span>Runtime Host</span>
+              <strong>{runtime?.displayName || runtime?.name || runtime?.id || "host"}</strong>
+              <span>/ Instances</span>
+            </div>
+            <div>
+              <h1>当前 Runtime 的 Instance 列表</h1>
+              <p>{runtime?.endpoint || "No endpoint"} · {instanceSource || "runtime-spi"}</p>
+            </div>
+          </div>
+          <div className="workflow-metrics">
+            <Metric label="Instances" value={instanceTotal} subtext={`${instances.length} loaded`} />
+            <Metric label="Ready" value={readyCount} subtext={`${failedCount} failed`} />
+            <Metric label="Workflow Bindings" value={workflowCount} subtext="instance scoped definitions" />
+            <Metric label="Selected" value={instance?.instanceId ? shortId(instance.instanceId) : "-"} subtext={instance?.status || "none"} />
+          </div>
+        </div>
+
+        <section className="flow-panel instance-registry-panel">
+          <div className="panel-head">
+            <div><strong>Instance Registry</strong><span>选择 Instance 进入详情；Workflow 按钮进入该 Instance 绑定的 workflow 详情。</span></div>
+            <span>{visibleInstances.length}/{instanceTotal}</span>
+          </div>
+          <div className="execution-tools instance-tools">
+            <label className="search-box">
+              <Search size={14} />
+              <input value={instanceSearch} onChange={(event) => setInstanceSearch(event.target.value)} placeholder="Search instance" />
+            </label>
+            <label className="filter-box">
+              <SlidersHorizontal size={14} />
+              <select value={instanceStatusFilter} onChange={(event) => setInstanceStatusFilter(event.target.value)}>
+                <option value="all">All status</option>
+                <option value="ready">Ready</option>
+                <option value="running">Running</option>
+                <option value="failed">Failed</option>
+                <option value="disabled">Disabled</option>
+                <option value="initializing">Initializing</option>
+              </select>
+            </label>
+          </div>
+          <div className="instance-table">
+            {visibleInstances.map((item) => (
+              <InstanceRow
+                key={item.instanceId}
+                instance={item}
+                onOpen={() => onSelectInstance(item.instanceId)}
+                onWorkflow={() => onOpenWorkflow(item.instanceId)}
+              />
+            ))}
+            {!visibleInstances.length && <LoadingOrEmpty loading={false} text={instances.length ? "没有匹配的 Instance" : "当前 Runtime 没有 Instance"} />}
+          </div>
+        </section>
+      </section>
+    );
+  }
+
   return (
     <section className="instance-overview">
       <div className="workflow-command-bar instance-command">
@@ -3849,7 +4041,7 @@ function InstanceOverview({
         </div>
 
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Workflow Binding</strong><span>Instance 引用的流程定义</span></div><button type="button" onClick={onOpenWorkflow}>Open Workflow</button></div>
+          <div className="panel-head"><div><strong>Workflow Binding</strong><span>Instance 引用的流程定义</span></div><button type="button" onClick={() => onOpenWorkflow()}>Open Workflow</button></div>
           <KeyValues data={{
             workflow_id: binding?.workflowId || "-",
             workflow_name: binding?.workflowName || "-",

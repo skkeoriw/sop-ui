@@ -117,7 +117,7 @@ pre {
 }
 
 .app-shell.single-shell {
-  grid-template-columns: 204px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
 }
 
 .app-shell.single-shell.rail-collapsed {
@@ -224,7 +224,7 @@ pre {
 
 .rail-nav button small {
   justify-self: end;
-  max-width: 74px;
+  max-width: 62px;
   overflow: hidden;
   color: var(--muted);
   font-size: 11px;
@@ -4740,6 +4740,11 @@ pre {
   align-items: stretch;
 }
 
+.relationship-columns.compact {
+  grid-template-columns: minmax(240px, .9fr) minmax(240px, .95fr) minmax(240px, .95fr) minmax(320px, 1.15fr);
+  align-items: start;
+}
+
 .relationship-column,
 .relationship-detail {
   min-width: 0;
@@ -4782,8 +4787,8 @@ pre {
 }
 
 .relationship-list {
-  min-height: 170px;
-  max-height: 380px;
+  min-height: 0;
+  max-height: 260px;
   display: grid;
   align-content: start;
   gap: 8px;
@@ -5022,6 +5027,74 @@ pre {
 
 .runtime-detail-body .kv-row {
   grid-template-columns: 136px minmax(0, 1fr);
+}
+
+.runtime-detail-groups {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.runtime-detail-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.runtime-detail-group summary {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  padding: 10px 12px;
+  color: var(--text);
+  list-style: none;
+}
+
+.runtime-detail-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.runtime-detail-group summary::before {
+  content: "›";
+  grid-row: 1;
+  grid-column: 1;
+  transform: translateX(-2px) rotate(0deg);
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.runtime-detail-group[open] summary::before {
+  transform: translateX(-2px) rotate(90deg);
+}
+
+.runtime-detail-group summary strong {
+  grid-column: 1;
+  padding-left: 14px;
+  font-size: 13px;
+}
+
+.runtime-detail-group summary span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-detail-group-body {
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+  padding: 10px;
+}
+
+.runtime-detail-group-body .kv-row {
+  grid-template-columns: minmax(132px, .32fr) minmax(0, 1fr);
 }
 
 .runtime-health-grid {
