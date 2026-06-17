@@ -4240,6 +4240,7 @@ pre {
   .settings-grid,
   .settings-section-layout,
   .machines-workspace,
+  .instance-directory-grid,
   .workflow-catalog-grid {
     grid-template-columns: 1fr;
   }
@@ -4383,6 +4384,7 @@ pre {
   .runtime-compact-header,
   .settings-section-layout,
   .machines-workspace,
+  .instance-directory-grid,
   .workflow-catalog-grid,
   .runtime-detail-grid,
   .relationship-columns,
@@ -5943,6 +5945,32 @@ pre {
   display: grid;
   grid-template-columns: minmax(300px, .72fr) minmax(0, 1.45fr);
   gap: 12px;
+}
+
+.instance-directory-page {
+  display: grid;
+  gap: 12px;
+}
+
+.instance-directory-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, .72fr);
+  gap: 12px;
+}
+
+.instance-directory-page .flow-panel {
+  min-height: 0;
+  margin-bottom: 0;
+}
+
+.instance-directory-inspector {
+  align-content: start;
+}
+
+.instance-inspector-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
 }
 
 .workflow-catalog-page .flow-panel {

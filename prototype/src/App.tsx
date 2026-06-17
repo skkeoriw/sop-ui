@@ -3991,61 +3991,83 @@ function InstanceOverview({
     const failedCount = instances.filter((item) => item.status === "failed").length;
     const workflowCount = instances.filter((item) => item.workflowBinding).length;
     return (
-      <section className="instance-overview">
-        <div className="workflow-command-bar instance-command">
-          <div className="workflow-title">
+      <section className="instance-overview instance-directory-page">
+        <section className="ops-page-header">
+          <div className="ops-page-title">
             <span className="status-pill done"><LayoutDashboard size={14} />Instance Registry</span>
-            <div className="context-path">
-              <span>Runtime Host</span>
-              <strong>{runtime?.displayName || runtime?.name || runtime?.id || "host"}</strong>
-              <span>/ Instances</span>
-            </div>
             <div>
-              <h1>当前 Runtime 的 Instance 列表</h1>
-              <p>{runtime?.endpoint || "No endpoint"} · {instanceSource || "runtime-spi"}</p>
+              <h1>Instance Registry</h1>
+              <p>{runtime?.displayName || runtime?.name || runtime?.id || "Runtime"} · {runtime?.endpoint || "No endpoint"} · {instanceSource || "runtime-spi"}</p>
             </div>
           </div>
-          <div className="workflow-metrics">
-            <Metric label="Instances" value={instanceTotal} subtext={`${instances.length} loaded`} />
-            <Metric label="Ready" value={readyCount} subtext={`${failedCount} failed`} />
-            <Metric label="Workflow Bindings" value={workflowCount} subtext="instance scoped definitions" />
-            <Metric label="Selected" value={instance?.instanceId ? shortId(instance.instanceId) : "-"} subtext={instance?.status || "none"} />
+          <div className="ops-header-chips">
+            <span>{instanceTotal} instances</span>
+            <span>{readyCount} ready</span>
+            <span>{failedCount} failed</span>
+            <span>{workflowCount} workflow bindings</span>
           </div>
-        </div>
+        </section>
 
-        <section className="flow-panel instance-registry-panel">
-          <div className="panel-head">
-            <div><strong>Instance Registry</strong><span>选择 Instance 进入详情；Workflow 按钮进入该 Instance 绑定的 workflow 详情。</span></div>
-            <span>{visibleInstances.length}/{instanceTotal}</span>
+        <section className="ops-toolbar">
+          <label className="search-box">
+            <Search size={14} />
+            <input value={instanceSearch} onChange={(event) => setInstanceSearch(event.target.value)} placeholder="Search instance" />
+          </label>
+          <label className="filter-box">
+            <SlidersHorizontal size={14} />
+            <select value={instanceStatusFilter} onChange={(event) => setInstanceStatusFilter(event.target.value)}>
+              <option value="all">All status</option>
+              <option value="ready">Ready</option>
+              <option value="running">Running</option>
+              <option value="failed">Failed</option>
+              <option value="disabled">Disabled</option>
+              <option value="initializing">Initializing</option>
+            </select>
+          </label>
+          <span className="ops-toolbar-count">{visibleInstances.length}/{instanceTotal} instances</span>
+        </section>
+
+        <section className="instance-directory-grid">
+          <div className="flow-panel instance-registry-panel">
+            <div className="panel-head">
+              <div><strong>Instance List</strong><span>选择 Instance 进入详情；Workflow 按钮进入绑定 workflow。</span></div>
+              <span>{visibleInstances.length} shown</span>
+            </div>
+            <div className="instance-table">
+              {visibleInstances.map((item) => (
+                <InstanceRow
+                  key={item.instanceId}
+                  instance={item}
+                  onOpen={() => onSelectInstance(item.instanceId)}
+                  onWorkflow={() => onOpenWorkflow(item.instanceId)}
+                />
+              ))}
+              {!visibleInstances.length && <LoadingOrEmpty loading={false} text={instances.length ? "没有匹配的 Instance" : "当前 Runtime 没有 Instance"} />}
+            </div>
           </div>
-          <div className="execution-tools instance-tools">
-            <label className="search-box">
-              <Search size={14} />
-              <input value={instanceSearch} onChange={(event) => setInstanceSearch(event.target.value)} placeholder="Search instance" />
-            </label>
-            <label className="filter-box">
-              <SlidersHorizontal size={14} />
-              <select value={instanceStatusFilter} onChange={(event) => setInstanceStatusFilter(event.target.value)}>
-                <option value="all">All status</option>
-                <option value="ready">Ready</option>
-                <option value="running">Running</option>
-                <option value="failed">Failed</option>
-                <option value="disabled">Disabled</option>
-                <option value="initializing">Initializing</option>
-              </select>
-            </label>
-          </div>
-          <div className="instance-table">
-            {visibleInstances.map((item) => (
-              <InstanceRow
-                key={item.instanceId}
-                instance={item}
-                onOpen={() => onSelectInstance(item.instanceId)}
-                onWorkflow={() => onOpenWorkflow(item.instanceId)}
-              />
-            ))}
-            {!visibleInstances.length && <LoadingOrEmpty loading={false} text={instances.length ? "没有匹配的 Instance" : "当前 Runtime 没有 Instance"} />}
-          </div>
+
+          <aside className="flow-panel instance-directory-inspector">
+            <div className="panel-head">
+              <div><strong>{instance?.title || "Instance Detail"}</strong><span>{instance?.instanceId || "No instance selected"}</span></div>
+              <span className={`status-pill ${instance?.status === "failed" ? "failed" : instance?.status === "running" ? "running" : "done"}`}>{instance?.status || "ready"}</span>
+            </div>
+            {instance ? (
+              <div className="instance-inspector-body">
+                <KeyValues data={{
+                  instance_id: instance.instanceId,
+                  repo: instance.repo || "-",
+                  workflow: instance.workflowBinding?.workflowName || instance.sopType || "-",
+                  latest_run: instance.latestExecution?.pipelineId || "-",
+                  runs: instance.executionCount ?? "-",
+                  artifacts: instance.artifactCount ?? 0,
+                }} />
+                <div className="relationship-detail-actions">
+                  <button type="button" onClick={() => onSelectInstance(instance.instanceId)}>Open Instance</button>
+                  <button type="button" className="primary" onClick={() => onOpenWorkflow(instance.instanceId)}>Open Workflow</button>
+                </div>
+              </div>
+            ) : <Empty text="选择一个 Instance 查看详情" />}
+          </aside>
         </section>
       </section>
     );
