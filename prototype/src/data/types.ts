@@ -42,6 +42,22 @@ export interface WorkflowBinding {
   bindingStatus: string;
 }
 
+export interface WorkflowDefinition {
+  workflowId: string;
+  name: string;
+  title: string;
+  description: string;
+  version?: string;
+  sopType?: string;
+  interpreter: "generic-dag" | "runtime-management" | string;
+  workflowType: "business" | "management" | string;
+  definitionSource: string;
+  definitionPath: string;
+  nodeCount?: number;
+  enabledNodeCount?: number;
+  actions?: Array<{ id: string; title: string; scope: string; description?: string }>;
+}
+
 export interface Instance {
   id: string;
   instanceId: string;
@@ -535,6 +551,14 @@ export interface WorkflowSettingsResolve {
   payloadKeys?: string[];
 }
 
+export interface GitHubRepoOption {
+  fullName: string;
+  name: string;
+  owner: string;
+  private?: boolean;
+  defaultBranch?: string;
+}
+
 export interface TriggerResult {
   status: string;
   pipelineId?: string;
@@ -545,6 +569,7 @@ export interface SopDataProvider {
   mode: DataMode;
   listRuntimeHosts?(options?: ListQueryOptions): Promise<RuntimeList>;
   listRuntimes(options?: ListQueryOptions): Promise<Runtime[]>;
+  listWorkflowDefinitions?(runtime?: Runtime): Promise<WorkflowDefinition[]>;
   listRuntimeInstances?(runtime: Runtime, options?: ListQueryOptions): Promise<InstanceList>;
   listInstances(runtime: Runtime, options?: ListQueryOptions): Promise<Instance[]>;
   getDag(runtime: Runtime, instanceId: string): Promise<Dag>;

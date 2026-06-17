@@ -1,4 +1,4 @@
-import type { ListQueryOptions, MachineConfig, MachineList, MachineSecretConfig, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput, WorkflowSettingsResolve } from "./types";
+import type { GitHubRepoOption, ListQueryOptions, MachineConfig, MachineList, MachineSecretConfig, RuntimeInheritancePreview, RuntimeManagementConfigSaveInput, WorkflowSettingsResolve } from "./types";
 
 const DEFAULT_CONTROL_PLANE_API = "https://sop-control-plane.hb67egcim4.workers.dev";
 
@@ -132,6 +132,26 @@ export const controlPlaneProvider = {
       presentKeys: Array.isArray(raw.present_keys) ? raw.present_keys.map(String) : [],
       payloadKeys: Array.isArray(raw.payload_keys) ? raw.payload_keys.map(String) : [],
     };
+  },
+
+  async listGithubRepos(options: { q?: string } = {}): Promise<GitHubRepoOption[]> {
+    const query = toQuery({ page: 1, pageSize: 100, q: options.q || "" });
+    const raw = await requestJsonFallback<Record<string, unknown>>([
+      `${controlPlaneApiUrl}/api/sop/v1/github/repos${query}`,
+      `${controlPlaneApiUrl}/api/github/repos${query}`,
+    ]);
+    const repos = Array.isArray(raw.repos) ? raw.repos as Array<Record<string, unknown>> : Array.isArray(raw.items) ? raw.items as Array<Record<string, unknown>> : [];
+    return repos.map((repo) => {
+      const fullName = String(repo.full_name || repo.fullName || repo.name || "");
+      const [owner, name] = fullName.includes("/") ? fullName.split("/", 2) : [String(repo.owner || ""), fullName];
+      return {
+        fullName,
+        name: String(repo.repo || repo.name || name || fullName),
+        owner: String(repo.owner || owner || ""),
+        private: Boolean(repo.private),
+        defaultBranch: repo.default_branch ? String(repo.default_branch) : repo.defaultBranch ? String(repo.defaultBranch) : undefined,
+      };
+    }).filter((repo) => repo.fullName);
   },
 
   async saveSettings(input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview> {

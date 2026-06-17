@@ -24,11 +24,47 @@ import type {
   RuntimeList,
   RunList,
   SopDataProvider,
-  TriggerInput
+  TriggerInput,
+  WorkflowDefinition
 } from "./types";
 
 const runsByRuntime = new Map<string, RunMock[]>(mockRuntimes.map((runtime) => [runtime.id, baseRuns.map((run) => ({ ...run }))]));
 const draftByRuntime = new Map<string, NodeDraft[]>();
+
+const mockWorkflowDefinitions: WorkflowDefinition[] = [
+  {
+    workflowId: "runtime-management",
+    name: "runtime-management",
+    title: "Runtime Management",
+    description: "管理 Runtime / Instance 生命周期，由 RuntimeManagementInterpreter 解释分支和强副作用节点。",
+    version: "0.2",
+    sopType: "runtime-management",
+    interpreter: "runtime-management",
+    workflowType: "management",
+    definitionSource: "agent-brain-plugins",
+    definitionPath: "youtube-wiki/templates/runtime-management-sop/sop.yaml",
+    actions: [
+      { id: "create-runtime", title: "Create Runtime", scope: "runtime" },
+      { id: "create-instance", title: "Create Instance", scope: "instance" },
+      { id: "delete-instance", title: "Delete Instance", scope: "instance" },
+      { id: "delete-runtime", title: "Delete Runtime", scope: "runtime" },
+    ],
+  },
+  {
+    workflowId: "youtube-research-wiki",
+    name: "youtube-research-wiki",
+    title: "YouTube Research Wiki",
+    description: "普通业务 SOP，执行时选择 Runtime 和 Instance，Run 产物写入所选 Instance。",
+    version: "2.0",
+    sopType: "youtube-research-wiki",
+    interpreter: "generic-dag",
+    workflowType: "business",
+    definitionSource: "agent-brain-plugins",
+    definitionPath: "youtube-wiki/templates/wiki-repo/sop.yaml",
+    nodeCount: stages.length,
+    enabledNodeCount: stages.length,
+  },
+];
 
 const mockNodeDraftSchema: NodeDraftSchema = {
   schemaId: "node-draft-schema/v1",
@@ -304,6 +340,11 @@ export const mockProvider: SopDataProvider = {
 
   async listRuntimes(options) {
     return (await this.listRuntimeHosts!(options)).runtimes;
+  },
+
+  async listWorkflowDefinitions() {
+    await delay();
+    return mockWorkflowDefinitions;
   },
 
   async listRuntimeInstances(target, options): Promise<InstanceList> {

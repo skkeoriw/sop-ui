@@ -50,6 +50,7 @@ import type {
   NodeDraftInput,
   NodeDraftSchema,
   NodeDetail,
+  GitHubRepoOption,
   NodeConfig,
   NodeEvent,
   MachineConfig,
@@ -65,11 +66,12 @@ import type {
   RuntimeInheritancePreview,
   Runtime,
   SopDataProvider,
-  StageStatus
+  StageStatus,
+  WorkflowDefinition
 } from "./data/types";
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
-type AppView = "runtime" | "instance" | "workflow" | "nodes" | "machines" | "settings";
+type AppView = "runtime" | "instance" | "workflows" | "workflow" | "nodes" | "machines" | "settings";
 type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string };
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
 type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
@@ -139,6 +141,20 @@ function stringFromStorage(value: unknown, fallback = "") {
 function machineRuntimeId(machine: MachineConfig | undefined) {
   if (!machine?.host) return "";
   return `runtime-${machine.host.replace(/[^0-9A-Za-z]+/g, "-").replace(/^-+|-+$/g, "")}`;
+}
+
+function slugifyInstanceSeed(value: string) {
+  return (value || "workspace")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 42) || "workspace";
+}
+
+function generateInstanceId(repo: string, sopType: string) {
+  const seed = repo.split("/").pop() || sopType || "workspace";
+  const suffix = Math.abs(Array.from(`${repo}:${sopType}`).reduce((sum, char) => sum + char.charCodeAt(0), 0)).toString(36).slice(0, 4);
+  return `instance-${slugifyInstanceSeed(seed)}-${suffix || "new"}`;
 }
 
 function runtimeHost(runtime: Runtime | undefined) {
@@ -257,6 +273,7 @@ function readRoute(): AppRoute {
   }
   if (parts[0] === "instances") return { view: parts[2] === "workflow" ? "workflow" : "instance", ...empty, pipelineId: decodeURIComponent(parts[4] || ""), nodeId: decodeURIComponent(parts[5] || "") };
   if (parts[0] === "runs") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
+  if (parts[0] === "workflows") return { view: "workflows", ...empty };
   if (parts[0] === "workflow") {
     const offset = parts[1] === "runs" ? 2 : 1;
     return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[offset] || ""), nodeId: decodeURIComponent(parts[offset + 1] || "") };
@@ -273,10 +290,12 @@ function readRoute(): AppRoute {
 function routePath(view: AppView, entityId = "", secondaryId = "") {
   if (view === "runtime") return "/runtimes";
   if (view === "instance") return "/instances";
+  if (view === "workflows") return "/workflows";
   if (view === "nodes") return entityId ? `/nodes/${encodeURIComponent(entityId)}${secondaryId ? `/modules/${encodeURIComponent(secondaryId)}` : ""}` : "/nodes";
   if (view === "workflow") return entityId ? `/workflow/runs/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/workflow";
   if (view === "machines") return "/machines";
-  return "/settings";
+  if (view === "settings") return "/settings";
+  return "/workflows";
 }
 
 function readRouteContext() {
@@ -953,6 +972,7 @@ export default function App() {
   const routeRuntimePending = Boolean(routeContext.runtimeId && runtime && runtime.id !== routeContext.runtimeId);
   const shouldLoadRuntimeScopedData =
     (viewMode === "runtime" && hasRuntimeRouteId) ||
+    viewMode === "workflows" ||
     viewMode === "instance" ||
     viewMode === "workflow" ||
     viewMode === "nodes" ||
@@ -983,6 +1003,12 @@ export default function App() {
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
   const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
   const isRuntimeManagementInstance = Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
+  const workflowsQuery = useQuery({
+    queryKey: ["workflow-definitions", mode, runtime?.id || ""],
+    queryFn: async () => provider.listWorkflowDefinitions ? provider.listWorkflowDefinitions(runtime) : [],
+    enabled: viewMode === "workflows" || triggerOpen,
+  });
+  const workflowDefinitions = workflowsQuery.data || [];
   const currentRuntimeManagementDefaults = (): RuntimeManagementFormDefaults => ({
     createSshCommand: runtimeCreateSshCommand,
     createPrivateKey: runtimeCreatePrivateKey,
@@ -1015,11 +1041,11 @@ export default function App() {
       deleteSshCommand: DEFAULT_RUNTIME_MANAGEMENT_SSH_COMMAND,
       deletePrivateKey: "",
       deleteForce: false,
-      instanceId: "wiki-sop-new-instance",
-      instanceRepo: "skkeoriw/wiki-sop-new-instance",
+      instanceId: "",
+      instanceRepo: "",
       instanceSopType: "youtube-research-wiki",
-      deleteInstanceId: "wiki-sop-new-instance",
-      deleteInstanceRepo: "skkeoriw/wiki-sop-new-instance",
+      deleteInstanceId: "",
+      deleteInstanceRepo: "",
       deleteInstanceForce: false,
     };
     window.localStorage.removeItem(RUNTIME_MANAGEMENT_FORM_STORAGE_KEY);
@@ -1119,6 +1145,12 @@ export default function App() {
     queryKey: ["control-plane-machines", mode, machineQueryOptions.page, machineQueryOptions.pageSize, machineQueryOptions.q, machineQueryOptions.status, machineQueryOptions.role, machineQueryOptions.authType],
     queryFn: () => controlPlaneProvider.listMachines(machineQueryOptions),
     enabled: viewMode === "settings" || viewMode === "machines" || triggerOpen,
+    retry: 1,
+  });
+  const githubReposQuery = useQuery({
+    queryKey: ["control-plane-github-repos", mode],
+    queryFn: () => controlPlaneProvider.listGithubRepos(),
+    enabled: mode === "real" && triggerOpen && runtimeManagementAction === "create-instance",
     retry: 1,
   });
   const runtimeDeleteCandidates = useMemo(() => {
@@ -1441,10 +1473,14 @@ export default function App() {
   const createInstanceMutation = useMutation({
     mutationFn: async () => {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
+      const sopType = instanceCreateSopType.trim() || "youtube-research-wiki";
+      const repo = instanceCreateRepo.trim();
+      const resolvedInstanceId = instanceCreateId.trim() || generateInstanceId(repo, sopType);
       const instancePayload = {
-        instance_id: instanceCreateId.trim(),
-        repo: instanceCreateRepo.trim(),
-        sop_type: instanceCreateSopType.trim() || "youtube-research-wiki",
+        instance_id: resolvedInstanceId,
+        repo,
+        sop_type: sopType,
+        workflow_id: sopType,
         enabled: true,
       };
       if (!instancePayload.instance_id) throw new Error("请填写 Instance ID");
@@ -1464,6 +1500,7 @@ export default function App() {
           repo: instancePayload.repo,
           instance_repo: instancePayload.repo,
           instance_sop_type: instancePayload.sop_type,
+          workflow_id: instancePayload.workflow_id,
           instances: [instancePayload],
           ...runtimeOverrides,
         }),
@@ -1701,9 +1738,9 @@ export default function App() {
   });
 
   useEffect(() => {
-    const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/nodes", "/artifacts", "/machines", "/settings"];
+    const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/workflows", "/nodes", "/artifacts", "/machines", "/settings"];
     if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
-      window.history.replaceState(null, "", `${routePath("runtime")}${window.location.search}`);
+      window.history.replaceState(null, "", `${routePath("workflows")}${window.location.search}`);
       setRoute(readRoute());
     }
     const onPopState = () => setRoute(readRoute());
@@ -1972,11 +2009,14 @@ export default function App() {
           <button type="button" className={`rail-nav-item ${viewMode === "runtime" ? "active" : ""}`} onClick={() => navigateTo("runtime")}>
             <Server size={17} /><span>Hosts</span><small>{isRuntimeDirectory ? `${runtimeTotal || "-"} hosts` : `${instanceTotal || "-"} instances`}</small>
           </button>
+          <button type="button" className={`rail-nav-item ${viewMode === "workflows" ? "active" : ""}`} onClick={() => navigateTo("workflows")}>
+            <Workflow size={17} /><span>Workflows</span><small>{workflowDefinitions.length || "-"} definitions</small>
+          </button>
           <button type="button" className={`rail-nav-item ${viewMode === "instance" ? "active" : ""}`} onClick={() => navigateTo("instance")}>
             <LayoutDashboard size={17} /><span>Instance</span><small>{instance?.status || "workspace"}</small>
           </button>
           <button type="button" className={`rail-nav-item ${viewMode === "workflow" ? "active" : ""}`} onClick={() => navigateTo("workflow")}>
-            <Network size={17} /><span>Runs</span><small>{runs.length || "-"} workflow runs</small>
+            <Network size={17} /><span>Executions</span><small>{runs.length || "-"} runs</small>
           </button>
           <button type="button" className={`rail-nav-item ${viewMode === "nodes" ? "active" : ""}`} onClick={() => navigateTo("nodes")}>
             <Boxes size={17} /><span>Node Defs</span><small>{managedNodes.length || "-"} definitions</small>
@@ -2078,7 +2118,22 @@ export default function App() {
       </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
-        {viewMode === "runtime" && isRuntimeDirectory ? (
+        {viewMode === "workflows" ? (
+          <WorkflowCatalog
+            workflows={workflowDefinitions}
+            runtimes={runtimes}
+            runtime={runtime}
+            instances={instances}
+            loading={workflowsQuery.isLoading}
+            onOpenRuntime={(id) => selectRuntime(id)}
+            onOpenInstance={(id) => selectInstance(id, true)}
+            onOpenExecutions={() => navigateTo("workflow", selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
+            onOpenManagement={(action) => {
+              setRuntimeManagementAction(action);
+              setTriggerOpen(true);
+            }}
+          />
+        ) : viewMode === "runtime" && isRuntimeDirectory ? (
           <RuntimeDirectory
             runtimes={runtimes}
             total={runtimeTotal}
@@ -2323,6 +2378,9 @@ export default function App() {
           deleteCandidatesLoading={runtimesQuery.isLoading}
           machines={machinesQuery.data?.machines || []}
           machinesLoading={machinesQuery.isLoading}
+          githubRepos={githubReposQuery.data || []}
+          githubReposLoading={githubReposQuery.isLoading}
+          githubReposError={githubReposQuery.error ? String(githubReposQuery.error.message) : ""}
           instanceCreateId={instanceCreateId}
           setInstanceCreateId={setInstanceCreateId}
           instanceCreateRepo={instanceCreateRepo}
@@ -3221,7 +3279,15 @@ function RuntimeOverview({
         <div className="flow-panel instance-list-panel">
           <div className="panel-head">
             <div><strong>Instance Registry</strong><span>{instanceSource || "runtime-spi"} · 当前 Runtime 下的业务隔离单元</span></div>
-            <span>{visibleInstances.length}/{instanceTotal}{instanceHasMore ? " · more" : ""}</span>
+            <div className="instance-registry-actions">
+              <span>{visibleInstances.length}/{instanceTotal}{instanceHasMore ? " · more" : ""}</span>
+              <button type="button" className="primary compact" disabled={!managementInstance} onClick={() => onOpenManagement("create-instance")}>
+                <Plus size={14} />Create Instance
+              </button>
+              <button type="button" className="ghost-btn compact" disabled={!managementInstance} onClick={() => onOpenManagement("delete-instance")}>
+                <Trash2 size={14} />Delete Instance
+              </button>
+            </div>
           </div>
           <div className="execution-tools instance-tools">
             <label className="search-box">
@@ -3251,7 +3317,7 @@ function RuntimeOverview({
         <div className="panel-head">
           <div>
             <strong>Host Operations</strong>
-            <span>所有动作都通过 runtime-management workflow 执行和记录</span>
+            <span>机器级动作通过 runtime-management workflow 执行和记录</span>
           </div>
           <span className={`status-pill ${managementInstance ? "done" : "waiting"}`}>
             {managementInstance ? "runtime-management ready" : "missing"}
@@ -3264,21 +3330,6 @@ function RuntimeOverview({
             icon={<Server size={16} />}
             disabled={!managementInstance}
             onClick={() => onOpenManagement("create-runtime")}
-          />
-          <ManagementActionCard
-            title="Create Instance"
-            description="在选中 Runtime 下新增业务工作区。"
-            icon={<LayoutDashboard size={16} />}
-            disabled={!managementInstance}
-            onClick={() => onOpenManagement("create-instance")}
-          />
-          <ManagementActionCard
-            title="Delete Instance"
-            description="清理指定业务工作区，不删除 Runtime。"
-            icon={<X size={16} />}
-            danger
-            disabled={!managementInstance}
-            onClick={() => onOpenManagement("delete-instance")}
           />
           <ManagementActionCard
             title="Delete Runtime"
@@ -3497,6 +3548,141 @@ function RuntimeDirectory({
             </button>
           ))}
           {!runtimes.length && <LoadingOrEmpty loading={loading} text="没有匹配的 Runtime Host" />}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function WorkflowCatalog({
+  workflows,
+  runtimes,
+  runtime,
+  instances,
+  loading,
+  onOpenRuntime,
+  onOpenInstance,
+  onOpenExecutions,
+  onOpenManagement,
+}: {
+  workflows: WorkflowDefinition[];
+  runtimes: Runtime[];
+  runtime: Runtime | undefined;
+  instances: Instance[];
+  loading: boolean;
+  onOpenRuntime: (runtimeId: string) => void;
+  onOpenInstance: (instanceId: string) => void;
+  onOpenExecutions: () => void;
+  onOpenManagement: (action: RuntimeManagementAction) => void;
+}) {
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
+  const selectedWorkflow = workflows.find((item) => item.workflowId === selectedWorkflowId) || workflows[0];
+  const managementWorkflow = selectedWorkflow?.workflowId === "runtime-management";
+  const defaultInstance = instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
+  useEffect(() => {
+    if (!selectedWorkflowId && workflows[0]) setSelectedWorkflowId(workflows[0].workflowId);
+  }, [selectedWorkflowId, workflows]);
+  return (
+    <section className="workflow-catalog-page">
+      <div className="concept-hero workflow-catalog-hero">
+        <div>
+          <span className="status-pill running"><Workflow size={14} />Workflow Definition Catalog</span>
+          <h1>Workflow 是无状态定义，Run 才绑定 Runtime 和 Instance。</h1>
+          <p>从 agent-brains SOP 集合选择 Workflow Definition；执行时再选择 Runtime Host 和 Instance Workspace，运行状态与产物写入所选 Instance。</p>
+        </div>
+        <div className="context-card">
+          <strong>{workflows.length || "-"} workflow definitions</strong>
+          <span>{runtime?.displayName || runtime?.id || "No runtime selected"}</span>
+          <code>{selectedWorkflow?.interpreter || "interpreter pending"}</code>
+        </div>
+      </div>
+
+      <section className="console-metrics">
+        <Metric label="Definitions" value={workflows.length} subtext="from catalog or compatibility fallback" />
+        <Metric label="Interpreter" value={selectedWorkflow?.interpreter || "-"} subtext={selectedWorkflow?.workflowType || "workflow type"} />
+        <Metric label="Runtime" value={runtime?.id || "-"} subtext={`${runtimes.length || 0} hosts loaded`} />
+        <Metric label="Instances" value={instances.length} subtext="execution workspaces" />
+      </section>
+
+      <section className="workflow-catalog-grid">
+        <div className="flow-panel workflow-catalog-list-panel">
+          <div className="panel-head">
+            <div><strong>Workflow Catalog</strong><span>无状态 SOP 定义，不属于某个 Instance</span></div>
+            <span>{loading ? "loading" : `${workflows.length} definitions`}</span>
+          </div>
+          <div className="workflow-definition-list">
+            {workflows.map((item) => (
+              <button
+                key={item.workflowId}
+                type="button"
+                className={`workflow-definition-row ${selectedWorkflow?.workflowId === item.workflowId ? "active" : ""}`}
+                onClick={() => setSelectedWorkflowId(item.workflowId)}
+              >
+                <div>
+                  <strong>{item.title || item.name}</strong>
+                  <span>{item.workflowId}</span>
+                </div>
+                <span className={`status-pill ${item.interpreter === "runtime-management" ? "running" : "done"}`}>
+                  {item.interpreter}
+                </span>
+              </button>
+            ))}
+            {!workflows.length && <LoadingOrEmpty loading={loading} text="没有加载到 Workflow Definition" />}
+          </div>
+        </div>
+
+        <div className="flow-panel workflow-catalog-detail-panel">
+          <div className="panel-head">
+            <div><strong>{selectedWorkflow?.title || "Workflow Detail"}</strong><span>{selectedWorkflow?.definitionPath || "agent-brains SOP definition"}</span></div>
+            <span className={`status-pill ${managementWorkflow ? "running" : "done"}`}>{selectedWorkflow?.workflowType || "workflow"}</span>
+          </div>
+          {selectedWorkflow ? (
+            <div className="workflow-catalog-detail">
+              <p>{selectedWorkflow.description || "该 Workflow Definition 来自 agent-brain-plugins；执行时选择 Runtime 和 Instance。"}</p>
+              <KeyValues data={{
+                workflow_id: selectedWorkflow.workflowId,
+                interpreter: selectedWorkflow.interpreter,
+                workflow_type: selectedWorkflow.workflowType,
+                source: selectedWorkflow.definitionSource,
+                definition_path: selectedWorkflow.definitionPath,
+                nodes: selectedWorkflow.nodeCount || "-",
+              }} />
+              {managementWorkflow ? (
+                <div className="workflow-action-grid">
+                  {(selectedWorkflow.actions || []).map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      className={`management-action-card compact-action ${action.id.includes("delete") ? "danger" : ""}`}
+                      onClick={() => onOpenManagement(action.id as RuntimeManagementAction)}
+                    >
+                      <span>{action.scope === "runtime" ? <Server size={16} /> : <LayoutDashboard size={16} />}</span>
+                      <strong>{action.title || action.id}</strong>
+                      <small>{action.description || action.id}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="workflow-run-context">
+                  <div className="section-title"><span>Run Context</span><span>execution binding</span></div>
+                  <div className="workflow-run-context-grid">
+                    <button type="button" onClick={() => runtime && onOpenRuntime(runtime.id)}>
+                      <strong>{runtime?.displayName || runtime?.id || "Select Runtime"}</strong>
+                      <span>{runtime?.channelUrl || runtime?.endpoint || "No runtime selected"}</span>
+                    </button>
+                    <button type="button" onClick={() => defaultInstance && onOpenInstance(defaultInstance.instanceId)}>
+                      <strong>{defaultInstance?.title || defaultInstance?.instanceId || "Select Instance"}</strong>
+                      <span>{defaultInstance?.repo || "No instance selected"}</span>
+                    </button>
+                    <button type="button" className="primary" disabled={!runtime || !defaultInstance} onClick={onOpenExecutions}>
+                      <Play size={16} />
+                      Open Executions
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : <Empty text="选择一个 Workflow Definition" />}
         </div>
       </section>
     </section>
@@ -5829,6 +6015,9 @@ function RuntimeManagementStartDrawer({
   deleteCandidatesLoading,
   machines,
   machinesLoading,
+  githubRepos,
+  githubReposLoading,
+  githubReposError,
   instanceCreateId,
   setInstanceCreateId,
   instanceCreateRepo,
@@ -5888,6 +6077,9 @@ function RuntimeManagementStartDrawer({
   deleteCandidatesLoading: boolean;
   machines: MachineConfig[];
   machinesLoading: boolean;
+  githubRepos: GitHubRepoOption[];
+  githubReposLoading: boolean;
+  githubReposError: string;
   instanceCreateId: string;
   setInstanceCreateId: (value: string) => void;
   instanceCreateRepo: string;
@@ -5915,12 +6107,14 @@ function RuntimeManagementStartDrawer({
   onDelete: (event: FormEvent) => void;
 }) {
   const pending = createPending || deletePending;
-  const createReady = true;
   const isCreateRuntime = action === "create-runtime";
   const isDeleteRuntime = action === "delete-runtime";
   const isCreateInstance = action === "create-instance";
   const isDeleteInstance = action === "delete-instance";
   const isCreate = isCreateRuntime || isCreateInstance;
+  const generatedCreateInstanceId = generateInstanceId(instanceCreateRepo, instanceCreateSopType || "youtube-research-wiki");
+  const resolvedCreateInstanceId = instanceCreateId.trim() || generatedCreateInstanceId;
+  const createReady = isCreateInstance ? Boolean(instanceCreateRepo.trim()) : true;
   const submitLabel = isCreateRuntime ? "Create Runtime" : isDeleteRuntime ? "Delete Runtime" : isCreateInstance ? "Create Instance" : "Delete Instance";
   const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
   const selectedDeleteMachine = machines.find((machine) => machine.id === deleteMachineId);
@@ -6177,17 +6371,48 @@ function RuntimeManagementStartDrawer({
                 }} />
               </section>
               <label>
-                <span>Instance ID</span>
-                <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder="wiki-sop-new-instance" />
-              </label>
-              <label>
                 <span>Instance Repo</span>
-                <input value={instanceCreateRepo} onChange={(event) => setInstanceCreateRepo(event.target.value)} disabled={pending} placeholder="skkeoriw/wiki-sop-new-instance" />
+                <select
+                  value={instanceCreateRepo}
+                  onChange={(event) => setInstanceCreateRepo(event.target.value)}
+                  disabled={pending || githubReposLoading}
+                >
+                  <option value="">{githubReposLoading ? "Loading GitHub repos..." : "Select repo from GitHub settings"}</option>
+                  {instanceCreateRepo && !githubRepos.some((repo) => repo.fullName === instanceCreateRepo) && (
+                    <option value={instanceCreateRepo}>{instanceCreateRepo} · manual</option>
+                  )}
+                  {githubRepos.map((repo) => (
+                    <option key={repo.fullName} value={repo.fullName}>
+                      {repo.fullName}{repo.private ? " · private" : ""}
+                    </option>
+                  ))}
+                </select>
+                <span className="field-hint">优先从 Settings 的 GitHub token 拉 repo 列表。列表加载失败时，在 Advanced 里手填 repo。</span>
+              </label>
+              {githubReposError && <div className="inline-warning">Repo 列表暂不可用：{githubReposError}。可在 Advanced 里手填 repo。</div>}
+              <label>
+                <span>Generated Instance ID</span>
+                <input value={resolvedCreateInstanceId} readOnly disabled />
+                <span className="field-hint">默认自动生成；Instance 是 execution workspace，不是 Workflow Definition。</span>
               </label>
               <label>
-                <span>SOP Type</span>
+                <span>Default SOP Type</span>
                 <input value={instanceCreateSopType} onChange={(event) => setInstanceCreateSopType(event.target.value)} disabled={pending} placeholder="youtube-research-wiki" />
+                <span className="field-hint">仅作为默认用途提示。真正执行时 Run 会绑定 workflow_id + runtime_id + instance_id。</span>
               </label>
+              <details className="advanced-runtime-overrides">
+                <summary>Advanced Instance Overrides</summary>
+                <label>
+                  <span>Manual Instance ID</span>
+                  <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder={generatedCreateInstanceId} />
+                  <span className="field-hint">正常保持为空，系统按 repo 自动生成。</span>
+                </label>
+                <label>
+                  <span>Manual Repo</span>
+                  <input value={instanceCreateRepo} onChange={(event) => setInstanceCreateRepo(event.target.value)} disabled={pending} placeholder="owner/repo-name" />
+                  <span className="field-hint">仅当 GitHub repo 列表不可用或要使用未列出的 repo 时填写。</span>
+                </label>
+              </details>
               <RuntimeInheritancePreviewPanel
                 preview={inheritance}
                 loading={inheritanceLoading}

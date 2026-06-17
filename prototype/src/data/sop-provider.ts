@@ -29,10 +29,44 @@ import type {
   SopDataProvider,
   StageStatus,
   TriggerInput,
-  TriggerResult
+  TriggerResult,
+  WorkflowDefinition
 } from "./types";
 
 const TUNNEL_API = "https://tunnel-api.chxyka.ccwu.cc";
+
+const BUILTIN_WORKFLOW_DEFINITIONS: WorkflowDefinition[] = [
+  {
+    workflowId: "runtime-management",
+    name: "runtime-management",
+    title: "Runtime Management",
+    description: "管理 Runtime 与 Instance 生命周期。由 RuntimeManagementInterpreter 解释 action 分支和强副作用节点。",
+    version: "0.2",
+    sopType: "runtime-management",
+    interpreter: "runtime-management",
+    workflowType: "management",
+    definitionSource: "agent-brain-plugins",
+    definitionPath: "youtube-wiki/templates/runtime-management-sop/sop.yaml",
+    actions: [
+      { id: "create-runtime", title: "Create Runtime", scope: "runtime", description: "创建机器级 Runtime、Hermes、Runtime channel 和默认 runtime-management instance。" },
+      { id: "create-instance", title: "Create Instance", scope: "instance", description: "在当前 Runtime 内创建 execution workspace，不安装 Hermes，不注册 Runtime channel。" },
+      { id: "delete-instance", title: "Delete Instance", scope: "instance", description: "删除业务 workspace，不删除 Runtime。" },
+      { id: "delete-runtime", title: "Delete Runtime", scope: "runtime", description: "下线 Runtime 机器服务和关联 channel。" },
+    ],
+  },
+  {
+    workflowId: "youtube-research-wiki",
+    name: "youtube-research-wiki",
+    title: "YouTube Research Wiki",
+    description: "普通业务 SOP：抓取 YouTube、研究、构建 Wiki、发送通知。执行时选择 Runtime 和 Instance。",
+    version: "2.0",
+    sopType: "youtube-research-wiki",
+    interpreter: "generic-dag",
+    workflowType: "business",
+    definitionSource: "agent-brain-plugins",
+    definitionPath: "youtube-wiki/templates/wiki-repo/sop.yaml",
+  },
+];
 
 function status(value?: string): StageStatus {
   const v = value ?? "";
@@ -211,6 +245,58 @@ function mapWorkflowBinding(raw: unknown) {
     enabledNodeCount: Number(data.enabled_node_count || data.enabledNodeCount || 0),
     bindingStatus: String(data.binding_status || data.bindingStatus || "unknown"),
   };
+}
+
+function mapWorkflowDefinition(raw: unknown): WorkflowDefinition | null {
+  const data = typeof raw === "object" && raw ? raw as Record<string, unknown> : {};
+  const workflowId = String(data.workflow_id || data.workflowId || data.id || data.name || "").trim();
+  if (!workflowId) return null;
+  const actions = Array.isArray(data.actions) ? data.actions : Array.isArray(data.workflow_actions) ? data.workflow_actions : [];
+  return {
+    workflowId,
+    name: String(data.name || workflowId),
+    title: String(data.title || data.workflow_name || data.workflowName || data.name || workflowId),
+    description: String(data.description || ""),
+    version: data.version ? String(data.version) : data.workflow_version ? String(data.workflow_version) : undefined,
+    sopType: data.sop_type ? String(data.sop_type) : data.sopType ? String(data.sopType) : undefined,
+    interpreter: String(data.interpreter || data.workflow_interpreter || data.workflowInterpreter || "generic-dag"),
+    workflowType: String(data.workflow_type || data.workflowType || "business"),
+    definitionSource: String(data.definition_source || data.definitionSource || "runtime-spi"),
+    definitionPath: String(data.definition_path || data.definitionPath || ""),
+    nodeCount: Number(data.node_count || data.nodeCount || 0),
+    enabledNodeCount: Number(data.enabled_node_count || data.enabledNodeCount || 0),
+    actions: actions.filter((item): item is Record<string, unknown> => typeof item === "object" && Boolean(item)).map((item) => ({
+      id: String(item.id || ""),
+      title: String(item.title || item.id || ""),
+      scope: String(item.scope || ""),
+      description: item.description ? String(item.description) : undefined,
+    })).filter((item) => item.id),
+  };
+}
+
+function workflowDefinitionsFromInstances(items: Instance[]): WorkflowDefinition[] {
+  const byId = new Map<string, WorkflowDefinition>();
+  for (const item of BUILTIN_WORKFLOW_DEFINITIONS) byId.set(item.workflowId, item);
+  for (const instance of items) {
+    const binding = instance.workflowBinding;
+    const workflowId = binding?.workflowId || instance.sopType || "";
+    if (!workflowId || byId.has(workflowId)) continue;
+    byId.set(workflowId, {
+      workflowId,
+      name: workflowId,
+      title: binding?.workflowName || workflowId,
+      description: "从当前 Runtime Instance 兼容数据推导的 Workflow Definition。",
+      version: binding?.workflowVersion || "",
+      sopType: instance.sopType || workflowId,
+      interpreter: workflowId === "runtime-management" ? "runtime-management" : "generic-dag",
+      workflowType: workflowId === "runtime-management" ? "management" : "business",
+      definitionSource: binding?.definitionSource || "runtime-spi-instance",
+      definitionPath: binding?.definitionPath || "",
+      nodeCount: binding?.nodeCount || 0,
+      enabledNodeCount: binding?.enabledNodeCount || 0,
+    });
+  }
+  return Array.from(byId.values());
 }
 
 function mapInstance(item: Record<string, unknown>): Instance {
@@ -787,6 +873,29 @@ export const sopProvider: SopDataProvider = {
 
   async listRuntimes(options) {
     return (await listRuntimeHosts(options)).runtimes;
+  },
+
+  async listWorkflowDefinitions(runtime) {
+    if (runtime) {
+      try {
+        const data = await requestJson<{
+          workflows?: Array<Record<string, unknown>>;
+          items?: Array<Record<string, unknown>>;
+        }>(`${runtime.endpoint}/api/sop/v1/workflows`);
+        const rawItems = data.items || data.workflows || [];
+        const mapped = rawItems.map(mapWorkflowDefinition).filter((item): item is WorkflowDefinition => Boolean(item));
+        if (mapped.length) return mapped;
+      } catch {
+        // Older runtimes do not expose a catalog route yet; derive a safe catalog below.
+      }
+      try {
+        const instanceList = await listRuntimeInstances(runtime, { page: 1, pageSize: 100 });
+        return workflowDefinitionsFromInstances(instanceList.instances);
+      } catch {
+        return BUILTIN_WORKFLOW_DEFINITIONS;
+      }
+    }
+    return BUILTIN_WORKFLOW_DEFINITIONS;
   },
 
   listRuntimeInstances,
