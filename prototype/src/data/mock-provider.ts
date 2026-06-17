@@ -113,6 +113,7 @@ const mockRuntimeInheritancePreview: RuntimeInheritancePreview = {
     { key: "NOTEBOOKLM_BRIDGE_URL", aliases: ["notebooklm_bridge_url"], source: "env_file", present: true, maskedValue: "https://notebooklm-bridge.example/run", secret: false, required: true, category: "notebooklm" },
     { key: "NOTEBOOKLM_BRIDGE_TOKEN", aliases: ["notebooklm_bridge_token"], source: "env_file", present: true, maskedValue: "v7A***NG6", secret: true, required: true, category: "notebooklm" },
     { key: "YOUTUBE_WIKI_TG_TOKEN", aliases: ["telegram_token"], source: "env_file", present: true, maskedValue: "787***JDA", secret: true, required: false, category: "telegram" },
+    { key: "YOUTUBE_WIKI_TG_CHAT_ID", aliases: ["telegram_chat_id"], source: "env_file", present: true, maskedValue: "6938920500", secret: false, required: false, category: "telegram" },
     { key: "CLOUDFLARE_API_KEY", aliases: ["cf_api_key"], source: "env_file", present: true, maskedValue: "cfk***be7", secret: true, required: true, category: "cloudflare" },
     { key: "SOP_UI_URL", aliases: ["sop_ui_url"], source: "missing", present: false, maskedValue: "", secret: false, required: false, category: "runtime" },
   ],

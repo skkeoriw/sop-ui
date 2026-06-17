@@ -63,6 +63,7 @@ import type {
   NodeTestResult,
   Run,
   RunNodeState,
+  RuntimeInheritanceItem,
   RuntimeInheritancePreview,
   Runtime,
   SopDataProvider,
@@ -259,6 +260,16 @@ function runtimeEnvTemplateFromPreview(preview: RuntimeInheritancePreview | unde
       return `${item.key}=${item.present ? item.maskedValue : ""}${item.present ? ` # inherited from ${item.source}` : " # missing"}`;
     })
     .join("\n");
+}
+
+function runtimeConfigItem(preview: RuntimeInheritancePreview | undefined, key: string) {
+  return preview?.items?.find((item) => item.key === key);
+}
+
+function runtimeConfigValue(preview: RuntimeInheritancePreview | undefined, key: string) {
+  const item = runtimeConfigItem(preview, key);
+  if (!item?.present || item.secret) return "";
+  return item.maskedValue || "";
 }
 
 function readRoute(): AppRoute {
@@ -856,6 +867,9 @@ export default function App() {
   const [instanceCreateId, setInstanceCreateId] = useState(runtimeManagementDefaults.instanceId);
   const [instanceCreateRepo, setInstanceCreateRepo] = useState(runtimeManagementDefaults.instanceRepo);
   const [instanceCreateSopType, setInstanceCreateSopType] = useState(runtimeManagementDefaults.instanceSopType);
+  const [instanceTelegramTokenMode, setInstanceTelegramTokenMode] = useState<"global" | "override">("global");
+  const [instanceTelegramToken, setInstanceTelegramToken] = useState("");
+  const [instanceTelegramChatId, setInstanceTelegramChatId] = useState("");
   const [instanceDeleteId, setInstanceDeleteId] = useState(runtimeManagementDefaults.deleteInstanceId);
   const [instanceDeleteRepo, setInstanceDeleteRepo] = useState(runtimeManagementDefaults.deleteInstanceRepo);
   const [instanceDeleteForce, setInstanceDeleteForce] = useState(runtimeManagementDefaults.deleteInstanceForce);
@@ -1155,6 +1169,13 @@ export default function App() {
     enabled: mode === "real" && runtimeManagementOpen && runtimeManagementAction === "create-instance",
     retry: 1,
   });
+  const inheritedTelegramToken = runtimeConfigItem(runtimeManagementConfigQuery.data, "YOUTUBE_WIKI_TG_TOKEN");
+  const inheritedTelegramChatId = runtimeConfigValue(runtimeManagementConfigQuery.data, "YOUTUBE_WIKI_TG_CHAT_ID");
+  useEffect(() => {
+    if (!instanceTelegramChatId && inheritedTelegramChatId) {
+      setInstanceTelegramChatId(inheritedTelegramChatId);
+    }
+  }, [inheritedTelegramChatId, instanceTelegramChatId]);
   const runtimeDeleteCandidates = useMemo(() => {
     return runtimes.filter((item) => isRuntimeDeleteCandidate(item, runtime));
   }, [runtime, runtimes]);
@@ -1483,6 +1504,10 @@ export default function App() {
         repo,
         sop_type: sopType,
         workflow_id: sopType,
+        telegram: {
+          chat_id: instanceTelegramChatId.trim(),
+          token: instanceTelegramTokenMode === "override" ? instanceTelegramToken.trim() : "",
+        },
         enabled: true,
       };
       if (!instancePayload.instance_id) throw new Error("请填写 Instance ID");
@@ -1503,6 +1528,8 @@ export default function App() {
           instance_repo: instancePayload.repo,
           instance_sop_type: instancePayload.sop_type,
           workflow_id: instancePayload.workflow_id,
+          instance_telegram_chat_id: instanceTelegramChatId.trim(),
+          instance_telegram_token: instanceTelegramTokenMode === "override" ? instanceTelegramToken.trim() : "",
           instances: [instancePayload],
           ...runtimeOverrides,
         }),
@@ -2392,6 +2419,14 @@ export default function App() {
           setInstanceCreateRepo={setInstanceCreateRepo}
           instanceCreateSopType={instanceCreateSopType}
           setInstanceCreateSopType={setInstanceCreateSopType}
+          instanceTelegramTokenMode={instanceTelegramTokenMode}
+          setInstanceTelegramTokenMode={setInstanceTelegramTokenMode}
+          instanceTelegramToken={instanceTelegramToken}
+          setInstanceTelegramToken={setInstanceTelegramToken}
+          instanceTelegramChatId={instanceTelegramChatId}
+          setInstanceTelegramChatId={setInstanceTelegramChatId}
+          inheritedTelegramToken={inheritedTelegramToken}
+          inheritedTelegramChatId={inheritedTelegramChatId}
           instanceDeleteId={instanceDeleteId}
           setInstanceDeleteId={setInstanceDeleteId}
           instanceDeleteRepo={instanceDeleteRepo}
@@ -6029,6 +6064,14 @@ function RuntimeManagementStartDrawer({
   setInstanceCreateRepo,
   instanceCreateSopType,
   setInstanceCreateSopType,
+  instanceTelegramTokenMode,
+  setInstanceTelegramTokenMode,
+  instanceTelegramToken,
+  setInstanceTelegramToken,
+  instanceTelegramChatId,
+  setInstanceTelegramChatId,
+  inheritedTelegramToken,
+  inheritedTelegramChatId,
   instanceDeleteId,
   setInstanceDeleteId,
   instanceDeleteRepo,
@@ -6091,6 +6134,14 @@ function RuntimeManagementStartDrawer({
   setInstanceCreateRepo: (value: string) => void;
   instanceCreateSopType: string;
   setInstanceCreateSopType: (value: string) => void;
+  instanceTelegramTokenMode: "global" | "override";
+  setInstanceTelegramTokenMode: (value: "global" | "override") => void;
+  instanceTelegramToken: string;
+  setInstanceTelegramToken: (value: string) => void;
+  instanceTelegramChatId: string;
+  setInstanceTelegramChatId: (value: string) => void;
+  inheritedTelegramToken: RuntimeInheritanceItem | undefined;
+  inheritedTelegramChatId: string;
   instanceDeleteId: string;
   setInstanceDeleteId: (value: string) => void;
   instanceDeleteRepo: string;
@@ -6396,26 +6447,47 @@ function RuntimeManagementStartDrawer({
               </label>
               {githubReposError && <div className="inline-warning">Repo 列表暂不可用：{githubReposError}。可在 Advanced 里手填 repo。</div>}
               <label>
-                <span>Generated Instance ID</span>
-                <input value={resolvedCreateInstanceId} readOnly disabled />
-                <span className="field-hint">默认自动生成；Instance 是 execution workspace，不是 Workflow Definition。</span>
+                <span>Instance ID</span>
+                <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder={generatedCreateInstanceId} />
+                <span className="field-hint">默认自动生成，使用 instance- 前缀；需要固定命名时可以直接修改。</span>
               </label>
+              <section className="selected-machine-summary current-runtime-summary">
+                <div>
+                  <strong>Telegram Notification</strong>
+                  <span>默认继承 Settings 的全局 TG 配置；可为该 Instance 覆盖 bot 或 chat。</span>
+                </div>
+                <KeyValues data={{
+                  bot_token: inheritedTelegramToken?.present ? `Using global ${inheritedTelegramToken.key}` : "global token missing",
+                  chat_id: instanceTelegramChatId || inheritedTelegramChatId || "-",
+                }} />
+              </section>
+              <div className="segmented-control">
+                <button type="button" className={instanceTelegramTokenMode === "global" ? "active" : ""} disabled={pending} onClick={() => setInstanceTelegramTokenMode("global")}>Use global bot</button>
+                <button type="button" className={instanceTelegramTokenMode === "override" ? "active" : ""} disabled={pending} onClick={() => setInstanceTelegramTokenMode("override")}>Override bot</button>
+              </div>
+              {instanceTelegramTokenMode === "override" && (
+                <label>
+                  <span>Telegram Bot Token</span>
+                  <input value={instanceTelegramToken} onChange={(event) => setInstanceTelegramToken(event.target.value)} disabled={pending} placeholder="Paste bot token for this Instance" />
+                  <span className="field-hint">只用于本次创建，后端会写入 Runtime 本地 env，不写入 registry。</span>
+                </label>
+              )}
               <label>
-                <span>Default SOP Type</span>
-                <input value={instanceCreateSopType} onChange={(event) => setInstanceCreateSopType(event.target.value)} disabled={pending} placeholder="youtube-research-wiki" />
-                <span className="field-hint">仅作为默认用途提示。真正执行时 Run 会绑定 workflow_id + runtime_id + instance_id。</span>
+                <span>Telegram Chat ID</span>
+                <input value={instanceTelegramChatId} onChange={(event) => setInstanceTelegramChatId(event.target.value)} disabled={pending} placeholder={inheritedTelegramChatId || "Use global YOUTUBE_WIKI_TG_CHAT_ID"} />
+                <span className="field-hint">默认来自 Settings；改这里即可让该 Instance 通知到不同 chat。</span>
               </label>
               <details className="advanced-runtime-overrides">
                 <summary>Advanced Instance Overrides</summary>
                 <label>
-                  <span>Manual Instance ID</span>
-                  <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder={generatedCreateInstanceId} />
-                  <span className="field-hint">正常保持为空，系统按 repo 自动生成。</span>
-                </label>
-                <label>
                   <span>Manual Repo</span>
                   <input value={instanceCreateRepo} onChange={(event) => setInstanceCreateRepo(event.target.value)} disabled={pending} placeholder="owner/repo-name" />
                   <span className="field-hint">仅当 GitHub repo 列表不可用或要使用未列出的 repo 时填写。</span>
+                </label>
+                <label>
+                  <span>Workspace Template</span>
+                  <input value={instanceCreateSopType} onChange={(event) => setInstanceCreateSopType(event.target.value)} disabled={pending} placeholder="youtube-research-wiki" />
+                  <span className="field-hint">初始化 Instance 工作区所用模板，不表示 Workflow Definition 属于该 Instance。</span>
                 </label>
               </details>
               <RuntimeInheritancePreviewPanel
