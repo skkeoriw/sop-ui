@@ -5978,6 +5978,13 @@ pre {
   padding: 12px;
 }
 
+.ops-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .workflow-catalog-page .flow-panel {
   min-height: 0;
   margin-bottom: 0;
@@ -6252,6 +6259,11 @@ pre {
   padding: 12px;
 }
 
+.instance-row.selected {
+  border-color: var(--blue);
+  background: #eef5ff;
+}
+
 .instance-main {
   display: flex;
   align-items: center;
@@ -6291,6 +6303,40 @@ pre {
   font-weight: 700;
   cursor: pointer;
   padding: 0 12px;
+}
+
+.instance-actions button.danger-light {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.instance-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.delete-instance-target-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.delete-instance-target-card > div:first-child strong,
+.delete-instance-target-card > div:first-child span {
+  display: block;
+}
+
+.delete-instance-target-card > div:first-child span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shared-workspace-warning {
+  display: grid;
+  gap: 4px;
 }
 
 .instance-grid {

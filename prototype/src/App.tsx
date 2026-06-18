@@ -1577,7 +1577,16 @@ export default function App() {
       if (!managementInstance) throw new Error("当前 Runtime 没有 runtime-management instance");
       const targetId = instanceDeleteId.trim();
       if (!targetId) throw new Error("请填写 Instance ID");
-      const targetRepo = instanceDeleteRepo.trim() || `skkeoriw/${targetId}`;
+      if (targetId === "runtime-management") throw new Error("runtime-management 是受保护的默认管理 Instance，不能通过 delete-instance 删除");
+      const targetInstance = instances.find((item) => item.instanceId === targetId);
+      const targetRepo = instanceDeleteRepo.trim() || targetInstance?.repo || `skkeoriw/${targetId}`;
+      const targetPayload = {
+        instance_id: targetId,
+        repo: targetRepo,
+        wiki_local_path: targetInstance?.wikiLocalPath || "",
+        workspace_status: targetInstance?.workspaceStatus || "",
+        enabled: targetInstance?.enabled !== false,
+      };
       const [result] = await Promise.all([
         provider.triggerRun(runtime, managementInstance.instanceId, {
           action: "delete-instance",
@@ -1586,6 +1595,8 @@ export default function App() {
           instance_id: targetId,
           repo: targetRepo,
           instance_repo: targetRepo,
+          wiki_local_path: targetInstance?.wikiLocalPath || "",
+          instances: [targetPayload],
           force: instanceDeleteForce,
         }),
         minimumDelay(450),
@@ -1996,6 +2007,22 @@ export default function App() {
     if (nodeId) setSelectedStageId(nodeId);
   }
 
+  function openRuntimeManagement(action: RuntimeManagementAction, targetInstanceId = "") {
+    setRuntimeManagementAction(action);
+    if (action === "delete-instance") {
+      const target = instances.find((item) => item.instanceId === targetInstanceId)
+        || (targetInstanceId && instance?.instanceId === targetInstanceId ? instance : undefined)
+        || (instance?.instanceId ? instance : undefined)
+        || instances.find((item) => item.instanceId !== "runtime-management")
+        || instances[0];
+      if (target) {
+        setInstanceDeleteId(target.instanceId);
+        setInstanceDeleteRepo(target.repo || "");
+      }
+    }
+    setRuntimeManagementOpen(true);
+  }
+
   function selectManagedNode(nodeId: string, moduleId = selectedNodeModuleId || "basic") {
     setSelectedManagedNodeId(nodeId);
     setSelectedNodeModuleId(moduleId);
@@ -2119,7 +2146,7 @@ export default function App() {
             <Info size={16} />Architecture
           </button>
           <button type="button" className="primary" disabled={!runtime || !instance} onClick={() => {
-            if (viewMode === "runtime" || isRuntimeManagementInstance) setRuntimeManagementOpen(true);
+            if (viewMode === "runtime" || isRuntimeManagementInstance) openRuntimeManagement(runtimeManagementAction);
             else setTriggerOpen(true);
           }}>
             <Play size={16} />{viewMode === "runtime" || isRuntimeManagementInstance ? "Host Operations" : "New Workflow Run"}
@@ -2191,10 +2218,7 @@ export default function App() {
             onOpenRuntime={(id) => selectRuntime(id)}
             onOpenInstance={(id) => selectInstance(id, true)}
             onOpenExecutions={() => openWorkflowForInstance(instance?.instanceId || instanceId, selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
-            onOpenManagement={(action) => {
-              setRuntimeManagementAction(action);
-              setRuntimeManagementOpen(true);
-            }}
+            onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "runtime" && isRuntimeDirectory ? (
           <RuntimeDirectory
@@ -2231,10 +2255,7 @@ export default function App() {
             onOpenInstance={(id) => selectInstance(id, true)}
             managementInstance={managementInstance}
             onOpenWorkflow={openWorkflowForInstance}
-            onOpenManagement={(action) => {
-              setRuntimeManagementAction(action);
-              setRuntimeManagementOpen(true);
-            }}
+            onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "instance" ? (
           <InstanceOverview
@@ -2250,7 +2271,8 @@ export default function App() {
             dag={dag}
             managedNodes={managedNodes}
             runArtifacts={runArtifactsQuery.data || []}
-            onSelectInstance={(id) => selectInstance(id, true)}
+            onSelectInstance={(id) => selectInstance(id, false)}
+            onOpenInstance={(id) => selectInstance(id, true)}
             onOpenWorkflow={(targetInstanceId) => {
               if (targetInstanceId) {
                 openWorkflowForInstance(targetInstanceId);
@@ -2260,6 +2282,7 @@ export default function App() {
             }}
             onOpenExecutions={() => openWorkflowForInstance(instance?.instanceId || instanceId, selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
             onOpenNodes={() => navigateTo("nodes")}
+            onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "workflow" ? (
           <WorkflowWorkspace
@@ -2409,6 +2432,7 @@ export default function App() {
           mode={mode}
           runtime={runtime}
           instance={managementInstance}
+          instances={instances}
           action={runtimeManagementAction}
           setAction={setRuntimeManagementAction}
           createSshCommand={runtimeCreateSshCommand}
@@ -2820,7 +2844,7 @@ function RuntimeOverview({
   onOpenInstance: (instanceId: string) => void;
   onOpenWorkflow: (instanceId: string, pipelineId?: string, nodeId?: string) => void;
   managementInstance: Instance | undefined;
-  onOpenManagement: (action: RuntimeManagementAction) => void;
+  onOpenManagement: (action: RuntimeManagementAction, targetInstanceId?: string) => void;
 }) {
   type HermesUiResult = {
     ok: boolean;
@@ -3352,7 +3376,7 @@ function RuntimeOverview({
               <button type="button" className="primary compact" disabled={!managementInstance} onClick={() => onOpenManagement("create-instance")}>
                 <Plus size={14} />Create Instance
               </button>
-              <button type="button" className="ghost-btn compact" disabled={!managementInstance} onClick={() => onOpenManagement("delete-instance")}>
+              <button type="button" className="ghost-btn compact" disabled={!managementInstance || !relationshipInstance} onClick={() => relationshipInstance && onOpenManagement("delete-instance", relationshipInstance.instanceId)}>
                 <Trash2 size={14} />Delete Instance
               </button>
             </div>
@@ -3375,7 +3399,22 @@ function RuntimeOverview({
             </label>
           </div>
           <div className="instance-table">
-            {visibleInstances.map((item) => <InstanceRow key={item.instanceId} instance={item} onOpen={() => onOpenInstance(item.instanceId)} onWorkflow={() => onOpenWorkflow(item.instanceId)} />)}
+            {visibleInstances.map((item) => (
+              <InstanceRow
+                key={item.instanceId}
+                instance={item}
+                selected={relationshipInstance?.instanceId === item.instanceId}
+                onSelect={() => {
+                  setRelationshipInstanceId(item.instanceId);
+                  setRelationshipRunId(item.latestExecution?.pipelineId || "");
+                  setRelationshipNodeId("");
+                  onSelectRelationshipInstance(item.instanceId);
+                }}
+                onOpen={() => onOpenInstance(item.instanceId)}
+                onWorkflow={() => onOpenWorkflow(item.instanceId)}
+                onDelete={() => onOpenManagement("delete-instance", item.instanceId)}
+              />
+            ))}
             {!visibleInstances.length && <LoadingOrEmpty loading={loading} text={instances.length ? "没有匹配的 Instance" : "当前 Runtime 没有 enabled Instance"} />}
           </div>
         </div>
@@ -4008,9 +4047,11 @@ function InstanceOverview({
   managedNodes,
   runArtifacts,
   onSelectInstance,
+  onOpenInstance,
   onOpenWorkflow,
   onOpenExecutions,
   onOpenNodes,
+  onOpenManagement,
 }: {
   runtime: Runtime | undefined;
   instance: Instance | undefined;
@@ -4025,9 +4066,11 @@ function InstanceOverview({
   managedNodes: NodeRegistryItem[];
   runArtifacts: Artifact[];
   onSelectInstance: (instanceId: string) => void;
+  onOpenInstance: (instanceId: string) => void;
   onOpenWorkflow: (instanceId?: string) => void;
   onOpenExecutions: () => void;
   onOpenNodes: () => void;
+  onOpenManagement: (action: RuntimeManagementAction, targetInstanceId?: string) => void;
 }) {
   const binding = instance?.workflowBinding;
   const latest = instance?.latestExecution || runs[0];
@@ -4094,12 +4137,20 @@ function InstanceOverview({
             </select>
           </label>
           <span className="ops-toolbar-count">{visibleInstances.length}/{instanceTotal} instances</span>
+          <div className="ops-toolbar-actions">
+            <button type="button" className="primary compact" onClick={() => onOpenManagement("create-instance")}>
+              <Plus size={14} />Create Instance
+            </button>
+            <button type="button" className="ghost-btn compact" disabled={!instance} onClick={() => instance && onOpenManagement("delete-instance", instance.instanceId)}>
+              <Trash2 size={14} />Delete Instance
+            </button>
+          </div>
         </section>
 
         <section className="instance-directory-grid">
           <div className="flow-panel instance-registry-panel">
             <div className="panel-head">
-              <div><strong>Instance List</strong><span>选择 Instance 进入详情；Workflow 按钮进入绑定 workflow。</span></div>
+              <div><strong>Instance List</strong><span>点击行只切换当前选择；详情、Workflow 和删除使用右侧显式按钮。</span></div>
               <span>{visibleInstances.length} shown</span>
             </div>
             <div className="instance-table">
@@ -4107,8 +4158,11 @@ function InstanceOverview({
                 <InstanceRow
                   key={item.instanceId}
                   instance={item}
-                  onOpen={() => onSelectInstance(item.instanceId)}
+                  selected={instance?.instanceId === item.instanceId}
+                  onSelect={() => onSelectInstance(item.instanceId)}
+                  onOpen={() => onOpenInstance(item.instanceId)}
                   onWorkflow={() => onOpenWorkflow(item.instanceId)}
+                  onDelete={() => onOpenManagement("delete-instance", item.instanceId)}
                 />
               ))}
               {!visibleInstances.length && <LoadingOrEmpty loading={false} text={instances.length ? "没有匹配的 Instance" : "当前 Runtime 没有 Instance"} />}
@@ -4131,8 +4185,9 @@ function InstanceOverview({
                   artifacts: instance.artifactCount ?? 0,
                 }} />
                 <div className="relationship-detail-actions">
-                  <button type="button" onClick={() => onSelectInstance(instance.instanceId)}>Open Instance</button>
+                  <button type="button" onClick={() => onOpenInstance(instance.instanceId)}>Open Instance</button>
                   <button type="button" className="primary" onClick={() => onOpenWorkflow(instance.instanceId)}>Open Workflow</button>
+                  <button type="button" className="ghost-btn" onClick={() => onOpenManagement("delete-instance", instance.instanceId)}>Delete</button>
                 </div>
               </div>
             ) : <Empty text="选择一个 Instance 查看详情" />}
@@ -4260,7 +4315,7 @@ function InstanceOverview({
           <div className="panel-head"><div><strong>Other Instances</strong><span>{instances.length}/{instanceTotal} loaded · {instanceSource || "runtime-spi"}</span></div></div>
           <div className="runtime-list compact">
             {instances.map((item) => (
-              <button key={item.instanceId} type="button" className={`runtime-select-card ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => onSelectInstance(item.instanceId)}>
+              <button key={item.instanceId} type="button" className={`runtime-select-card ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => onOpenInstance(item.instanceId)}>
                 <div><strong>{item.title}</strong><span>{item.workflowBinding?.workflowName || item.sopType}</span></div>
                 <span className={`status-pill ${item.status === "failed" ? "failed" : item.status === "running" ? "running" : "done"}`}>{item.status || "ready"}</span>
               </button>
@@ -4272,11 +4327,26 @@ function InstanceOverview({
   );
 }
 
-function InstanceRow({ instance, onOpen, onWorkflow }: { instance: Instance; onOpen: () => void; onWorkflow: () => void }) {
+function InstanceRow({
+  instance,
+  selected = false,
+  onSelect,
+  onOpen,
+  onWorkflow,
+  onDelete,
+}: {
+  instance: Instance;
+  selected?: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
+  onWorkflow: () => void;
+  onDelete?: () => void;
+}) {
   const latest = instance.latestExecution;
+  const protectedInstance = instance.instanceId === "runtime-management";
   return (
-    <div className="instance-row">
-      <button type="button" className="instance-main" onClick={onOpen}>
+    <div className={`instance-row ${selected ? "selected" : ""}`}>
+      <button type="button" className="instance-main" onClick={onSelect}>
         <div>
           <strong>{instance.title}</strong>
           <span>{instance.instanceId}</span>
@@ -4292,6 +4362,11 @@ function InstanceRow({ instance, onOpen, onWorkflow }: { instance: Instance; onO
       <div className="instance-actions">
         <button type="button" onClick={onOpen}>Open</button>
         <button type="button" onClick={onWorkflow}>Workflow</button>
+        {onDelete && (
+          <button type="button" className="danger-light" onClick={onDelete} disabled={protectedInstance} title={protectedInstance ? "runtime-management 是受保护的默认管理 Instance" : "Delete Instance"}>
+            Delete
+          </button>
+        )}
       </div>
     </div>
   );
@@ -6476,6 +6551,7 @@ function RuntimeManagementStartDrawer({
   mode,
   runtime,
   instance,
+  instances,
   action,
   setAction,
   createSshCommand,
@@ -6545,6 +6621,7 @@ function RuntimeManagementStartDrawer({
   mode: DataMode;
   runtime: Runtime;
   instance: Instance;
+  instances: Instance[];
   action: RuntimeManagementAction;
   setAction: (value: RuntimeManagementAction) => void;
   createSshCommand: string;
@@ -6623,10 +6700,21 @@ function RuntimeManagementStartDrawer({
   const selectedCreateMachine = machines.find((machine) => machine.id === createMachineId);
   const selectedDeleteMachine = machines.find((machine) => machine.id === deleteMachineId);
   const selectedDeleteRuntime = deleteCandidates.find((item) => item.id === deleteTargetRuntimeId);
+  const selectedDeleteInstance = instances.find((item) => item.instanceId === instanceDeleteId);
+  const protectedDeleteInstance = instanceDeleteId.trim() === "runtime-management";
+  const selectedDeleteWorkspace = selectedDeleteInstance?.wikiLocalPath || "";
+  const selectedDeleteRepo = selectedDeleteInstance?.repo || instanceDeleteRepo.trim();
+  const sharedDeleteRefs = selectedDeleteInstance
+    ? instances.filter((item) => item.instanceId !== selectedDeleteInstance.instanceId && (
+      Boolean(selectedDeleteWorkspace && item.wikiLocalPath === selectedDeleteWorkspace)
+      || Boolean(selectedDeleteRepo && item.repo === selectedDeleteRepo)
+    ))
+    : [];
   const inferredDeleteRuntimeId = machineRuntimeId(selectedDeleteMachine);
   const targetHost = runtimeHost(selectedDeleteRuntime) || selectedDeleteMachine?.host || "";
   const deleteHasCredential = Boolean(selectedDeleteMachine?.privateKeyPresent || selectedDeleteMachine?.passwordPresent || deleteSshCommand.trim());
   const deleteReady = isDeleteRuntime ? Boolean(selectedDeleteRuntime && deleteConfirmed && deleteHasCredential) : true;
+  const deleteInstanceReady = isDeleteInstance ? Boolean(instanceDeleteId.trim() && !protectedDeleteInstance) : true;
   const operationBoundaryTitle = isCreateRuntime || isDeleteRuntime ? "Target Machine Boundary" : "Current Runtime Boundary";
   const operationBoundaryText = isCreateRuntime || isDeleteRuntime
     ? "Runtime 创建/删除需要目标机器；优先选择 Machine Node，Control Plane 会注入保存的 SSH 凭据。"
@@ -6957,13 +7045,59 @@ function RuntimeManagementStartDrawer({
                 }} />
               </section>
               <label>
-                <span>Instance ID</span>
-                <input value={instanceDeleteId} onChange={(event) => setInstanceDeleteId(event.target.value)} disabled={pending} placeholder="wiki-sop-old-instance" />
+                <span>Instance Target</span>
+                <select
+                  value={instanceDeleteId}
+                  onChange={(event) => {
+                    const nextId = event.target.value;
+                    const target = instances.find((item) => item.instanceId === nextId);
+                    setInstanceDeleteId(nextId);
+                    setInstanceDeleteRepo(target?.repo || "");
+                  }}
+                  disabled={pending}
+                >
+                  <option value="">{instances.length ? "Select instance to delete" : "No instances loaded"}</option>
+                  {instances.map((item) => (
+                    <option key={item.instanceId} value={item.instanceId}>
+                      {item.instanceId}{item.instanceId === "runtime-management" ? " · protected" : ""}{item.repo ? ` · ${item.repo}` : ""}
+                    </option>
+                  ))}
+                  {instanceDeleteId && !instances.some((item) => item.instanceId === instanceDeleteId) && (
+                    <option value={instanceDeleteId}>{instanceDeleteId} · manual</option>
+                  )}
+                </select>
+                <span className="field-hint">列表来自当前 Runtime 的 Instance Registry。选择后会自动带出 repo 和 workspace。</span>
               </label>
-              <label>
-                <span>Instance Repo</span>
-                <input value={instanceDeleteRepo} onChange={(event) => setInstanceDeleteRepo(event.target.value)} disabled={pending} placeholder="skkeoriw/wiki-sop-old-instance" />
-              </label>
+              {selectedDeleteInstance ? (
+                <section className="delete-instance-target-card">
+                  <div>
+                    <strong>{selectedDeleteInstance.title || selectedDeleteInstance.instanceId}</strong>
+                    <span>{selectedDeleteInstance.instanceId}</span>
+                  </div>
+                  <KeyValues data={{
+                    repo: selectedDeleteInstance.repo || "-",
+                    wiki_local_path: selectedDeleteInstance.wikiLocalPath || "-",
+                    workspace_status: selectedDeleteInstance.workspaceStatus || "-",
+                    run_index_status: selectedDeleteInstance.runIndexStatus || "-",
+                    latest_run: selectedDeleteInstance.latestExecution?.pipelineId || "-",
+                  }} />
+                </section>
+              ) : (
+                <label>
+                  <span>Instance Repo</span>
+                  <input value={instanceDeleteRepo} onChange={(event) => setInstanceDeleteRepo(event.target.value)} disabled={pending} placeholder="skkeoriw/wiki-sop-old-instance" />
+                  <span className="field-hint">仅用于手动目标；从列表选择时不需要填写。</span>
+                </label>
+              )}
+              {protectedDeleteInstance && (
+                <div className="inline-error">runtime-management 是默认管理 Instance，不能删除。请先选择业务 Instance。</div>
+              )}
+              {selectedDeleteInstance && sharedDeleteRefs.length > 0 && (
+                <div className="inline-warning shared-workspace-warning">
+                  <strong>Shared workspace detected</strong>
+                  <span>这些 Instance 共享 repo 或本地目录：{sharedDeleteRefs.map((item) => item.instanceId).join(", ")}。delete-instance 会删除 registry 关系，但后端会跳过 workspace 文件清理。</span>
+                </div>
+              )}
               <label className="inline-check drawer-inline-check">
                 <input type="checkbox" checked={instanceDeleteForce} onChange={(event) => setInstanceDeleteForce(event.target.checked)} disabled={pending} />
                 <span>Force when running executions exist</span>
@@ -6977,7 +7111,7 @@ function RuntimeManagementStartDrawer({
           <button type="button" onClick={onResetDefaults} disabled={pending}>Reset saved</button>
           <button type="button" onClick={onSaveDefaults} disabled={pending}>Save defaults</button>
           <button type="button" onClick={onClose} disabled={pending}>Cancel</button>
-          <button type="submit" className={isCreate ? "primary" : "primary danger-action"} disabled={pending || (isCreate ? !createReady : !deleteReady)}>
+          <button type="submit" className={isCreate ? "primary" : "primary danger-action"} disabled={pending || (isCreate ? !createReady : !(deleteReady && deleteInstanceReady))}>
             {pending ? <Loader2 size={16} className="spin" /> : isCreate ? <Play size={16} /> : <X size={16} />}
             {pending ? "Starting..." : submitLabel}
           </button>
