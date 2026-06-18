@@ -296,7 +296,7 @@ pre {
 .active-context {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(260px, 360px) minmax(160px, auto) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(230px, 320px) minmax(230px, 320px) minmax(150px, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
 }
@@ -441,6 +441,10 @@ pre {
   min-width: 0;
 }
 
+.instance-switcher {
+  z-index: 202;
+}
+
 .runtime-switcher-button {
   width: 100%;
   min-height: 48px;
@@ -505,6 +509,10 @@ pre {
   background: #f4f9ff;
   box-shadow: 0 18px 48px rgba(30, 64, 175, .16), 0 2px 8px rgba(15, 23, 42, .08);
   padding: 12px;
+}
+
+.instance-switcher-menu {
+  width: min(520px, calc(100vw - 260px));
 }
 
 .runtime-switcher-search {
@@ -6076,6 +6084,40 @@ pre {
   background: var(--panel);
   padding: 10px;
   text-align: left;
+}
+
+.workflow-run-context-select {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.workflow-run-context-select select,
+.workflow-instance-select select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-weight: 750;
+  padding: 7px 9px;
+}
+
+.workflow-run-context-select span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-instance-select {
+  min-width: 190px;
 }
 
 .workflow-run-context-grid button.primary {

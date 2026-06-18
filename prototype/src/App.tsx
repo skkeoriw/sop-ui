@@ -338,9 +338,10 @@ function readRouteContext() {
     return {
       runtimeId: decodeURIComponent(parts[1] || ""),
       instanceId: parts[2] === "instances" ? decodeURIComponent(parts[3] || "") : "",
+      workflowId: parts[2] === "instances" && parts[4] === "workflows" ? decodeURIComponent(parts[5] || "") : "",
     };
   }
-  return { runtimeId: "", instanceId: "" };
+  return { runtimeId: "", instanceId: "", workflowId: "" };
 }
 
 function inspectorTabLabel(tab: InspectorTab) {
@@ -863,6 +864,8 @@ export default function App() {
   const [runtimeId, setRuntimeId] = useState(initialManualRuntime?.id || "");
   const [runtimeSwitcherOpen, setRuntimeSwitcherOpen] = useState(false);
   const [runtimeSwitchSearch, setRuntimeSwitchSearch] = useState("");
+  const [instanceSwitcherOpen, setInstanceSwitcherOpen] = useState(false);
+  const [instanceSwitchSearch, setInstanceSwitchSearch] = useState("");
   const [runtimeDirectorySearch, setRuntimeDirectorySearch] = useState("");
   const [runtimeDirectoryStatus, setRuntimeDirectoryStatus] = useState("active");
   const [runtimeDirectoryPage, setRuntimeDirectoryPage] = useState(1);
@@ -1041,6 +1044,22 @@ export default function App() {
   const instanceSource = instancesQuery.data?.source || "";
   const instanceHasMore = Boolean(instancesQuery.data?.hasMore);
   const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
+  const switcherInstances = useMemo(() => {
+    const query = instanceSwitchSearch.trim().toLowerCase();
+    if (!query) return instances;
+    return instances.filter((item) => {
+      const searchable = [
+        item.instanceId,
+        item.title,
+        item.repo,
+        item.sopType,
+        item.workflowBinding?.workflowName,
+        item.status,
+        item.wikiLocalPath,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [instanceSwitchSearch, instances]);
   const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
   const isRuntimeManagementInstance = Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
   const workflowsQuery = useQuery({
@@ -1974,9 +1993,56 @@ export default function App() {
     setRuntimeId(nextRuntimeId);
     setRuntimeSwitcherOpen(false);
     setRuntimeSwitchSearch("");
+    setInstanceSwitcherOpen(false);
+    setInstanceSwitchSearch("");
     const nextUrl = `/runtimes/${encodeURIComponent(nextRuntimeId)}${window.location.search}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
     setRoute({ view: "runtime", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
+  }
+
+  function switchActiveInstance(nextInstanceId: string) {
+    if (!nextInstanceId) return;
+    setInstanceId(nextInstanceId);
+    setSelectedRunId("");
+    setSelectedStageId("");
+    setInstanceSwitcherOpen(false);
+    setInstanceSwitchSearch("");
+    const baseRuntime = runtime?.id || runtimeId || "runtime";
+    let nextPath = window.location.pathname;
+    let nextRoute: AppRoute | undefined;
+    if (viewMode === "workflow") {
+      const workflowId = routeContext.workflowId || workflowIdForInstance(instance) || "workflow";
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}/workflows/${encodeURIComponent(workflowId)}`;
+      nextRoute = { view: "workflow", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
+    } else if (viewMode === "nodes") {
+      const workflowId = routeContext.workflowId || workflowIdForInstance(instance) || "workflow";
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes`;
+      if (route.nodeId) nextPath += `/${encodeURIComponent(route.nodeId)}`;
+      if (route.moduleId) nextPath += `/modules/${encodeURIComponent(route.moduleId)}`;
+      nextRoute = { view: "nodes", nodeId: route.nodeId, pipelineId: "", artifactId: "", moduleId: route.moduleId };
+    } else if (viewMode === "instance" && routeContext.instanceId) {
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}`;
+      nextRoute = { view: "instance", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
+    }
+    const nextUrl = `${nextPath}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    if (nextRoute) setRoute(nextRoute);
+  }
+
+  function openWorkflowDefinitionForInstance(workflowId: string, targetInstanceId = instance?.instanceId || instanceId, pipelineId = "", nodeId = "") {
+    if (!targetInstanceId || !workflowId) return;
+    setInstanceId(targetInstanceId);
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    let nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(targetInstanceId)}/workflows/${encodeURIComponent(workflowId)}`;
+    if (pipelineId) nextPath += `/executions/${encodeURIComponent(pipelineId)}`;
+    if (nodeId) nextPath += `/${encodeURIComponent(nodeId)}`;
+    const nextUrl = `${nextPath}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "workflow", nodeId, pipelineId, artifactId: "", moduleId: "" });
+    if (pipelineId) setSelectedRunId(pipelineId);
+    else setSelectedRunId("");
+    if (nodeId) setSelectedStageId(nodeId);
+    else setSelectedStageId("");
   }
 
   function selectInstance(nextInstanceId: string, open = false) {
@@ -1992,19 +2058,10 @@ export default function App() {
 
   function openWorkflowForInstance(targetInstanceId = instance?.instanceId || instanceId, pipelineId = "", nodeId = "") {
     if (!targetInstanceId) return;
-    setInstanceId(targetInstanceId);
-    const baseRuntime = routeRuntimeId(runtime, runtimeId);
     const targetInstance = instances.find((item) => item.instanceId === targetInstanceId)
       || (instance?.instanceId === targetInstanceId ? instance : undefined);
     const workflowId = workflowIdForInstance(targetInstance);
-    let nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(targetInstanceId)}/workflows/${encodeURIComponent(workflowId)}`;
-    if (pipelineId) nextPath += `/executions/${encodeURIComponent(pipelineId)}`;
-    if (nodeId) nextPath += `/${encodeURIComponent(nodeId)}`;
-    const nextUrl = `${nextPath}${window.location.search}`;
-    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-    setRoute({ view: "workflow", nodeId, pipelineId, artifactId: "", moduleId: "" });
-    if (pipelineId) setSelectedRunId(pipelineId);
-    if (nodeId) setSelectedStageId(nodeId);
+    openWorkflowDefinitionForInstance(workflowId, targetInstanceId, pipelineId, nodeId);
   }
 
   function openRuntimeManagement(action: RuntimeManagementAction, targetInstanceId = "") {
@@ -2129,6 +2186,18 @@ export default function App() {
             onSearchChange={setRuntimeSwitchSearch}
             onSelect={selectRuntime}
           />
+          <InstanceSwitcher
+            instance={instance}
+            instances={switcherInstances}
+            total={instances.length}
+            loading={instancesQuery.isLoading}
+            open={instanceSwitcherOpen}
+            search={instanceSwitchSearch}
+            disabled={!runtime}
+            onOpenChange={setInstanceSwitcherOpen}
+            onSearchChange={setInstanceSwitchSearch}
+            onSelect={switchActiveInstance}
+          />
           <div className="context-crumbs">
             <span>Context</span>
             <strong>{instance?.title || "Workspace"}{selectedRun?.pipelineId ? ` / ${shortId(selectedRun.pipelineId)}` : ""}</strong>
@@ -2213,11 +2282,12 @@ export default function App() {
             workflows={workflowDefinitions}
             runtimes={runtimes}
             runtime={runtime}
+            selectedInstance={instance}
             instances={instances}
             loading={workflowsQuery.isLoading}
             onOpenRuntime={(id) => selectRuntime(id)}
-            onOpenInstance={(id) => selectInstance(id, true)}
-            onOpenExecutions={() => openWorkflowForInstance(instance?.instanceId || instanceId, selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
+            onSelectInstance={switchActiveInstance}
+            onOpenExecutions={(workflowId) => openWorkflowDefinitionForInstance(workflowId, instance?.instanceId || instanceId)}
             onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "runtime" && isRuntimeDirectory ? (
@@ -2288,6 +2358,7 @@ export default function App() {
           <WorkflowWorkspace
             runtime={runtime}
             instance={instance}
+            instances={instances}
             provider={provider}
             mode={mode}
             runs={workflowExecutions}
@@ -2318,6 +2389,7 @@ export default function App() {
             rawLogOpen={rawLogOpen}
             setRawLogOpen={setRawLogOpen}
             openNodeConfig={openNodeConfig}
+            onSwitchInstance={switchActiveInstance}
             onSelectRun={(pipelineId) => { setSelectedRunId(pipelineId); navigateTo("workflow", pipelineId, selectedStage?.id || ""); }}
             onSelectNode={(nodeId) => { setSelectedStageId(nodeId); navigateTo("workflow", selectedRun?.pipelineId || "", nodeId); }}
             onCancelRun={handleCancelRun}
@@ -2802,6 +2874,65 @@ function RuntimeSwitcher({
               </button>
             ))}
             {!runtimes.length && <div className="runtime-switcher-empty">{loading ? "Loading runtimes..." : "No runtime matched"}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InstanceSwitcher({
+  instance,
+  instances,
+  total,
+  loading,
+  open,
+  search,
+  disabled,
+  onOpenChange,
+  onSearchChange,
+  onSelect,
+}: {
+  instance: Instance | undefined;
+  instances: Instance[];
+  total: number;
+  loading: boolean;
+  open: boolean;
+  search: string;
+  disabled: boolean;
+  onOpenChange: (value: boolean) => void;
+  onSearchChange: (value: string) => void;
+  onSelect: (instanceId: string) => void;
+}) {
+  return (
+    <div className="runtime-switcher instance-switcher">
+      <button type="button" className="runtime-switcher-button" onClick={() => onOpenChange(!open)} aria-expanded={open} disabled={disabled}>
+        <LayoutDashboard size={16} />
+        <span>
+          <small>Instance Workspace</small>
+          <strong>{instance?.title || instance?.instanceId || "Select instance"}</strong>
+        </span>
+        <em className={instance?.status === "failed" ? "warn" : "ok"}>{instance?.status || "ready"}</em>
+        <ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="runtime-switcher-menu instance-switcher-menu">
+          <label className="runtime-switcher-search">
+            <Search size={14} />
+            <input value={search} onChange={(event) => onSearchChange(event.target.value)} placeholder={`Search ${total} instances`} autoFocus />
+          </label>
+          <div className="runtime-switcher-list">
+            {instances.map((item) => (
+              <button key={item.instanceId} type="button" className={`runtime-switcher-item ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => onSelect(item.instanceId)}>
+                <span className={`runtime-dot ${item.status === "failed" ? "" : "ok"}`} />
+                <span>
+                  <strong>{item.title || item.instanceId}</strong>
+                  <small>{item.instanceId} · {item.status || "ready"}</small>
+                  <code>{item.repo || item.wikiLocalPath || "workspace pending"}</code>
+                </span>
+              </button>
+            ))}
+            {!instances.length && <div className="runtime-switcher-empty">{loading ? "Loading instances..." : "No instance matched"}</div>}
           </div>
         </div>
       )}
@@ -3773,21 +3904,23 @@ function WorkflowCatalog({
   workflows,
   runtimes,
   runtime,
+  selectedInstance,
   instances,
   loading,
   onOpenRuntime,
-  onOpenInstance,
+  onSelectInstance,
   onOpenExecutions,
   onOpenManagement,
 }: {
   workflows: WorkflowDefinition[];
   runtimes: Runtime[];
   runtime: Runtime | undefined;
+  selectedInstance: Instance | undefined;
   instances: Instance[];
   loading: boolean;
   onOpenRuntime: (runtimeId: string) => void;
-  onOpenInstance: (instanceId: string) => void;
-  onOpenExecutions: () => void;
+  onSelectInstance: (instanceId: string) => void;
+  onOpenExecutions: (workflowId: string) => void;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
@@ -3804,7 +3937,7 @@ function WorkflowCatalog({
   const workflowTypes = useMemo(() => Array.from(new Set(workflows.flatMap((item) => [item.interpreter, item.workflowType]).filter(Boolean))).sort(), [workflows]);
   const selectedWorkflow = workflows.find((item) => item.workflowId === selectedWorkflowId) || workflows[0];
   const managementWorkflow = selectedWorkflow?.workflowId === "runtime-management";
-  const defaultInstance = instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
+  const defaultInstance = selectedInstance || instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
   useEffect(() => {
     if (!selectedWorkflowId && workflows[0]) setSelectedWorkflowId(workflows[0].workflowId);
   }, [selectedWorkflowId, workflows]);
@@ -3907,11 +4040,17 @@ function WorkflowCatalog({
                       <strong>{runtime?.displayName || runtime?.id || "Select Runtime"}</strong>
                       <span>{runtime?.channelUrl || runtime?.endpoint || "No runtime selected"}</span>
                     </button>
-                    <button type="button" onClick={() => defaultInstance && onOpenInstance(defaultInstance.instanceId)}>
-                      <strong>{defaultInstance?.title || defaultInstance?.instanceId || "Select Instance"}</strong>
+                    <label className="workflow-run-context-select">
+                      <strong>Instance Workspace</strong>
+                      <select value={defaultInstance?.instanceId || ""} onChange={(event) => onSelectInstance(event.target.value)} disabled={!instances.length}>
+                        {!instances.length && <option value="">No instance selected</option>}
+                        {instances.map((item) => (
+                          <option key={item.instanceId} value={item.instanceId}>{item.instanceId} · {item.repo || item.status || "workspace"}</option>
+                        ))}
+                      </select>
                       <span>{defaultInstance?.repo || "No instance selected"}</span>
-                    </button>
-                    <button type="button" className="primary" disabled={!runtime || !defaultInstance} onClick={onOpenExecutions}>
+                    </label>
+                    <button type="button" className="primary" disabled={!runtime || !defaultInstance} onClick={() => selectedWorkflow && onOpenExecutions(selectedWorkflow.workflowId)}>
                       <Play size={16} />
                       Open Executions
                     </button>
@@ -4592,6 +4731,7 @@ function WorkflowHome({
 function WorkflowWorkspace({
   runtime,
   instance,
+  instances,
   provider,
   mode,
   runs,
@@ -4622,6 +4762,7 @@ function WorkflowWorkspace({
   rawLogOpen,
   setRawLogOpen,
   openNodeConfig,
+  onSwitchInstance,
   onSelectRun,
   onSelectNode,
   onCancelRun,
@@ -4633,6 +4774,7 @@ function WorkflowWorkspace({
 }: {
   runtime: Runtime | undefined;
   instance: Instance | undefined;
+  instances: Instance[];
   provider: SopDataProvider;
   mode: DataMode;
   runs: Run[];
@@ -4663,6 +4805,7 @@ function WorkflowWorkspace({
   rawLogOpen: boolean;
   setRawLogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   openNodeConfig: (nodeId: string) => void;
+  onSwitchInstance: (instanceId: string) => void;
   onSelectRun: (pipelineId: string) => void;
   onSelectNode: (nodeId: string) => void;
   onCancelRun: () => void;
@@ -4693,7 +4836,12 @@ function WorkflowWorkspace({
         <span>Runtime Host</span>
         <strong>{runtime?.displayName || runtime?.name || runtime?.id || "-"}</strong>
         <span>/ Instance</span>
-        <strong>{instance?.instanceId || "-"}</strong>
+        <label className="workflow-instance-select">
+          <select value={instance?.instanceId || ""} onChange={(event) => onSwitchInstance(event.target.value)} disabled={!instances.length}>
+            {!instances.length && <option value="">No instance</option>}
+            {instances.map((item) => <option key={item.instanceId} value={item.instanceId}>{item.instanceId}</option>)}
+          </select>
+        </label>
         <span>/ Workflow Definition</span>
         <strong>{workflowBinding?.workflowName || instance?.sopType || "workflow"}</strong>
         <span>/ Workflow Run</span>
