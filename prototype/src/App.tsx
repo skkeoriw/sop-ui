@@ -1246,6 +1246,14 @@ function NodeRunWorkbench({
   const nodeId = node?.nodeId || "";
   const instanceId = instance?.instanceId || "";
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("test_source") === "existing-run" && params.get("test_run")) {
+      setInputSource("existing-run");
+      setSeedRunId(params.get("test_run") || "");
+    }
+  }, [nodeId]);
+
   const historyQuery = useQuery({
     queryKey: queryKeys.nodeRuns(mode, runtime, instanceId, workflowId, nodeId),
     queryFn: () => provider.listNodeRuns(runtime!, instanceId, workflowId, nodeId),
@@ -1975,7 +1983,7 @@ export default function App() {
   const nodeModuleQuery = useQuery({
     queryKey: queryKeys.nodeModule(mode, runtime, instance?.instanceId || "", selectedManagedNode?.nodeId || "", selectedNodeModule?.id || "", selectedRun?.pipelineId || ""),
     queryFn: () => provider.getNodeModule(runtime!, instance!.instanceId, selectedManagedNode!.nodeId, selectedNodeModule!.id, selectedRun?.pipelineId),
-    enabled: Boolean(runtime && instance && selectedManagedNode && selectedNodeModule && viewMode === "nodes"),
+    enabled: Boolean(runtime && instance && selectedManagedNode && selectedNodeModule && viewMode === "nodes" && route.moduleId),
   });
   const nodeFilters = useMemo(() => {
     return ["all", "create-runtime", "delete-runtime", "create-instance", "common", "failed"];
@@ -2635,8 +2643,9 @@ export default function App() {
       const workflowId = routeContext.workflowId || workflowIdForInstance(instance) || "workflow";
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes`;
       if (route.nodeId) nextPath += `/${encodeURIComponent(route.nodeId)}`;
-      if (route.moduleId) nextPath += `/modules/${encodeURIComponent(route.moduleId)}`;
-      nextRoute = { view: "nodes", nodeId: route.nodeId, pipelineId: "", artifactId: "", moduleId: route.moduleId };
+      if (route.nodeRunId) nextPath += `/runs/${encodeURIComponent(route.nodeRunId)}`;
+      else if (route.moduleId) nextPath += `/modules/${encodeURIComponent(route.moduleId)}`;
+      nextRoute = { view: "nodes", nodeId: route.nodeId, pipelineId: "", artifactId: "", moduleId: route.moduleId, nodeRunId: route.nodeRunId };
     } else if (viewMode === "instance" && routeContext.instanceId) {
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}`;
       nextRoute = { view: "instance", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
@@ -2697,9 +2706,9 @@ export default function App() {
     setRuntimeManagementOpen(true);
   }
 
-  function selectManagedNode(nodeId: string, moduleId = selectedNodeModuleId || "basic") {
+  function selectManagedNode(nodeId: string, moduleId = "") {
     setSelectedManagedNodeId(nodeId);
-    setSelectedNodeModuleId(moduleId);
+    if (moduleId) setSelectedNodeModuleId(moduleId);
     navigateTo("nodes", nodeId, moduleId);
   }
 
@@ -2742,12 +2751,12 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     params.set("test_source", "existing-run");
     params.set("test_run", pipelineId);
-    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/modules/basic`;
+    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}`;
     const nextUrl = `${nextPath}?${params.toString()}`;
     setSelectedManagedNodeId(nodeId);
     setSelectedNodeModuleId("basic");
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "basic" });
+    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "" });
   }
 
   function handleCancelRun() {
@@ -3055,6 +3064,8 @@ export default function App() {
             nodes={managedNodes}
             drafts={nodeDraftsQuery.data || []}
             loading={nodesQuery.isLoading}
+            routeNodeId={route.nodeId || ""}
+            routeModuleId={route.moduleId || ""}
             selectedNodeId={selectedManagedNode?.nodeId || ""}
             selectedNodeRunId={route.nodeRunId || ""}
             selectedNode={selectedManagedNode}
@@ -6872,6 +6883,8 @@ function NodesWorkspace({
   moduleLoading,
   drafts,
   loading,
+  routeNodeId,
+  routeModuleId,
   selectedNodeId,
   selectedNodeRunId,
   nodeSearch,
@@ -6898,6 +6911,8 @@ function NodesWorkspace({
   moduleLoading: boolean;
   drafts: NodeDraft[];
   loading: boolean;
+  routeNodeId: string;
+  routeModuleId: string;
   selectedNodeId: string;
   selectedNodeRunId: string;
   nodeSearch: string;
@@ -6914,6 +6929,113 @@ function NodesWorkspace({
   const groupCounts = Object.fromEntries(nodeFilters.map((filter) => [filter, nodes.filter((node) => matchesNodeGroup(node, filter)).length]));
   const [nodeView, setNodeView] = useState<"list" | "dag" | "contracts">("list");
   const workflowBinding = instance?.workflowBinding;
+  const workflowId = workflowBinding?.workflowId || workflowBinding?.workflowName || instance?.sopType || "workflow";
+  const isRouteNode = Boolean(routeNodeId && selectedNode);
+  const isModuleRoute = Boolean(isRouteNode && routeModuleId);
+
+  const nodeListPanel = (
+    <aside className="node-list-panel">
+      <div className="panel-head compact">
+        <div><strong>Definition Groups</strong><span>{visibleNodes.length}/{nodes.length} definitions</span></div>
+        <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Draft</button>
+      </div>
+      <div className="node-list-tools">
+        <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node definition" /></label>
+        <div className="node-group-list" role="tablist" aria-label="Node group">
+          {nodeFilters.map((filter) => (
+            <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>
+              <strong>{nodeGroupLabel(filter)}</strong>
+              <span className={`status-pill ${filter === "failed" && (groupCounts[filter] || 0) ? "waiting" : "done"}`}>{groupCounts[filter] || 0}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="node-catalog-heading">
+        <strong>Node Definitions</strong>
+        <span>{nodeGroupLabel(nodeFilter)}</span>
+      </div>
+      {loading ? <Skeleton /> : (
+        <div className="node-picker-list">
+          {visibleNodes.map((node) => (
+            <button key={node.nodeId} type="button" className={`node-picker-row ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
+              <div>
+                <strong>{node.title || node.nodeId}</strong>
+                <span>{node.nodeId}</span>
+                <span>{categoryLabel(String(node.ui?.category || "custom"))} · {String(node.executor?.type || node.case || "node")}</span>
+              </div>
+              <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+              <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "warning" : "ready"}</span>
+            </button>
+          ))}
+          {!visibleNodes.length && <Empty text="没有匹配的 Node Definition" />}
+        </div>
+      )}
+    </aside>
+  );
+
+  const definitionViews = (
+    <section className="node-modules-panel">
+      <div className="panel-head compact node-module-head">
+        <div><strong>Module Definitions</strong><span>{selectedNode?.nodeId || "No node definition"}</span></div>
+        <div className="node-module-head-actions">
+          {selectedNode ? <button type="button" className="btn" onClick={() => onSelectNode(selectedNode.nodeId)}>Open Node</button> : null}
+          <div className="segmented compact">
+            <button type="button" className={nodeView === "list" ? "active" : ""} onClick={() => setNodeView("list")}>List</button>
+            <button type="button" className={nodeView === "dag" ? "active" : ""} onClick={() => setNodeView("dag")}>DAG</button>
+            <button type="button" className={nodeView === "contracts" ? "active" : ""} onClick={() => setNodeView("contracts")}>Contracts</button>
+          </div>
+        </div>
+      </div>
+      {nodeView === "list" && (
+        <div className="node-module-list">
+          {modules.map((module) => (
+            <button key={module.id} type="button" className={`node-module-row ${selectedModule?.id === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
+              <span className={`dot ${module.status}`} />
+              <span>
+                <strong>{module.title}</strong>
+                {module.lane && <small>{module.lane}</small>}
+                <small>{module.description}</small>
+                <small>{module.summary || "-"}</small>
+              </span>
+              <span className={`status-pill ${module.status}`}>{module.status}</span>
+            </button>
+          ))}
+          {!modules.length && <Empty text="该节点暂未返回 modules" />}
+        </div>
+      )}
+      {nodeView === "dag" && (
+        <div className="node-catalog-dag">
+          {visibleNodes.map((node) => (
+            <button key={node.nodeId} type="button" className={`node-dag-card ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
+              <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+              <strong>{node.title || node.nodeId}</strong>
+              <small>{contractSummary(node)}</small>
+            </button>
+          ))}
+          {!visibleNodes.length && <Empty text="没有匹配的 Node Definition" />}
+        </div>
+      )}
+      {nodeView === "contracts" && (
+        <div className="node-contract-list">
+          {visibleNodes.map((node) => (
+            <button key={node.nodeId} type="button" className={`node-contract-card ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId)}>
+              <strong>{node.nodeId}</strong>
+              <span>{Object.keys(node.inputs || {}).length} inputs</span>
+              <span>{Object.keys(node.outputs || {}).length} outputs</span>
+              <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "review" : "ok"}</span>
+            </button>
+          ))}
+          {!visibleNodes.length && <Empty text="没有契约数据" />}
+        </div>
+      )}
+      <div className="draft-strip">
+        <div className="section-title"><span>Drafts</span><span>{drafts.length}</span></div>
+        {drafts.slice(0, 3).map((draft) => <article key={draft.draftId} className="draft-item"><strong>{draft.draftId}</strong><code>{formatValue(draft.validation)}</code></article>)}
+        {!drafts.length && <Empty text="还没有节点草稿" />}
+      </div>
+    </section>
+  );
+
   return (
     <>
       <section className="ops-page-header node-compact-header">
@@ -6932,111 +7054,78 @@ function NodesWorkspace({
         </div>
       </section>
 
-      <section className="node-module-workbench node-catalog-workbench">
-        <aside className="node-list-panel">
-          <div className="panel-head compact">
-            <div><strong>Definition Groups</strong><span>{visibleNodes.length}/{nodes.length} definitions</span></div>
-            <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Draft</button>
-          </div>
-          <div className="node-list-tools">
-            <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node definition" /></label>
-            <div className="node-group-list" role="tablist" aria-label="Node group">
-              {nodeFilters.map((filter) => (
-                <button key={filter} type="button" className={nodeFilter === filter ? "active" : ""} onClick={() => onNodeFilter(filter)}>
-                  <strong>{nodeGroupLabel(filter)}</strong>
-                  <span className={`status-pill ${filter === "failed" && (groupCounts[filter] || 0) ? "waiting" : "done"}`}>{groupCounts[filter] || 0}</span>
-                </button>
-              ))}
+      {!isRouteNode ? (
+        <section className="node-list-route-workbench node-catalog-workbench">
+          {nodeListPanel}
+          <section className="node-list-main-panel">
+            <div className="panel-head compact">
+              <div><strong>Node List</strong><span>Open a node to inspect, run, and repair it in its own workspace.</span></div>
+              <span className="status-pill done">{visibleNodes.length} visible</span>
             </div>
-          </div>
-          <div className="node-catalog-heading">
-            <strong>Node Definitions</strong>
-            <span>{nodeGroupLabel(nodeFilter)}</span>
-          </div>
-          {loading ? <Skeleton /> : (
-            <div className="node-picker-list">
+            <div className="node-route-table">
               {visibleNodes.map((node) => (
-                <button key={node.nodeId} type="button" className={`node-picker-row ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId, selectedModule?.id || "basic")}>
-                  <div>
+                <article key={node.nodeId} className={`node-route-row ${selectedNodeId === node.nodeId ? "active" : ""}`}>
+                  <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+                  <div className="node-route-copy">
                     <strong>{node.title || node.nodeId}</strong>
-                    <span>{node.nodeId}</span>
-                    <span>{categoryLabel(String(node.ui?.category || "custom"))} · {String(node.executor?.type || node.case || "node")}</span>
+                    <small>{node.nodeId}</small>
+                    <span>{node.description || contractSummary(node)}</span>
                   </div>
-                  <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
-                  <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "warning" : "ready"}</span>
-                </button>
+                  <div className="node-route-meta">
+                    <span>{String(node.executor?.type || node.case || "node")}</span>
+                    <span>{Object.keys(node.inputs || {}).length} inputs</span>
+                    <span>{Object.keys(node.outputs || {}).length} outputs</span>
+                    <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "review" : "ready"}</span>
+                  </div>
+                  <div className="node-row-actions">
+                    <button type="button" className="btn primary" onClick={() => onSelectNode(node.nodeId)}>Open</button>
+                    <button type="button" className="btn" onClick={() => onSelectNode(node.nodeId)}>Run</button>
+                    <button type="button" className="btn" onClick={() => onSelectNode(node.nodeId)}>History</button>
+                  </div>
+                </article>
               ))}
               {!visibleNodes.length && <Empty text="没有匹配的 Node Definition" />}
             </div>
-          )}
-        </aside>
-
-        <section className="node-modules-panel">
-          <div className="panel-head compact">
-            <div><strong>Definition Views</strong><span>{selectedNode?.nodeId || "No node definition"}</span></div>
-            <div className="segmented compact">
-              <button type="button" className={nodeView === "list" ? "active" : ""} onClick={() => setNodeView("list")}>List</button>
-              <button type="button" className={nodeView === "dag" ? "active" : ""} onClick={() => setNodeView("dag")}>DAG</button>
-              <button type="button" className={nodeView === "contracts" ? "active" : ""} onClick={() => setNodeView("contracts")}>Contracts</button>
+          </section>
+        </section>
+      ) : isModuleRoute ? (
+        <section className="node-module-workbench node-catalog-workbench node-module-route-workbench">
+          {nodeListPanel}
+          {definitionViews}
+          <ModuleDetailPanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} onOpenNode={selectedNode ? () => onSelectNode(selectedNode.nodeId) : undefined} />
+        </section>
+      ) : (
+        <section className="node-detail-route-workbench node-catalog-workbench">
+          {nodeListPanel}
+          <section className="node-detail-route-main">
+            <div className="node-detail-action-strip">
+              <div>
+                <strong>Node Detail</strong>
+                <span>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</span>
+              </div>
+              <div className="node-detail-module-links">
+                {modules.slice(0, 5).map((module) => (
+                  <button key={module.id} type="button" className="btn" onClick={() => onSelectModule(module.id)}>{module.title || module.id}</button>
+                ))}
+              </div>
             </div>
-          </div>
-          {nodeView === "list" && (
-            <div className="node-module-list">
-              {modules.map((module) => (
-                <button key={module.id} type="button" className={`node-module-row ${selectedModule?.id === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
-                  <span className={`dot ${module.status}`} />
-                  <span>
-                    <strong>{module.title}</strong>
-                    {module.lane && <small>{module.lane}</small>}
-                    <small>{module.description}</small>
-                    <small>{module.summary || "-"}</small>
-                  </span>
-                  <span className={`status-pill ${module.status}`}>{module.status}</span>
-                </button>
-              ))}
-              {!modules.length && <Empty text="该节点暂未返回 modules" />}
-            </div>
-          )}
-          {nodeView === "dag" && (
-            <div className="node-catalog-dag">
-              {visibleNodes.map((node) => (
-                <button key={node.nodeId} type="button" className={`node-dag-card ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId, selectedModule?.id || "basic")}>
-                  <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
-                  <strong>{node.title || node.nodeId}</strong>
-                  <small>{contractSummary(node)}</small>
-                </button>
-              ))}
-              {!visibleNodes.length && <Empty text="没有匹配的 Node Definition" />}
-            </div>
-          )}
-          {nodeView === "contracts" && (
-            <div className="node-contract-list">
-              {visibleNodes.map((node) => (
-                <button key={node.nodeId} type="button" className={`node-contract-card ${selectedNodeId === node.nodeId ? "active" : ""}`} onClick={() => onSelectNode(node.nodeId, selectedModule?.id || "basic")}>
-                  <strong>{node.nodeId}</strong>
-                  <span>{Object.keys(node.inputs || {}).length} inputs</span>
-                  <span>{Object.keys(node.outputs || {}).length} outputs</span>
-                  <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "review" : "ok"}</span>
-                </button>
-              ))}
-              {!visibleNodes.length && <Empty text="没有契约数据" />}
-            </div>
-          )}
-          {selectedNode && instance ? (
-            <>
-              <div className="node-run-strip">
+            <NodeDetailPanel node={selectedNode} loading={loading} />
+            {selectedNode && instance ? (
+              <section className="node-run-route-panel">
                 <NodeRunWorkbench
                   provider={provider}
                   runtime={runtime}
                   instance={instance}
-                  workflowId={workflowBinding?.workflowId || instance.sopType || "workflow"}
+                  workflowId={workflowId}
                   node={selectedNode}
                   runs={runs}
                   mode={mode}
                   selectedNodeRunId={selectedNodeRunId}
                   onOpenNodeRun={onOpenNodeRun}
                 />
-              </div>
+              </section>
+            ) : null}
+            {selectedNode && instance ? (
               <details className="node-test-strip legacy-node-test">
                 <summary><span>Legacy Definition Smoke Test</span><ChevronDown size={15} /></summary>
                 <NodeTestPanel
@@ -7048,17 +7137,10 @@ function NodesWorkspace({
                   runs={runs}
                 />
               </details>
-            </>
-          ) : null}
-          <div className="draft-strip">
-            <div className="section-title"><span>Drafts</span><span>{drafts.length}</span></div>
-            {drafts.slice(0, 3).map((draft) => <article key={draft.draftId} className="draft-item"><strong>{draft.draftId}</strong><code>{formatValue(draft.validation)}</code></article>)}
-            {!drafts.length && <Empty text="还没有节点草稿" />}
-          </div>
+            ) : null}
+          </section>
         </section>
-
-        <ModuleDetailPanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} />
-      </section>
+      )}
     </>
   );
 }
@@ -7068,11 +7150,13 @@ function ModuleDetailPanel({
   module,
   detail,
   loading,
+  onOpenNode,
 }: {
   node: NodeRegistryItem | undefined;
   module: NodeModule | undefined;
   detail: NodeModuleDetail | undefined;
   loading: boolean;
+  onOpenNode?: () => void;
 }) {
   if (loading) return <section className="module-detail-panel"><Skeleton /></section>;
   if (!node || !module) return <section className="module-detail-panel"><Empty text="选择一个 Node 和 Module 查看详情" /></section>;
@@ -7091,6 +7175,7 @@ function ModuleDetailPanel({
             {module.contractVersion && <span>{module.contractVersion}</span>}
           </div>
         </div>
+        {onOpenNode ? <button type="button" className="btn primary" onClick={onOpenNode}>Open Node</button> : null}
       </div>
       <div className="module-detail-body">
         {(module.lane || module.contractVersion || module.schema?.length || module.metrics) && (

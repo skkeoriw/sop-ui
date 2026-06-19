@@ -1748,6 +1748,163 @@ pre {
   align-items: start;
 }
 
+.node-list-route-workbench,
+.node-detail-route-workbench {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.node-list-main-panel,
+.node-detail-route-main,
+.node-run-route-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.node-detail-route-main {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.node-detail-action-strip {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.node-detail-action-strip > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.node-detail-action-strip strong,
+.node-detail-action-strip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-detail-action-strip span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-detail-module-links,
+.node-module-head-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.node-detail-module-links .btn,
+.node-module-head-actions .btn {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.node-route-table {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.node-route-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1.35fr) minmax(260px, .9fr) auto;
+  gap: 11px;
+  align-items: center;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.node-route-row.active {
+  border-color: #93b4f8;
+  background: var(--blue-soft);
+}
+
+.node-route-copy,
+.node-route-meta {
+  min-width: 0;
+}
+
+.node-route-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.node-route-copy strong,
+.node-route-copy small,
+.node-route-copy span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-route-copy small,
+.node-route-copy span,
+.node-route-meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-route-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-route-meta > span:not(.status-pill) {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-weight: 750;
+}
+
+.node-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-row-actions .btn {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
 .node-module-workbench .node-list-panel,
 .node-modules-panel,
 .module-detail-panel {
@@ -1883,6 +2040,12 @@ pre {
   display: grid;
   align-content: start;
   box-shadow: var(--shadow-2);
+}
+
+.module-detail-panel .node-detail-hero > .btn {
+  align-self: flex-start;
+  min-height: 34px;
+  padding: 0 12px;
 }
 
 .compact-hero {
@@ -4289,6 +4452,21 @@ pre {
     grid-template-columns: 280px minmax(0, 1fr);
   }
 
+  .node-list-route-workbench,
+  .node-detail-route-workbench {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .node-route-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .node-route-meta,
+  .node-row-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
   .module-detail-panel {
     grid-column: 1 / 3;
   }
@@ -4407,6 +4585,8 @@ pre {
   .draft-grid,
   .node-workbench,
   .node-module-workbench,
+  .node-list-route-workbench,
+  .node-detail-route-workbench,
   .node-detail-grid,
   .stage-map {
     grid-template-columns: 1fr;
@@ -4420,6 +4600,28 @@ pre {
 
   .module-detail-panel {
     grid-column: auto;
+  }
+
+  .node-detail-action-strip,
+  .node-route-row {
+    grid-template-columns: 1fr;
+  }
+
+  .node-detail-action-strip {
+    display: grid;
+    justify-items: stretch;
+  }
+
+  .node-route-row .stage-letter,
+  .node-route-meta,
+  .node-row-actions {
+    grid-column: auto;
+  }
+
+  .node-row-actions .btn,
+  .node-detail-module-links .btn,
+  .node-module-head-actions .btn {
+    flex: 1 1 110px;
   }
 
   .workflow-dag-panel {
