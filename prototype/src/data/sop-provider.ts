@@ -685,6 +685,10 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     innerSteps: ((raw.inner_steps as Array<Record<string, unknown>>) || ((raw.detail as Record<string, unknown>)?.inner_steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
     events: ((raw.events as Array<Record<string, unknown>>) || []).map(mapNodeRunEvent),
     artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+    businessArtifacts: ((raw.business_artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+    actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
+    validation: (raw.validation as Record<string, unknown>) || {},
+    capabilities: (raw.capabilities as Record<string, unknown>) || {},
   };
 }
 

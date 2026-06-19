@@ -7569,6 +7569,116 @@ pre {
 .node-run-config-card.failed { border-color: #ffc3c3; }
 .node-run-config-card.done { border-color: #bfe7cd; }
 
+.node-run-capability-summary {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.node-run-result-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.node-run-result-mini-grid > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px;
+  background: #fbfcfe;
+}
+
+.node-run-result-mini-grid span,
+.node-run-result-mini-grid small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.node-run-result-mini-grid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.node-run-capability-list {
+  display: grid;
+  gap: 8px;
+}
+
+.node-run-capability-card {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+  background: #fbfcfe;
+}
+
+.node-run-capability-card.failed,
+.node-run-capability-card.err {
+  border-color: rgba(227, 111, 111, .62);
+  background: #fff7f7;
+}
+
+.node-run-capability-card.done,
+.node-run-capability-card.ok {
+  border-color: rgba(88, 166, 110, .45);
+  background: #fbfffc;
+}
+
+.node-run-capability-card > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-run-capability-card p,
+.node-run-capability-card small {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.node-run-capability-card details {
+  border-top: 1px solid var(--line-2);
+  padding-top: 6px;
+}
+
+.node-run-capability-card summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.node-run-capability-card code {
+  display: block;
+  max-height: 150px;
+  overflow: auto;
+  margin-top: 6px;
+  border-radius: 7px;
+  padding: 7px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
 .node-run-fix-card p,
 .node-run-fix-card small {
   margin: 0;
@@ -8361,6 +8471,58 @@ pre {
   padding: 12px;
   max-height: 520px;
   overflow: auto;
+}
+
+.node-run-artifact-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+  background: #fbfcfe;
+}
+
+.node-run-artifact-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.node-run-artifact-summary strong,
+.node-run-artifact-summary small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-run-artifact-summary small {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.node-run-output-map {
+  display: grid;
+  gap: 7px;
+}
+
+.node-run-output-map span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.node-run-output-map b {
+  color: var(--text);
+  font-size: 11px;
 }
 
 .node-run-results-panel .node-test-event {

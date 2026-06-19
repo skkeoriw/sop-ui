@@ -1050,9 +1050,63 @@ function detailRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function nodeRunBusinessArtifacts(result?: NodeRunResult): Artifact[] {
+  const business = result?.businessArtifacts || [];
+  const all = result?.artifacts || [];
+  const diagnostics = new Set(["node-run.result", "node-test.result"]);
+  const fallback = all.filter((artifact) => !diagnostics.has(artifact.type));
+  return business.length ? business : fallback;
+}
+
+function nodeRunDiagnosticArtifacts(result?: NodeRunResult): Artifact[] {
+  const businessIds = new Set(nodeRunBusinessArtifacts(result).map((artifact) => artifact.id || artifact.path));
+  return (result?.artifacts || []).filter((artifact) => !businessIds.has(artifact.id || artifact.path));
+}
+
+function nodeRunRealExecutionDetail(result?: NodeRunResult): Record<string, unknown> {
+  const real = detailRecord(detailRecord(result?.detail).real_execution);
+  return detailRecord(real.detail);
+}
+
+function nodeRunExecutionLogText(result?: NodeRunResult) {
+  const realDetail = nodeRunRealExecutionDetail(result);
+  return [realDetail.stdout_tail, realDetail.stderr_tail].filter(Boolean).map(String).join("\n");
+}
+
+function nodeRunCapabilityRows(result?: NodeRunResult): Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> {
+  const rows: Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> = [];
+  const caps = detailRecord(result?.capabilities);
+  Object.entries(caps).forEach(([key, value]) => {
+    const item = detailRecord(value);
+    rows.push({
+      key,
+      label: key === "telegram" ? "Telegram Notification" : key === "git" ? "Git Persistence" : key,
+      status: String(item.status || "unknown"),
+      reason: String(item.error || item.reason || item.message || ""),
+      action: key === "telegram" ? "Open the bot and send /start, or update this Instance TG token/chat_id, then retry the Node Run." : "",
+      detail: item,
+    });
+  });
+  const logText = nodeRunExecutionLogText(result);
+  if (!rows.some((row) => row.key === "telegram") && /bot can't initiate conversation|telegram/i.test(logText)) {
+    const match = logText.match(/Forbidden: bot can't initiate conversation with a user|Telegram API rejected[^\n]*/i);
+    rows.push({
+      key: "telegram",
+      label: "Telegram Notification",
+      status: "failed",
+      reason: match?.[0] || "Telegram notification failed.",
+      action: "Open the bot and send /start, or update this Instance TG token/chat_id, then retry the Node Run.",
+      detail: { source: "executor.log", message: match?.[0] || "Telegram notification failed." },
+    });
+  }
+  return rows;
+}
+
 function nodeRunStepScalarRows(detail: Record<string, unknown>) {
+  const blocked = new Set(["stdout_tail", "stderr_tail", "context", "node_state", "actual_outputs", "validation", "command", "capabilities"]);
   return Object.entries(detail)
     .filter(([, value]) => value === null || ["string", "number", "boolean"].includes(typeof value))
+    .filter(([key]) => !blocked.has(key))
     .slice(0, 8);
 }
 
@@ -1689,6 +1743,10 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
   const resolvedInputs = detailList(detail.resolved_inputs);
   const missingInputs = detailList(detail.missing_inputs);
   const visibleEvents = events.length ? events : result.events || [];
+  const businessArtifacts = nodeRunBusinessArtifacts(result);
+  const diagnosticArtifacts = nodeRunDiagnosticArtifacts(result);
+  const actualOutputs = detailRecord(result.actualOutputs);
+  const validation = detailRecord(result.validation);
   return (
     <section className="node-run-results-panel">
       <div className="node-run-results-tabs" role="tablist" aria-label="Node run result sections">
@@ -1724,9 +1782,30 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
         </div>
       ) : null}
       {tab === "artifacts" ? (
-        <div className="node-test-artifacts node-run-results-body">
-          {(result.artifacts || []).map((artifact) => <code key={artifact.id || artifact.path}>{artifact.path || artifact.title}</code>)}
-          {!result.artifacts?.length ? <Empty text="没有产物记录" /> : null}
+        <div className="node-run-results-body">
+          <div className="node-run-artifact-summary">
+            <div>
+              <span className={`status-pill ${nodeRunTone(String(validation.status || result.status || ""))}`}>{String(validation.status || result.status || "unknown")}</span>
+              <strong>{businessArtifacts.length} business artifacts</strong>
+              <small>{Object.keys(actualOutputs).length ? Object.keys(actualOutputs).join(", ") : "no declared outputs recorded"}</small>
+            </div>
+          </div>
+          {Object.keys(actualOutputs).length ? (
+            <div className="node-run-output-map">
+              {Object.entries(actualOutputs).map(([key, value]) => (
+                <span key={key}><b>{key}</b>{Array.isArray(value) ? value.join(", ") : String(value ?? "")}</span>
+              ))}
+            </div>
+          ) : null}
+          <DetailBlock title={`Business Artifacts · ${businessArtifacts.length}`}>
+            <ArtifactList artifacts={businessArtifacts} />
+          </DetailBlock>
+          {diagnosticArtifacts.length ? (
+            <DetailBlock title={`Diagnostic Artifacts · ${diagnosticArtifacts.length}`}>
+              <ArtifactList artifacts={diagnosticArtifacts} />
+            </DetailBlock>
+          ) : null}
+          {!businessArtifacts.length && !diagnosticArtifacts.length ? <Empty text="没有产物记录" /> : null}
         </div>
       ) : null}
       {tab === "raw" ? (
@@ -1756,6 +1835,46 @@ function NodeRunActiveStepCard({ result }: { result: NodeRunResult | undefined }
         <small>{done}/{steps.length || 0} done{failed ? ` · ${failed} failed` : ""}</small>
       </div>
       {current ? <code>{current.id} · {current.status}{nodeRunStepTiming(current) ? ` · ${nodeRunStepTiming(current)}` : ""}</code> : null}
+    </section>
+  );
+}
+
+function NodeRunCapabilitySummary({ result }: { result: NodeRunResult | undefined }) {
+  const rows = nodeRunCapabilityRows(result);
+  const validation = detailRecord(result?.validation);
+  const artifacts = nodeRunBusinessArtifacts(result);
+  return (
+    <section className="node-run-capability-summary">
+      <div className="section-title"><span>Execution Results</span><span>{rows.length} capabilities</span></div>
+      <div className="node-run-result-mini-grid">
+        <div>
+          <span>Outputs</span>
+          <strong>{artifacts.length}</strong>
+          <small>{String(validation.status || result?.status || "unknown")}</small>
+        </div>
+        <div>
+          <span>Business Node</span>
+          <strong>{result?.status || "-"}</strong>
+          <small>{result?.elapsedMs ? formatElapsed(result.elapsedMs) : "-"}</small>
+        </div>
+      </div>
+      <div className="node-run-capability-list">
+        {rows.map((row) => (
+          <article key={row.key} className={`node-run-capability-card ${nodeRunCardTone(row.status)}`}>
+            <div>
+              <span className={`status-pill ${nodeRunTone(row.status)}`}>{row.status}</span>
+              <strong>{row.label}</strong>
+            </div>
+            {row.reason ? <p>{row.reason}</p> : <p>No issue reported.</p>}
+            {row.action ? <small>{row.action}</small> : null}
+            <details>
+              <summary><span>Capability Detail</span><ChevronDown size={14} /></summary>
+              <code>{formatValue(row.detail)}</code>
+            </details>
+          </article>
+        ))}
+        {!rows.length ? <Empty text="本次 Node Run 没有记录 capability 结果" /> : null}
+      </div>
     </section>
   );
 }
@@ -2056,6 +2175,7 @@ function NodeRunDetailPage({
               <NodeRunResultTabs result={result} events={controller.events} />
             </section>
             <aside className="node-run-debug-panel">
+              <NodeRunCapabilitySummary result={result} />
               <NodeRunConfigPanel result={result} />
               <details className="node-run-context-details">
                 <summary><span>Run Context</span><ChevronDown size={15} /></summary>

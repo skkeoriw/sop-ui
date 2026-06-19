@@ -575,6 +575,10 @@ export interface NodeRunResult {
   innerSteps?: NodeTestStep[];
   events?: NodeRunEvent[];
   artifacts?: Artifact[];
+  businessArtifacts?: Artifact[];
+  actualOutputs?: Record<string, unknown>;
+  validation?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
 }
 
 export interface NodeModule {
