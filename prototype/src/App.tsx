@@ -64,6 +64,7 @@ import type {
   NodeRunEvent,
   NodeRunMode,
   NodeRunResult,
+  NodeTestStep,
   NodeTestPlan,
   NodeTestPlanInputState,
   NodeTestRunResult,
@@ -103,6 +104,13 @@ interface StageNodeData extends Record<string, unknown> {
   selected: boolean;
   onSelect: (id: string) => void;
   onInfo: (id: string) => void;
+}
+
+interface NodeRunStepNodeData extends Record<string, unknown> {
+  step: NodeTestStep;
+  index: number;
+  selected: boolean;
+  active: boolean;
 }
 
 const statusOrder: StageStatus[] = ["running", "waiting", "failed", "skipped", "done"];
@@ -1025,20 +1033,128 @@ function detailRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+const NodeRunStepFlowNode = memo(({ data }: NodeProps<Node<NodeRunStepNodeData>>) => {
+  const { step, index, selected, active } = data;
+  const tone = nodeRunTone(step.status);
+  return (
+    <div className={`node-run-flow-node ${tone} ${selected ? "selected" : ""} ${active ? "active" : ""}`}>
+      <Handle type="target" position={Position.Left} />
+      <div className="node-run-flow-node-top">
+        <span>{index + 1}</span>
+        <span className={`status-pill ${tone}`}>{step.status || "waiting"}</span>
+      </div>
+      <strong>{step.title || step.id}</strong>
+      <small>{step.id}</small>
+      {step.summary ? <p>{step.summary}</p> : null}
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+});
+
+const nodeRunNodeTypes = { nodeRunStep: NodeRunStepFlowNode };
+
+function NodeRunStepDetailPanel({
+  step,
+  result,
+}: {
+  step: NodeTestStep | undefined;
+  result: NodeRunResult | undefined;
+}) {
+  const detail = detailRecord(result?.detail);
+  const suggestions = detailList(detail.fix_suggestions);
+  if (!step) return <aside className="node-run-step-detail-panel"><Empty text="选择一个阶段查看详情" /></aside>;
+  const showFixes = ["failed", "blocked", "needs_input"].includes(step.status);
+  return (
+    <aside className={`node-run-step-detail-panel ${nodeRunCardTone(step.status)}`}>
+      <div className="node-run-step-detail-head">
+        <span className={`status-pill ${nodeRunTone(step.status)}`}>{step.status || "waiting"}</span>
+        <strong>{step.title || step.id}</strong>
+        <small>{step.id}{nodeRunStepTiming(step) ? ` · ${nodeRunStepTiming(step)}` : ""}</small>
+      </div>
+      {step.summary ? <p>{step.summary}</p> : null}
+      {showFixes && suggestions.length ? (
+        <div className="node-run-step-fixes">
+          <div className="section-title"><span>Fix</span><span>{suggestions.length}</span></div>
+          {suggestions.slice(0, 3).map((item, index) => (
+            <article key={`${String(item.target || "fix")}-${index}`}>
+              <span className="status-pill waiting">{String(item.target || "fix")}</span>
+              <strong>{String(item.title || "Suggested fix")}</strong>
+              <small>{String(item.reason || "")}</small>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {step.detail && Object.keys(step.detail).length ? (
+        <details className="node-run-step-raw">
+          <summary><span>Step Raw Detail</span><ChevronDown size={14} /></summary>
+          <code>{formatValue(step.detail)}</code>
+        </details>
+      ) : null}
+    </aside>
+  );
+}
+
 function NodeRunFlow({ result }: { result: NodeRunResult | undefined }) {
   const steps = result?.steps || [];
+  const current = currentNodeRunStep(result);
+  const [selectedStepId, setSelectedStepId] = useState(current?.id || steps[0]?.id || "");
+  useEffect(() => {
+    setSelectedStepId((previous) => steps.some((step) => step.id === previous) ? previous : current?.id || steps[0]?.id || "");
+  }, [result?.nodeRunId, current?.id, steps]);
+  const selectedStep = steps.find((step) => step.id === selectedStepId) || current || steps[0];
+  const compactFlow = typeof window !== "undefined" && window.innerWidth < 700;
+  const columns = compactFlow ? 2 : 4;
+  const xSpacing = compactFlow ? 230 : 245;
+  const ySpacing = compactFlow ? 158 : 172;
+  const flowNodes = useMemo<Node<NodeRunStepNodeData>[]>(() => steps.map((step, index) => ({
+    id: step.id || `step-${index}`,
+    type: "nodeRunStep",
+    position: {
+      x: (index % columns) * xSpacing,
+      y: Math.floor(index / columns) * ySpacing,
+    },
+    data: {
+      step,
+      index,
+      selected: (step.id || `step-${index}`) === selectedStepId,
+      active: step.status === "running" || Boolean(current?.id && step.id === current.id),
+    },
+  })), [steps, selectedStepId, current?.id, columns, xSpacing, ySpacing]);
+  const flowEdges = useMemo<Edge[]>(() => steps.slice(0, -1).map((step, index) => {
+    const next = steps[index + 1];
+    const status = next.status || step.status || "waiting";
+    return {
+      id: `node-run-edge-${step.id || index}-${next.id || index + 1}`,
+      source: step.id || `step-${index}`,
+      target: next.id || `step-${index + 1}`,
+      type: "smoothstep",
+      animated: status === "running",
+      className: `node-run-edge ${nodeRunTone(status)}`,
+    };
+  }), [steps]);
   if (!steps.length) return <div className="node-run-empty">创建一次 Node Run 后展示节点级 flow。</div>;
   return (
-    <div className="node-run-flow" aria-label="Node run flow">
-      {steps.map((step, index) => (
-        <div key={step.id || index} className={`node-run-step-card ${nodeRunCardTone(step.status)} ${step.status === "running" ? "active" : ""}`}>
-          <span>{index + 1}</span>
-          <strong>{step.title || step.id}</strong>
-          <small>{step.id} · {step.status}</small>
-          {step.summary ? <p>{step.summary}</p> : null}
-          {nodeRunStepTiming(step) ? <em>{nodeRunStepTiming(step)}</em> : null}
-        </div>
-      ))}
+    <div className="node-run-dag-layout" aria-label="Node run execution DAG">
+      <div className="node-run-dag-canvas">
+        <ReactFlow
+          nodes={flowNodes}
+          edges={flowEdges}
+          nodeTypes={nodeRunNodeTypes}
+          fitView
+          fitViewOptions={{ padding: .18 }}
+          minZoom={.35}
+          maxZoom={1.6}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable
+          onNodeClick={(_, node) => setSelectedStepId(node.id)}
+          defaultEdgeOptions={{ className: "node-run-edge" }}
+        >
+          <Background color="#dfe4ec" gap={22} />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div>
+      <NodeRunStepDetailPanel step={selectedStep} result={result} />
     </div>
   );
 }

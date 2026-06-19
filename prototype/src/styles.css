@@ -7986,10 +7986,6 @@ pre {
   gap: 12px;
 }
 
-.node-run-workspace-main .node-run-flow {
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-}
-
 .node-run-inner-details,
 .node-run-context-details,
 .node-run-results-panel {
@@ -7999,6 +7995,215 @@ pre {
   background: var(--surface);
   box-shadow: var(--shadow);
   overflow: hidden;
+}
+
+.node-run-dag-layout {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--line-2);
+}
+
+.node-run-dag-canvas {
+  min-width: 0;
+  height: 560px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.node-run-flow-node {
+  width: 210px;
+  min-height: 118px;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, .06);
+  color: var(--text);
+}
+
+.node-run-flow-node.selected {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, .16), 0 12px 26px rgba(37, 99, 235, .12);
+}
+
+.node-run-flow-node.active {
+  border-color: #6f98ff;
+}
+
+.node-run-flow-node.done,
+.node-run-flow-node.ok {
+  border-color: #bfe7cd;
+  background: #fbfffc;
+}
+
+.node-run-flow-node.failed,
+.node-run-flow-node.err {
+  border-color: #ffc3c3;
+  background: #fff7f7;
+}
+
+.node-run-flow-node.waiting,
+.node-run-flow-node.warn {
+  border-color: #ffd9a8;
+  background: #fffdf6;
+}
+
+.node-run-flow-node-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-run-flow-node-top > span:first-child {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.node-run-flow-node strong,
+.node-run-flow-node small,
+.node-run-flow-node p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-run-flow-node strong {
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.node-run-flow-node small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.node-run-flow-node p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.node-run-flow-node .react-flow__handle {
+  width: 8px;
+  height: 8px;
+  border-color: #ffffff;
+  background: var(--blue);
+}
+
+.react-flow__edge.node-run-edge path {
+  stroke: #94a3b8;
+  stroke-width: 2;
+}
+
+.react-flow__edge.node-run-edge.done path,
+.react-flow__edge.node-run-edge.ok path {
+  stroke: #22c55e;
+}
+
+.react-flow__edge.node-run-edge.failed path,
+.react-flow__edge.node-run-edge.err path {
+  stroke: #ef4444;
+}
+
+.react-flow__edge.node-run-edge.running path {
+  stroke: var(--blue);
+}
+
+.react-flow__edge.node-run-edge.waiting path,
+.react-flow__edge.node-run-edge.warn path {
+  stroke: #f59e0b;
+}
+
+.node-run-step-detail-panel {
+  min-width: 0;
+  max-height: 280px;
+  overflow: auto;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.node-run-step-detail-head {
+  display: grid;
+  gap: 6px;
+}
+
+.node-run-step-detail-head strong {
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.node-run-step-detail-head small,
+.node-run-step-detail-panel p,
+.node-run-step-fixes small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.node-run-step-raw {
+  min-width: 0;
+  border-top: 1px solid var(--line-2);
+  padding-top: 8px;
+}
+
+.node-run-step-raw summary {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.node-run-step-detail-panel code {
+  display: block;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 7px;
+  padding: 8px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+
+.node-run-step-fixes {
+  display: grid;
+  gap: 8px;
+}
+
+.node-run-step-fixes article {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px;
+  background: #fbfcfe;
 }
 
 .node-run-inner-details summary,
@@ -8704,6 +8909,19 @@ pre {
   .node-run-debug-panel {
     max-height: none;
     overflow: visible;
+  }
+
+  .node-run-workspace-hero,
+  .node-run-dag-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .node-run-dag-canvas {
+    height: 520px;
+  }
+
+  .node-run-step-detail-panel {
+    max-height: none;
   }
 
   .runtime-management-actions {
