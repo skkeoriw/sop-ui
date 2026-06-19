@@ -564,13 +564,48 @@ export const mockProvider: SopDataProvider = {
 
   async runNodePreflight(_target, _instanceId, nodeId, input: NodePreflightInput): Promise<NodeTestRunResult> {
     await delay();
+    const testId = `node-test-${nodeId}-MOCK`;
+    const status = input.inputSource === "manual" ? "needs_input" : "done";
+    const steps = [
+      ["load-definition", "Load node definition", "done", "SOP node contract loaded"],
+      ["resolve-instance", "Resolve instance workspace", "done", "Mock workspace is available"],
+      ["resolve-inputs", "Resolve test inputs", status, status === "done" ? "Inputs are ready" : "Manual input is incomplete"],
+      ["check-upstream", "Check upstream artifacts", status === "done" ? "done" : "skipped", "No blocking upstream issue in mock mode"],
+      ["check-side-effects", "Check side effects", "done", "Real execution is disabled"],
+      ["build-execution-plan", "Build execution plan", status, "Preflight plan recorded"],
+    ].map(([id, title, stepStatus, summary]) => ({ id, title, status: stepStatus, summary }));
     return {
-      pipelineId: `node-test-${nodeId}-MOCK`,
-      testId: `node-test-${nodeId}-MOCK`,
+      pipelineId: testId,
+      testId,
       nodeId,
-      status: input.inputSource === "manual" ? "needs_input" : "done",
+      status,
       mode: "preflight",
       pending: false,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      steps,
+      events: steps.map((step, index) => ({
+        sequence: index + 1,
+        event: "node_test_step",
+        testId,
+        nodeId,
+        stepId: step.id,
+        ts: new Date().toISOString(),
+        data: { status: step.status, summary: step.summary },
+      })),
+      artifacts: [{
+        id: `${testId}-result`,
+        producer: nodeId,
+        output: "test_result",
+        type: "report",
+        format: "json",
+        path: `raw/node-tests/${testId}/result.json`,
+        title: "Node test result",
+        size: 0,
+        mimeType: "application/json",
+        tags: ["node-test"],
+        resolution: status,
+      }],
       detail: {
         node_id: nodeId,
         input_source: input.inputSource || "generated-fixture",
@@ -579,6 +614,24 @@ export const mockProvider: SopDataProvider = {
         side_effects: { writes_workspace: true, git_write: true, telegram: true, external_api: true },
       },
     };
+  },
+
+  async listNodeTests(_target, _instanceId, nodeId): Promise<NodeTestRunResult[]> {
+    await delay();
+    return [{
+      pipelineId: `node-test-${nodeId}-MOCK`,
+      testId: `node-test-${nodeId}-MOCK`,
+      nodeId,
+      status: "done",
+      mode: "preflight",
+      pending: false,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      steps: [],
+      events: [],
+      artifacts: [],
+      detail: { input_source: "generated-fixture" },
+    }];
   },
 
   async getNodeTestResult(_target, _instanceId, nodeId, pipelineId): Promise<NodeTestRunResult> {

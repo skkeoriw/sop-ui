@@ -491,6 +491,24 @@ export interface NodeTestResult {
   reason?: string;
 }
 
+export interface NodeTestStep {
+  id: string;
+  title: string;
+  status: string;
+  summary?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface NodeTestEvent {
+  sequence?: number;
+  event: string;
+  testId?: string;
+  nodeId?: string;
+  stepId?: string;
+  ts?: string;
+  data?: Record<string, unknown>;
+}
+
 /** Polled outcome of an isolated single-node test run (nodetest namespace). */
 export interface NodeTestRunResult {
   pipelineId?: string;
@@ -503,6 +521,9 @@ export interface NodeTestRunResult {
   finishedAt?: string;
   reason?: string;
   detail?: Record<string, unknown>;
+  steps?: NodeTestStep[];
+  events?: NodeTestEvent[];
+  artifacts?: Artifact[];
 }
 
 export interface NodeModule {
@@ -630,6 +651,7 @@ export interface SopDataProvider {
   getNodeTestPlan(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeTestPlan | null>;
   runNodePreflight(runtime: Runtime, instanceId: string, nodeId: string, input: NodePreflightInput): Promise<NodeTestRunResult>;
   triggerNodeTest(runtime: Runtime, instanceId: string, nodeId: string, input: NodeTestInput): Promise<NodeTestResult>;
+  listNodeTests(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeTestRunResult[]>;
   getNodeTestResult(runtime: Runtime, instanceId: string, nodeId: string, pipelineId: string): Promise<NodeTestRunResult>;
   listNodes(runtime: Runtime, instanceId: string): Promise<NodeRegistryItem[]>;
   listNodeModules(runtime: Runtime, instanceId: string, nodeId: string, pipelineId?: string): Promise<NodeModule[]>;

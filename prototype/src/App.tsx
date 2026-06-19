@@ -650,6 +650,83 @@ function renderInputRows(items: NodeTestPlanInputState[] | undefined, empty: str
   );
 }
 
+function isNodeTestInputSource(value: string): value is NonNullable<NodeTestPlan["inputSource"]> {
+  return ["existing-run", "generated-fixture", "manual", "deepseek-mock"].includes(value);
+}
+
+function readNodeTestRouteDefaults(runId?: string): { inputSource: NonNullable<NodeTestPlan["inputSource"]>; runId: string } {
+  const params = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const source = params.get("test_source") || "";
+  const routeRunId = params.get("test_run") || "";
+  if (isNodeTestInputSource(source)) return { inputSource: source, runId: routeRunId || runId || "" };
+  if (runId) return { inputSource: "existing-run", runId };
+  return { inputSource: "generated-fixture", runId: "" };
+}
+
+function nodeTestTone(status?: string) {
+  if (status === "done") return "ok";
+  if (status === "needs_input" || status === "skipped" || status === "waiting") return "warn";
+  if (status === "failed" || status === "error") return "err";
+  return "";
+}
+
+function NodeTestExecution({ result }: { result: NodeTestRunResult | null }) {
+  if (!result) return null;
+  const steps = result.steps || [];
+  const events = result.events || [];
+  const artifacts = result.artifacts || [];
+  return (
+    <div className="node-test-execution">
+      <div className={`node-test-result ${nodeTestTone(result.status)}`}>
+        <div>
+          Preflight <code>{result.testId || result.pipelineId}</code> · <strong>{result.status || "unknown"}</strong>
+        </div>
+        {result.reason ? <div className="node-test-reason">原因：{result.reason}</div> : null}
+      </div>
+      <div className="node-test-pre">Test Execution Steps</div>
+      {steps.length ? (
+        <ol className="node-test-steps">
+          {steps.map((step, index) => (
+            <li key={step.id || index} className={`node-test-step ${nodeTestTone(step.status)}`}>
+              <span>{index + 1}</span>
+              <div>
+                <strong>{step.title || step.id}</strong>
+                <small>{step.id} · {step.status}</small>
+                {step.summary ? <p>{step.summary}</p> : null}
+                {step.detail && Object.keys(step.detail).length ? <code>{formatValue(step.detail)}</code> : null}
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : <div className="node-test-pre muted">该测试记录没有 step 明细。</div>}
+      {events.length ? (
+        <>
+          <div className="node-test-pre">Events</div>
+          <div className="node-test-events">
+            {events.slice(0, 8).map((event, index) => (
+              <div key={`${event.event}-${event.stepId || index}`} className="node-test-event">
+                <span>{event.sequence || index + 1}</span>
+                <strong>{event.event}</strong>
+                <small>{event.stepId || event.ts || ""}</small>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+      {artifacts.length ? (
+        <>
+          <div className="node-test-pre">Artifacts</div>
+          <div className="node-test-artifacts">
+            {artifacts.map((artifact) => (
+              <code key={artifact.id || artifact.path}>{artifact.path || artifact.title}</code>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runId }: {
   provider: SopDataProvider;
   runtime?: Runtime;
@@ -659,11 +736,21 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
   runs: Run[];
   runId?: string;
 }) {
-  const [inputSource, setInputSource] = useState<NodeTestPlan["inputSource"]>("generated-fixture");
-  const [seedRunId, setSeedRunId] = useState(runId || "");
+  const queryClient = useQueryClient();
+  const initialDefaults = readNodeTestRouteDefaults(runId);
+  const [inputSource, setInputSource] = useState<NodeTestPlan["inputSource"]>(initialDefaults.inputSource);
+  const [seedRunId, setSeedRunId] = useState(initialDefaults.runId);
   const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
   const [preflight, setPreflight] = useState<NodeTestRunResult | null>(null);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const defaults = readNodeTestRouteDefaults(runId);
+    setInputSource(defaults.inputSource);
+    setSeedRunId(defaults.runId);
+    setPreflight(null);
+    setError("");
+  }, [runId, instanceId, nodeId]);
 
   const contractQuery = useQuery({
     queryKey: queryKeys.nodeContract(mode, runtime, instanceId, nodeId),
@@ -678,6 +765,21 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
     enabled: Boolean(runtime && instanceId && nodeId),
   });
 
+  const historyQuery = useQuery({
+    queryKey: queryKeys.nodeTests(mode, runtime, instanceId, nodeId),
+    queryFn: () => provider.listNodeTests(runtime!, instanceId, nodeId),
+    enabled: Boolean(runtime && instanceId && nodeId),
+  });
+
+  const historyDetailMutation = useMutation({
+    mutationFn: (testId: string) => provider.getNodeTestResult(runtime!, instanceId, nodeId, testId),
+    onSuccess: (result) => {
+      setPreflight(result);
+      setError("");
+    },
+    onError: (e: unknown) => { setError(e instanceof Error ? e.message : String(e)); },
+  });
+
   const preflightMutation = useMutation({
     mutationFn: () => provider.runNodePreflight(runtime!, instanceId, nodeId, {
       inputSource: inputSource || "generated-fixture",
@@ -687,6 +789,7 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
     onSuccess: (r) => {
       setPreflight(r);
       setError("");
+      queryClient.invalidateQueries({ queryKey: queryKeys.nodeTests(mode, runtime, instanceId, nodeId) });
     },
     onError: (e: unknown) => { setError(e instanceof Error ? e.message : String(e)); },
   });
@@ -773,13 +876,26 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
         </>
       ) : null}
       {preflight ? (
-        <div className={`node-test-result ${preflight.status === "done" ? "ok" : preflight.status === "needs_input" ? "warn" : "err"}`}>
-          <div>
-            Preflight <code>{preflight.testId || preflight.pipelineId}</code> · <strong>{preflight.status}</strong>
-          </div>
-          {preflight.reason ? <div className="node-test-reason">原因：{preflight.reason}</div> : null}
-        </div>
+        <NodeTestExecution result={preflight} />
       ) : null}
+      <div className="node-test-pre">Test History</div>
+      <div className="node-test-history">
+        {(historyQuery.data || []).map((item) => (
+          <button
+            key={item.testId || item.pipelineId}
+            type="button"
+            className={preflight?.testId === item.testId ? "active" : ""}
+            disabled={historyDetailMutation.isPending}
+            onClick={() => historyDetailMutation.mutate(item.testId || item.pipelineId || "")}
+          >
+            <span className={`status-pill ${nodeTestTone(item.status)}`}>{item.status || "unknown"}</span>
+            <strong>{item.testId || item.pipelineId}</strong>
+            <small>{item.startedAt || item.finishedAt || ""}</small>
+          </button>
+        ))}
+        {!historyQuery.isLoading && !(historyQuery.data || []).length ? <div className="node-test-pre muted">还没有测试记录。</div> : null}
+        {historyQuery.isLoading ? <div className="node-test-pre muted">加载测试历史…</div> : null}
+      </div>
       {error ? <div className="node-test-result err">{error}</div> : null}
     </div>
   );
@@ -2123,6 +2239,22 @@ export default function App() {
     setShowNodeConfig(true);
   }
 
+  function openNodeValidationFromRun(nodeId: string, pipelineId: string) {
+    if (!nodeId || !pipelineId) return;
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const baseInstance = routeInstanceId(instance, instanceId);
+    const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
+    const params = new URLSearchParams(window.location.search);
+    params.set("test_source", "existing-run");
+    params.set("test_run", pipelineId);
+    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/modules/basic`;
+    const nextUrl = `${nextPath}?${params.toString()}`;
+    setSelectedManagedNodeId(nodeId);
+    setSelectedNodeModuleId("basic");
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "basic" });
+  }
+
   function handleCancelRun() {
     if (!window.confirm(`确认取消 Run: ${selectedRun?.pipelineId}？\n当前阶段完成后不会触发下一阶段。`)) return;
     cancelRunMutation.mutate();
@@ -2407,6 +2539,7 @@ export default function App() {
             rawLogOpen={rawLogOpen}
             setRawLogOpen={setRawLogOpen}
             openNodeConfig={openNodeConfig}
+            onValidateNodeWithRun={openNodeValidationFromRun}
             onSwitchInstance={switchActiveInstance}
             onSelectRun={(pipelineId) => { setSelectedRunId(pipelineId); navigateTo("workflow", pipelineId, selectedStage?.id || ""); }}
             onSelectNode={(nodeId) => { setSelectedStageId(nodeId); navigateTo("workflow", selectedRun?.pipelineId || "", nodeId); }}
@@ -4780,6 +4913,7 @@ function WorkflowWorkspace({
   rawLogOpen,
   setRawLogOpen,
   openNodeConfig,
+  onValidateNodeWithRun,
   onSwitchInstance,
   onSelectRun,
   onSelectNode,
@@ -4823,6 +4957,7 @@ function WorkflowWorkspace({
   rawLogOpen: boolean;
   setRawLogOpen: React.Dispatch<React.SetStateAction<boolean>>;
   openNodeConfig: (nodeId: string) => void;
+  onValidateNodeWithRun: (nodeId: string, pipelineId: string) => void;
   onSwitchInstance: (instanceId: string) => void;
   onSelectRun: (pipelineId: string) => void;
   onSelectNode: (nodeId: string) => void;
@@ -5061,16 +5196,17 @@ function WorkflowWorkspace({
                       }} />
                     </DetailBlock>
                     {nodeDetail?.plan && <DetailBlock title="Wiki Build Plan"><KeyValues data={nodeDetail.plan} /></DetailBlock>}
-                    <DetailBlock title="Node Definition Smoke Test">
-                      <NodeTestPanel
-                        provider={provider}
-                        runtime={runtime}
-                        instanceId={instance.instanceId}
-                        mode={mode}
-                        nodeId={selectedStage.id}
-                        runs={runs}
-                        runId={selectedRun.pipelineId}
-                      />
+                    <DetailBlock title="Node Validation">
+                      <div className="node-validation-entry">
+                        <div>
+                          <strong>Validate using this run</strong>
+                          <span>跳转到 Node 页面，并使用当前 Run 的上游产物作为测试输入。</span>
+                        </div>
+                        <button type="button" className="primary" onClick={() => onValidateNodeWithRun(selectedStage.id, selectedRun.pipelineId)}>
+                          <Play size={14} />
+                          Open Node Test
+                        </button>
+                      </div>
                     </DetailBlock>
                   </>
                 )}

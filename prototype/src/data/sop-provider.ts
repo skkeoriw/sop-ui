@@ -603,6 +603,28 @@ function mapNodeTestPlan(raw: Record<string, unknown>): NodeTestPlan {
   };
 }
 
+function mapNodeTestStep(raw: Record<string, unknown>) {
+  return {
+    id: String(raw.id || raw.step_id || ""),
+    title: String(raw.title || raw.id || raw.step_id || "Step"),
+    status: String(raw.status || "waiting"),
+    summary: raw.summary ? String(raw.summary) : undefined,
+    detail: (raw.detail as Record<string, unknown>) || {},
+  };
+}
+
+function mapNodeTestEvent(raw: Record<string, unknown>) {
+  return {
+    sequence: typeof raw.sequence === "number" ? raw.sequence : undefined,
+    event: String(raw.event || ""),
+    testId: raw.test_id ? String(raw.test_id) : undefined,
+    nodeId: raw.node_id ? String(raw.node_id) : undefined,
+    stepId: raw.step_id ? String(raw.step_id) : undefined,
+    ts: raw.ts ? String(raw.ts) : undefined,
+    data: (raw.data as Record<string, unknown>) || {},
+  };
+}
+
 function mapNodeTestRunResult(raw: Record<string, unknown>, nodeId: string, fallbackId: string): NodeTestRunResult {
   return {
     pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : fallbackId,
@@ -615,6 +637,9 @@ function mapNodeTestRunResult(raw: Record<string, unknown>, nodeId: string, fall
     finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
     reason: raw.reason ? String(raw.reason) : undefined,
     detail: (raw.detail as Record<string, unknown>) || {},
+    steps: ((raw.steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
+    events: ((raw.events as Array<Record<string, unknown>>) || []).map(mapNodeTestEvent),
+    artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
   };
 }
 
@@ -1192,10 +1217,22 @@ export const sopProvider: SopDataProvider = {
     throw new Error(`${response.status}: ${text.slice(0, 200)}`);
   },
 
+  async listNodeTests(runtime, instanceId, nodeId): Promise<NodeTestRunResult[]> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/tests`;
+    const raw = await requestJson<{ tests?: Array<Record<string, unknown>> }>(url);
+    return (raw.tests || []).map((item) => mapNodeTestRunResult(item, nodeId, String(item.pipeline_id || item.test_id || "")));
+  },
+
   async getNodeTestResult(runtime, instanceId, nodeId, pipelineId): Promise<NodeTestRunResult> {
-    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/test-result/${encodeURIComponent(pipelineId)}`;
-    const raw = await requestJson<Record<string, unknown>>(url);
-    return mapNodeTestRunResult(raw, nodeId, pipelineId);
+    const nextUrl = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/tests/${encodeURIComponent(pipelineId)}`;
+    try {
+      const raw = await requestJson<Record<string, unknown>>(nextUrl);
+      return mapNodeTestRunResult(raw, nodeId, pipelineId);
+    } catch (error) {
+      const legacyUrl = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/test-result/${encodeURIComponent(pipelineId)}`;
+      const raw = await requestJson<Record<string, unknown>>(legacyUrl);
+      return mapNodeTestRunResult(raw, nodeId, pipelineId);
+    }
   },
 
   async listNodes(runtime, instanceId) {
