@@ -612,6 +612,9 @@ function mapNodeTestStep(raw: Record<string, unknown>) {
     title: String(raw.title || raw.id || raw.step_id || "Step"),
     status: String(raw.status || "waiting"),
     summary: raw.summary ? String(raw.summary) : undefined,
+    startedAt: raw.started_at ? String(raw.started_at) : undefined,
+    finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
+    elapsedMs: typeof raw.elapsed_ms === "number" ? raw.elapsed_ms : undefined,
     detail: (raw.detail as Record<string, unknown>) || {},
   };
 }
@@ -673,9 +676,13 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     pending: Boolean(raw.pending),
     startedAt: raw.started_at ? String(raw.started_at) : undefined,
     finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
+    elapsedMs: typeof raw.elapsed_ms === "number" ? raw.elapsed_ms : undefined,
     reason: raw.reason ? String(raw.reason) : undefined,
+    createdFrom: raw.created_from ? String(raw.created_from) : undefined,
+    retryOf: raw.retry_of ? String(raw.retry_of) : undefined,
     detail: (raw.detail as Record<string, unknown>) || {},
     steps: ((raw.steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
+    innerSteps: ((raw.inner_steps as Array<Record<string, unknown>>) || ((raw.detail as Record<string, unknown>)?.inner_steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
     events: ((raw.events as Array<Record<string, unknown>>) || []).map(mapNodeRunEvent),
     artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
   };
@@ -1282,11 +1289,13 @@ export const sopProvider: SopDataProvider = {
   async createNodeRun(runtime, instanceId, workflowId, nodeId, input: NodeRunCreateInput): Promise<NodeRunResult> {
     const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/runs`;
     const raw = await postJsonResult<Record<string, unknown>>(url, {
+      node_run_id: input.nodeRunId || "",
       mode: input.mode || "preflight",
       input_source: input.inputSource || "generated-fixture",
       pipeline_id: input.pipelineId || "",
       manual_inputs: input.manualInputs || {},
       overrides: input.overrides || {},
+      retry_of: input.retryOf || "",
     });
     return mapNodeRunResult(raw, nodeId, String(raw.node_run_id || raw.pipeline_id || ""));
   },

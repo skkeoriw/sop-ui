@@ -496,6 +496,9 @@ export interface NodeTestStep {
   title: string;
   status: string;
   summary?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  elapsedMs?: number;
   detail?: Record<string, unknown>;
 }
 
@@ -530,11 +533,13 @@ export type NodeRunMode = "preflight" | "probe" | "dry-run" | "real-node";
 export type NodeRunInputSource = NodeTestInputSource | "artifact";
 
 export interface NodeRunCreateInput {
+  nodeRunId?: string;
   mode?: NodeRunMode;
   inputSource?: NodeRunInputSource;
   pipelineId?: string;
   manualInputs?: Record<string, unknown>;
   overrides?: Record<string, unknown>;
+  retryOf?: string;
 }
 
 export interface NodeRunEvent {
@@ -561,9 +566,13 @@ export interface NodeRunResult {
   pending?: boolean;
   startedAt?: string;
   finishedAt?: string;
+  elapsedMs?: number;
   reason?: string;
+  createdFrom?: string;
+  retryOf?: string;
   detail?: Record<string, unknown>;
   steps?: NodeTestStep[];
+  innerSteps?: NodeTestStep[];
   events?: NodeRunEvent[];
   artifacts?: Artifact[];
 }

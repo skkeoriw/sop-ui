@@ -914,10 +914,104 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
 }
 
 function nodeRunTone(status?: string) {
-  if (status === "done" || status === "ready") return "ok";
-  if (status === "warning" || status === "needs_input" || status === "skipped" || status === "blocked") return "warn";
-  if (status === "failed" || status === "error") return "err";
+  if (status === "done" || status === "ready") return "done";
+  if (status === "running" || status === "pending") return "running";
+  if (status === "waiting" || status === "warning" || status === "needs_input" || status === "skipped" || status === "blocked") return "waiting";
+  if (status === "failed" || status === "error") return "failed";
   return "";
+}
+
+function nodeRunCardTone(status?: string) {
+  if (status === "done" || status === "ready") return "ok";
+  if (status === "running" || status === "pending") return "running";
+  if (status === "failed" || status === "error") return "err";
+  if (status === "warning" || status === "needs_input" || status === "skipped" || status === "blocked" || status === "waiting") return "warn";
+  return "";
+}
+
+function formatElapsed(ms?: number) {
+  if (typeof ms !== "number" || Number.isNaN(ms)) return "";
+  if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+
+function nodeRunTimestamp() {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function makeNodeRunId(nodeId: string) {
+  const suffix = Math.random().toString(16).slice(2, 8);
+  return `node-run-${nodeId}-${nodeRunTimestamp()}-${suffix}`;
+}
+
+function nodeRunStepTiming(step: { startedAt?: string; finishedAt?: string; elapsedMs?: number }) {
+  const parts = [];
+  if (step.startedAt) parts.push(`start ${step.startedAt}`);
+  if (step.finishedAt) parts.push(`finish ${step.finishedAt}`);
+  if (typeof step.elapsedMs === "number") parts.push(formatElapsed(step.elapsedMs));
+  return parts.join(" · ");
+}
+
+function currentNodeRunStep(result?: NodeRunResult) {
+  const steps = result?.steps || [];
+  return steps.find((step) => step.status === "running")
+    || steps.find((step) => ["failed", "blocked", "needs_input"].includes(step.status))
+    || steps.find((step) => step.status === "waiting")
+    || steps[steps.length - 1];
+}
+
+function nodeRunIsLive(result?: NodeRunResult) {
+  return Boolean(result?.pending || result?.status === "running" || (result?.steps || []).some((step) => step.status === "running"));
+}
+
+function makeOptimisticNodeRun(params: {
+  runtimeId: string;
+  instanceId: string;
+  workflowId: string;
+  nodeId: string;
+  nodeTitle?: string;
+  nodeRunId: string;
+  mode: NodeRunMode;
+  inputSource?: NodeRunCreateInput["inputSource"];
+  retryOf?: string;
+}): NodeRunResult {
+  const startedAt = new Date().toISOString();
+  return {
+    nodeRunId: params.nodeRunId,
+    pipelineId: params.nodeRunId,
+    runtimeId: params.runtimeId,
+    instanceId: params.instanceId,
+    workflowId: params.workflowId,
+    nodeId: params.nodeId,
+    nodeTitle: params.nodeTitle,
+    status: "running",
+    mode: params.mode,
+    inputSource: params.inputSource || "generated-fixture",
+    pending: true,
+    startedAt,
+    retryOf: params.retryOf,
+    steps: [
+      { id: "create-run", title: "Create node run workspace", status: "running", summary: "Node Run request is being created.", startedAt },
+      { id: "load-definition", title: "Load node definition", status: "waiting" },
+      { id: "resolve-context", title: "Resolve Runtime / Instance / Workflow context", status: "waiting" },
+      { id: "resolve-inputs", title: "Resolve node inputs", status: "waiting" },
+      { id: "resolve-config", title: "Resolve execution config", status: "waiting" },
+      { id: "probe-capabilities", title: "Probe attached capabilities", status: "waiting" },
+      { id: "build-execution-plan", title: "Build node execution plan", status: "waiting" },
+      { id: "execute-or-dry-run", title: "Execute or dry-run node", status: "waiting" },
+      { id: "validate-outputs", title: "Validate declared outputs", status: "waiting" },
+      { id: "persist-artifacts", title: "Persist node run artifacts", status: "waiting" },
+    ],
+    events: [{ sequence: 1, event: "node_run.step.running", nodeRunId: params.nodeRunId, nodeId: params.nodeId, stepId: "create-run", ts: startedAt, data: { summary: "Node Run request is being created." } }],
+    artifacts: [],
+    detail: {
+      side_effects: { writes_workspace: true, git_write: true, telegram: true, external_api: true, llm: false, executed: false },
+      fix_suggestions: [],
+    },
+  };
 }
 
 function detailList(value: unknown): Array<Record<string, unknown>> {
@@ -934,11 +1028,45 @@ function NodeRunFlow({ result }: { result: NodeRunResult | undefined }) {
   return (
     <div className="node-run-flow" aria-label="Node run flow">
       {steps.map((step, index) => (
-        <div key={step.id || index} className={`node-run-step-card ${nodeRunTone(step.status)}`}>
+        <div key={step.id || index} className={`node-run-step-card ${nodeRunCardTone(step.status)} ${step.status === "running" ? "active" : ""}`}>
           <span>{index + 1}</span>
           <strong>{step.title || step.id}</strong>
           <small>{step.id} · {step.status}</small>
           {step.summary ? <p>{step.summary}</p> : null}
+          {nodeRunStepTiming(step) ? <em>{nodeRunStepTiming(step)}</em> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NodeRunInnerFlow({ result }: { result: NodeRunResult | undefined }) {
+  const detail = detailRecord(result?.detail);
+  const innerSteps = result?.innerSteps?.length
+    ? result.innerSteps
+    : detailList(detail.inner_steps).map((item) => ({
+      id: String(item.id || item.step_id || ""),
+      title: String(item.title || item.id || "Inner step"),
+      status: String(item.status || "waiting"),
+      summary: item.summary ? String(item.summary) : undefined,
+      startedAt: item.started_at ? String(item.started_at) : undefined,
+      finishedAt: item.finished_at ? String(item.finished_at) : undefined,
+      elapsedMs: typeof item.elapsed_ms === "number" ? item.elapsed_ms : undefined,
+      detail: detailRecord(item.detail),
+    }));
+  if (!innerSteps.length) {
+    return <div className="node-run-empty">该 Node 暂未提供 execute-or-dry-run 内部小流程。</div>;
+  }
+  return (
+    <div className="node-run-inner-flow" aria-label="Node inner flow">
+      {innerSteps.map((step, index) => (
+        <div key={step.id || index} className={`node-run-inner-step ${nodeRunCardTone(step.status)} ${step.status === "running" ? "active" : ""}`}>
+          <span>{index + 1}</span>
+          <div>
+            <strong>{step.title || step.id}</strong>
+            <small>{step.id} · {step.status}{step.elapsedMs ? ` · ${formatElapsed(step.elapsedMs)}` : ""}</small>
+            {step.summary ? <p>{step.summary}</p> : null}
+          </div>
         </div>
       ))}
     </div>
@@ -949,13 +1077,47 @@ function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
   const detail = detailRecord(result?.detail);
   const configs = detailRecord(detail.resolved_config);
   const suggestions = detailList(detail.fix_suggestions);
+  const sideEffects = detailRecord(detail.side_effects);
+  const capabilityProbes = detailRecord(detail.capability_probes);
+  const current = currentNodeRunStep(result);
   return (
     <div className="node-run-diagnosis">
+      <div className="node-run-live-inspector">
+        <div className="section-title"><span>Live Inspector</span><span>{result?.status || "idle"}</span></div>
+        <div className="node-run-inspector-card">
+          <span className={`status-pill ${nodeRunTone(current?.status)}`}>{current?.status || "idle"}</span>
+          <strong>{current?.title || "No active step"}</strong>
+          <small>{current?.id || ""}</small>
+          {current?.summary ? <p>{current.summary}</p> : null}
+        </div>
+        <div className="node-run-side-effect-grid">
+          {Object.entries(sideEffects).filter(([, value]) => typeof value === "boolean").map(([key, value]) => (
+            <div key={key} className="node-run-side-effect">
+              <span>{key.replace(/_/g, " ")}</span>
+              <strong>{value ? "enabled" : "off"}</strong>
+            </div>
+          ))}
+          {!Object.keys(sideEffects).length ? <div className="node-run-empty">还没有 side-effect 快照。</div> : null}
+        </div>
+      </div>
+      <div className="section-title"><span>Capability Probes</span><span>{Object.keys(capabilityProbes).length}</span></div>
+      {Object.entries(capabilityProbes).map(([key, value]) => {
+        const item = detailRecord(value);
+        return (
+          <article key={key} className={`node-run-config-card ${nodeRunCardTone(String(item.status || ""))}`}>
+            <div>
+              <strong>{String(item.label || key)}</strong>
+              <span className={`status-pill ${nodeRunTone(String(item.status || ""))}`}>{String(item.status || "unknown")}</span>
+            </div>
+            <code>{formatValue(item)}</code>
+          </article>
+        );
+      })}
       <div className="section-title"><span>Config Sources</span><span>{Object.keys(configs).length}</span></div>
       {Object.entries(configs).map(([key, value]) => {
         const item = detailRecord(value);
         return (
-          <article key={key} className={`node-run-config-card ${nodeRunTone(String(item.status || ""))}`}>
+          <article key={key} className={`node-run-config-card ${nodeRunCardTone(String(item.status || ""))}`}>
             <div>
               <strong>{String(item.label || key)}</strong>
               <span className={`status-pill ${nodeRunTone(String(item.status || ""))}`}>{String(item.status || "unknown")}</span>
@@ -979,11 +1141,20 @@ function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
   );
 }
 
-function NodeRunDetail({ result, events }: { result: NodeRunResult | undefined; events: NodeRunEvent[] }) {
+function NodeRunDetail({
+  result,
+  events,
+  onRetry,
+}: {
+  result: NodeRunResult | undefined;
+  events: NodeRunEvent[];
+  onRetry: (retryOf: string) => void;
+}) {
   if (!result) return <div className="node-run-empty">选择或创建一个 Node Run 查看详情。</div>;
   const detail = detailRecord(result.detail);
   const resolvedInputs = detailList(detail.resolved_inputs);
   const missingInputs = detailList(detail.missing_inputs);
+  const live = nodeRunIsLive(result);
   return (
     <div className="node-run-detail">
       <div className={`node-run-result-banner ${nodeRunTone(result.status)}`}>
@@ -991,9 +1162,19 @@ function NodeRunDetail({ result, events }: { result: NodeRunResult | undefined; 
           <strong>{result.nodeRunId}</strong>
           <span>{result.mode || "preflight"} · {result.inputSource || "generated-fixture"} · {result.status || "unknown"}</span>
         </div>
+        <div className="node-run-banner-actions">
+          {live ? <span className="status-pill running"><Loader2 size={12} className="spin" />live</span> : null}
+          <span>{result.startedAt || "no start"}{result.finishedAt ? ` -> ${result.finishedAt}` : ""}</span>
+          {typeof result.elapsedMs === "number" ? <span>{formatElapsed(result.elapsedMs)}</span> : null}
+          {result.retryOf ? <span>retry of {shortId(result.retryOf)}</span> : null}
+          <button type="button" className="btn subtle node-run-retry-btn" onClick={() => onRetry(result.nodeRunId)}><RefreshCw size={13} />Retry Node Run</button>
+        </div>
         {result.reason ? <p>{result.reason}</p> : null}
       </div>
       <NodeRunFlow result={result} />
+      <DetailBlock title="Execute Inner Flow">
+        <NodeRunInnerFlow result={result} />
+      </DetailBlock>
       <div className="node-run-detail-grid">
         <DetailBlock title="Resolved Inputs">
           {resolvedInputs.length ? (
@@ -1013,11 +1194,12 @@ function NodeRunDetail({ result, events }: { result: NodeRunResult | undefined; 
         </DetailBlock>
         <DetailBlock title="Events">
           <div className="node-run-events">
-            {(events.length ? events : result.events || []).slice(0, 12).map((event, index) => (
+            {(events.length ? events : result.events || []).slice(-18).map((event, index) => (
               <div key={`${event.event}-${event.stepId || index}`} className="node-test-event">
                 <span>{event.sequence || index + 1}</span>
                 <strong>{event.event}</strong>
-                <small>{event.stepId || event.ts || ""}</small>
+                <small>{event.stepId || ""}{event.ts ? ` · ${event.ts}` : ""}</small>
+                {event.data?.summary ? <small>{String(event.data.summary)}</small> : null}
               </div>
             ))}
             {!(events.length || result.events?.length) ? <Empty text="没有事件记录" /> : null}
@@ -1074,27 +1256,53 @@ function NodeRunWorkbench({
     queryKey: queryKeys.nodeRun(mode, runtime, instanceId, workflowId, nodeId, activeNodeRunId),
     queryFn: () => provider.getNodeRun(runtime!, instanceId, workflowId, nodeId, activeNodeRunId),
     enabled: Boolean(runtime && instanceId && workflowId && nodeId && activeNodeRunId),
+    refetchInterval: (query) => nodeRunIsLive(query.state.data) ? 1000 : false,
   });
   const eventsQuery = useQuery({
     queryKey: queryKeys.nodeRunEvents(mode, runtime, instanceId, workflowId, nodeId, activeNodeRunId),
     queryFn: () => provider.getNodeRunEvents(runtime!, instanceId, workflowId, nodeId, activeNodeRunId),
     enabled: Boolean(runtime && instanceId && workflowId && nodeId && activeNodeRunId),
+    refetchInterval: () => nodeRunIsLive(detailQuery.data) ? 1000 : false,
   });
 
   const createMutation = useMutation({
-    mutationFn: () => provider.createNodeRun(runtime!, instanceId, workflowId, nodeId, {
-      mode: runMode,
-      inputSource,
-      pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
-      manualInputs,
-    }),
+    mutationFn: (payload: NodeRunCreateInput) => provider.createNodeRun(runtime!, instanceId, workflowId, nodeId, payload),
     onSuccess: (result) => {
       setError("");
       queryClient.invalidateQueries({ queryKey: queryKeys.nodeRuns(mode, runtime, instanceId, workflowId, nodeId) });
+      queryClient.setQueryData(queryKeys.nodeRun(mode, runtime, instanceId, workflowId, nodeId, result.nodeRunId), result);
       onOpenNodeRun(nodeId, result.nodeRunId);
     },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
   });
+
+  function startNodeRun(retryOf = "") {
+    if (!runtime || !instance || !nodeId) return;
+    const nodeRunId = makeNodeRunId(nodeId);
+    const payload: NodeRunCreateInput = {
+      nodeRunId,
+      mode: runMode,
+      inputSource,
+      pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
+      manualInputs,
+      retryOf,
+    };
+    const optimistic = makeOptimisticNodeRun({
+      runtimeId: runtime.id,
+      instanceId,
+      workflowId,
+      nodeId,
+      nodeTitle: node?.title,
+      nodeRunId,
+      mode: runMode,
+      inputSource,
+      retryOf,
+    });
+    queryClient.setQueryData(queryKeys.nodeRun(mode, runtime, instanceId, workflowId, nodeId, nodeRunId), optimistic);
+    queryClient.setQueryData(queryKeys.nodeRunEvents(mode, runtime, instanceId, workflowId, nodeId, nodeRunId), optimistic.events || []);
+    onOpenNodeRun(nodeId, nodeRunId);
+    createMutation.mutate(payload);
+  }
 
   if (!node || !instance || !runtime) return <div className="node-run-empty">选择 Runtime、Instance 和 Node 后才能创建 Node Run。</div>;
   const inputFields = Object.entries(node.inputs || {});
@@ -1107,7 +1315,7 @@ function NodeRunWorkbench({
           <h2>{node.title || node.nodeId}</h2>
           <p>{runtime.id} · {instance.instanceId} · {workflowId}</p>
         </div>
-        <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => createMutation.mutate()}>
+        <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => startNodeRun()}>
           {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Run Node
         </button>
       </div>
@@ -1166,7 +1374,7 @@ function NodeRunWorkbench({
           {!historyQuery.isLoading && !(historyQuery.data || []).length ? <div className="node-run-empty">还没有 Node Run。</div> : null}
         </aside>
         <section className="node-run-main">
-          {detailQuery.isLoading ? <Skeleton /> : <NodeRunDetail result={current} events={eventsQuery.data || []} />}
+          {detailQuery.isLoading && !current ? <Skeleton /> : <NodeRunDetail result={current} events={eventsQuery.data || []} onRetry={startNodeRun} />}
         </section>
         <aside className="node-run-side">
           <NodeRunConfigPanel result={current} />
