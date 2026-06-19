@@ -79,7 +79,7 @@ import type {
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
 type AppView = "runtime" | "instance" | "workflows" | "workflow" | "nodes" | "machines" | "settings";
-type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string; nodeRunId?: string };
+type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string; nodeRunId?: string; nodeRunList?: boolean };
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
 type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
   pipelineId: string;
@@ -289,13 +289,15 @@ function readRoute(): AppRoute {
       const runsIndex = parts.indexOf("runs");
       const nodeIndex = parts.indexOf("nodes");
       const isNodeRoute = nodeIndex >= 0;
+      const isNodeRunsRoute = isNodeRoute && parts[nodeIndex + 2] === "runs";
       return {
         view: isNodeRoute ? "nodes" : "workflow",
         ...empty,
         pipelineId: isNodeRoute ? "" : executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 1] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 1] || "") : "",
         nodeId: isNodeRoute ? decodeURIComponent(parts[nodeIndex + 1] || "") : executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 2] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 2] || "") : "",
         moduleId: nodeIndex >= 0 && parts[nodeIndex + 2] === "modules" ? decodeURIComponent(parts[nodeIndex + 3] || "") : "",
-        nodeRunId: isNodeRoute && parts[nodeIndex + 2] === "runs" ? decodeURIComponent(parts[nodeIndex + 3] || "") : "",
+        nodeRunId: isNodeRunsRoute ? decodeURIComponent(parts[nodeIndex + 3] || "") : "",
+        nodeRunList: isNodeRunsRoute,
       };
     }
     if (parts[2] === "instances" && parts[4] === "workflow") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[6] || ""), nodeId: decodeURIComponent(parts[7] || "") };
@@ -319,6 +321,7 @@ function readRoute(): AppRoute {
       nodeId: decodeURIComponent(parts[1] || ""),
       moduleId: parts[2] === "modules" ? decodeURIComponent(parts[3] || "") : "",
       nodeRunId: parts[2] === "runs" ? decodeURIComponent(parts[3] || "") : "",
+      nodeRunList: parts[2] === "runs",
     };
   }
   if (parts[0] === "artifacts") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), artifactId: decodeURIComponent(parts[2] || "") };
@@ -1145,10 +1148,14 @@ function NodeRunDetail({
   result,
   events,
   onRetry,
+  showBanner = true,
+  showFlow = true,
 }: {
   result: NodeRunResult | undefined;
   events: NodeRunEvent[];
   onRetry: (retryOf: string) => void;
+  showBanner?: boolean;
+  showFlow?: boolean;
 }) {
   if (!result) return <div className="node-run-empty">选择或创建一个 Node Run 查看详情。</div>;
   const detail = detailRecord(result.detail);
@@ -1157,7 +1164,7 @@ function NodeRunDetail({
   const live = nodeRunIsLive(result);
   return (
     <div className="node-run-detail">
-      <div className={`node-run-result-banner ${nodeRunTone(result.status)}`}>
+      {showBanner ? <div className={`node-run-result-banner ${nodeRunTone(result.status)}`}>
         <div>
           <strong>{result.nodeRunId}</strong>
           <span>{result.mode || "preflight"} · {result.inputSource || "generated-fixture"} · {result.status || "unknown"}</span>
@@ -1170,11 +1177,11 @@ function NodeRunDetail({
           <button type="button" className="btn subtle node-run-retry-btn" onClick={() => onRetry(result.nodeRunId)}><RefreshCw size={13} />Retry Node Run</button>
         </div>
         {result.reason ? <p>{result.reason}</p> : null}
-      </div>
-      <NodeRunFlow result={result} />
-      <DetailBlock title="Execute Inner Flow">
+      </div> : null}
+      {showFlow ? <NodeRunFlow result={result} /> : null}
+      {showFlow ? <DetailBlock title="Execute Inner Flow">
         <NodeRunInnerFlow result={result} />
-      </DetailBlock>
+      </DetailBlock> : null}
       <div className="node-run-detail-grid">
         <DetailBlock title="Resolved Inputs">
           {resolvedInputs.length ? (
@@ -1216,7 +1223,7 @@ function NodeRunDetail({
   );
 }
 
-function NodeRunWorkbench({
+function useNodeRunController({
   provider,
   runtime,
   instance,
@@ -1312,22 +1319,74 @@ function NodeRunWorkbench({
     createMutation.mutate(payload);
   }
 
+  const inputFields = Object.entries(node?.inputs || {});
+  return {
+    runtime,
+    instance,
+    workflowId,
+    node,
+    runs,
+    mode,
+    nodeId,
+    instanceId,
+    runMode,
+    setRunMode,
+    inputSource,
+    setInputSource,
+    seedRunId,
+    setSeedRunId,
+    manualInputs,
+    setManualInputs,
+    error,
+    historyQuery,
+    activeNodeRunId,
+    detailQuery,
+    eventsQuery,
+    createMutation,
+    startNodeRun,
+    inputFields,
+    current: detailQuery.data,
+    events: eventsQuery.data || [],
+  };
+}
+
+function NodeRunStartPanel({
+  controller,
+  compact = false,
+}: {
+  controller: ReturnType<typeof useNodeRunController>;
+  compact?: boolean;
+}) {
+  const {
+    runtime,
+    instance,
+    node,
+    runs,
+    runMode,
+    setRunMode,
+    inputSource,
+    setInputSource,
+    seedRunId,
+    setSeedRunId,
+    manualInputs,
+    setManualInputs,
+    createMutation,
+    startNodeRun,
+    inputFields,
+    error,
+  } = controller;
   if (!node || !instance || !runtime) return <div className="node-run-empty">选择 Runtime、Instance 和 Node 后才能创建 Node Run。</div>;
-  const inputFields = Object.entries(node.inputs || {});
-  const current = detailQuery.data;
   return (
-    <div className="node-run-workbench">
-      <div className="node-run-head">
+    <section className={`node-run-start-panel ${compact ? "compact" : ""}`}>
+      <div className="node-run-start-head">
         <div>
-          <span className="status-pill running"><Activity size={13} />Node Run</span>
-          <h2>{node.title || node.nodeId}</h2>
-          <p>{runtime.id} · {instance.instanceId} · {workflowId}</p>
+          <strong>Run Node</strong>
+          <span>{runtime.id} · {instance.instanceId} · {node.nodeId}</span>
         </div>
         <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => startNodeRun()}>
-          {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Run Node
+          {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Start
         </button>
       </div>
-
       <div className="node-run-controls">
         <label>Mode
           <select value={runMode} onChange={(event) => setRunMode(event.target.value as NodeRunMode)}>
@@ -1367,28 +1426,266 @@ function NodeRunWorkbench({
       </div>
       {runMode === "real-node" ? <div className="node-run-warning"><AlertTriangle size={14} />Real node 目前只会生成 blocked 诊断，不会静默触发真实外部副作用。</div> : null}
       {error ? <div className="node-test-result err">{error}</div> : null}
+    </section>
+  );
+}
 
-      <div className="node-run-layout">
-        <aside className="node-run-history">
-          <div className="section-title"><span>Node Run History</span><span>{historyQuery.data?.length || 0}</span></div>
-          {(historyQuery.data || []).map((item) => (
-            <button key={item.nodeRunId} type="button" className={activeNodeRunId === item.nodeRunId ? "active" : ""} onClick={() => onOpenNodeRun(nodeId, item.nodeRunId)}>
-              <span className={`status-pill ${nodeRunTone(item.status)}`}>{item.status || "unknown"}</span>
-              <strong>{shortId(item.nodeRunId)}</strong>
-              <small>{item.mode || "preflight"} · {item.startedAt || item.finishedAt || ""}</small>
-            </button>
-          ))}
-          {historyQuery.isLoading ? <div className="node-run-empty">加载 Node Run 历史…</div> : null}
-          {!historyQuery.isLoading && !(historyQuery.data || []).length ? <div className="node-run-empty">还没有 Node Run。</div> : null}
-        </aside>
-        <section className="node-run-main">
-          {detailQuery.isLoading && !current ? <Skeleton /> : <NodeRunDetail result={current} events={eventsQuery.data || []} onRetry={startNodeRun} />}
+function NodeRunHistoryRows({
+  controller,
+  onOpenNodeRun,
+  limit,
+}: {
+  controller: ReturnType<typeof useNodeRunController>;
+  onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+  limit?: number;
+}) {
+  const items = controller.historyQuery.data || [];
+  const visible = typeof limit === "number" ? items.slice(0, limit) : items;
+  return (
+    <div className="node-run-history-list">
+      {visible.map((item) => (
+        <button key={item.nodeRunId} type="button" className={controller.activeNodeRunId === item.nodeRunId ? "active" : ""} onClick={() => onOpenNodeRun(controller.nodeId, item.nodeRunId)}>
+          <span className={`status-pill ${nodeRunTone(item.status)}`}>{item.status || "unknown"}</span>
+          <strong>{shortId(item.nodeRunId)}</strong>
+          <small>{item.mode || "preflight"} · {item.inputSource || "generated-fixture"}</small>
+          <small>{item.startedAt || item.finishedAt || ""}</small>
+        </button>
+      ))}
+      {controller.historyQuery.isLoading ? <div className="node-run-empty">加载 Node Run 历史...</div> : null}
+      {!controller.historyQuery.isLoading && !visible.length ? <div className="node-run-empty">还没有 Node Run。</div> : null}
+    </div>
+  );
+}
+
+function NodeRunContextPanel({ controller }: { controller: ReturnType<typeof useNodeRunController> }) {
+  const result = controller.current;
+  const detail = detailRecord(result?.detail);
+  return (
+    <div className="node-run-context-panel">
+      <DetailBlock title="Run Context">
+        <KeyValues data={{
+          runtime: controller.runtime?.id || "-",
+          instance: controller.instance?.instanceId || "-",
+          workflow: controller.workflowId || "-",
+          node: controller.node?.nodeId || "-",
+          mode: result?.mode || controller.runMode,
+          input_source: result?.inputSource || controller.inputSource || "-",
+          seed_workflow_run: result?.createdFrom || controller.seedRunId || "-",
+          dry_run: result?.mode === "dry-run" ? "yes" : "-",
+        }} />
+      </DetailBlock>
+      <DetailBlock title="Node Contract">
+        <KeyValues data={{
+          title: controller.node?.title || "-",
+          inputs: Object.keys(controller.node?.inputs || {}).length,
+          outputs: Object.keys(controller.node?.outputs || {}).length,
+          executor: String(controller.node?.executor?.type || controller.node?.case || "node"),
+          status: result?.status || "no run selected",
+        }} />
+      </DetailBlock>
+      <DetailBlock title="Raw Detail">
+        <code className="node-run-raw-detail">{formatValue(detail)}</code>
+      </DetailBlock>
+    </div>
+  );
+}
+
+function NodeDetailRunSummary({
+  provider,
+  runtime,
+  instance,
+  workflowId,
+  node,
+  runs,
+  mode,
+  onOpenNodeRuns,
+  onOpenNodeRun,
+}: {
+  provider: SopDataProvider;
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  workflowId: string;
+  node: NodeRegistryItem | undefined;
+  runs: Run[];
+  mode: DataMode;
+  onOpenNodeRuns: (nodeId: string) => void;
+  onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+}) {
+  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId: "", onOpenNodeRun });
+  return (
+    <section className="node-run-summary-panel">
+      <div className="panel-head compact">
+        <div><strong>Node Runs</strong><span>独立执行历史和调试入口</span></div>
+        <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>Open Runs</button>
+      </div>
+      <NodeRunStartPanel controller={controller} compact />
+      <div className="node-run-summary-history">
+        <div className="section-title"><span>Recent Node Runs</span><span>{controller.historyQuery.data?.length || 0}</span></div>
+        <NodeRunHistoryRows controller={controller} onOpenNodeRun={onOpenNodeRun} limit={4} />
+      </div>
+    </section>
+  );
+}
+
+function NodeRunsIndexPage({
+  provider,
+  runtime,
+  instance,
+  workflowId,
+  node,
+  runs,
+  mode,
+  onOpenNode,
+  onOpenNodeRun,
+}: {
+  provider: SopDataProvider;
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  workflowId: string;
+  node: NodeRegistryItem | undefined;
+  runs: Run[];
+  mode: DataMode;
+  onOpenNode: (nodeId: string) => void;
+  onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+}) {
+  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId: "", onOpenNodeRun });
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const items = (controller.historyQuery.data || []).filter((item) => {
+    const matchesStatus = statusFilter === "all" || String(item.status || "") === statusFilter;
+    const haystack = `${item.nodeRunId} ${item.mode || ""} ${item.inputSource || ""}`.toLowerCase();
+    return matchesStatus && (!search.trim() || haystack.includes(search.trim().toLowerCase()));
+  });
+  return (
+    <section className="node-runs-page">
+      <div className="node-page-header">
+        <div>
+          <span className="status-pill running"><Activity size={13} />Node Runs</span>
+          <h1>{node?.title || node?.nodeId || "Node Runs"}</h1>
+          <p>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</p>
+        </div>
+        <div className="node-page-actions">
+          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>Open Node</button>
+        </div>
+      </div>
+      <div className="node-runs-index-grid">
+        <section className="node-runs-table-panel">
+          <div className="panel-head compact">
+            <div><strong>Run History</strong><span>{items.length}/{controller.historyQuery.data?.length || 0} records</span></div>
+            <span className="status-pill done">{mode}</span>
+          </div>
+          <div className="node-runs-tools">
+            <label className="search-box"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search node run" /></label>
+            <label className="filter-box"><SlidersHorizontal size={14} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All status</option><option value="done">Done</option><option value="running">Running</option><option value="failed">Failed</option><option value="waiting">Waiting</option></select></label>
+          </div>
+          <div className="node-runs-table">
+            {items.map((item) => (
+              <article key={item.nodeRunId} className={`node-run-table-row ${nodeRunCardTone(item.status)}`}>
+                <div>
+                  <span className={`status-pill ${nodeRunTone(item.status)}`}>{item.status || "unknown"}</span>
+                  <strong>{item.nodeRunId}</strong>
+                  <small>{item.mode || "preflight"} · {item.inputSource || "generated-fixture"}</small>
+                </div>
+                <div>
+                  <span>{item.startedAt || "no start"}</span>
+                  <span>{typeof item.elapsedMs === "number" ? formatElapsed(item.elapsedMs) : item.finishedAt || "-"}</span>
+                </div>
+                <button type="button" className="btn primary" onClick={() => onOpenNodeRun(controller.nodeId, item.nodeRunId)}>Open Run</button>
+              </article>
+            ))}
+            {controller.historyQuery.isLoading ? <Skeleton /> : null}
+            {!controller.historyQuery.isLoading && !items.length ? <Empty text="没有匹配的 Node Run" /> : null}
+          </div>
         </section>
-        <aside className="node-run-side">
-          <NodeRunConfigPanel result={current} />
+        <aside className="node-runs-side-panel">
+          <NodeRunStartPanel controller={controller} />
+          <NodeRunContextPanel controller={controller} />
         </aside>
       </div>
-    </div>
+    </section>
+  );
+}
+
+function NodeRunDetailPage({
+  provider,
+  runtime,
+  instance,
+  workflowId,
+  node,
+  runs,
+  mode,
+  selectedNodeRunId,
+  onOpenNode,
+  onOpenNodeRuns,
+  onOpenNodeRun,
+}: {
+  provider: SopDataProvider;
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  workflowId: string;
+  node: NodeRegistryItem | undefined;
+  runs: Run[];
+  mode: DataMode;
+  selectedNodeRunId: string;
+  onOpenNode: (nodeId: string) => void;
+  onOpenNodeRuns: (nodeId: string) => void;
+  onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+}) {
+  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId, onOpenNodeRun });
+  const result = controller.current;
+  const live = nodeRunIsLive(result);
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+    } catch {
+      window.prompt("Copy Node Run URL", window.location.href);
+    }
+  }
+  return (
+    <section className="node-run-detail-page">
+      <div className="node-run-detail-header">
+        <div>
+          <div className="node-run-breadcrumb">
+            <span>{runtime?.id || "Runtime"}</span>
+            <span>{instance?.instanceId || "Instance"}</span>
+            <span>{workflowId}</span>
+            <span>{node?.nodeId || "Node"}</span>
+          </div>
+          <h1>{node?.title || node?.nodeId || "Node Run"}</h1>
+          <p>{selectedNodeRunId || "Select a node run"}</p>
+        </div>
+        <div className="node-run-detail-actions">
+          {live ? <span className="status-pill running"><Loader2 size={12} className="spin" />live</span> : null}
+          <span className={`status-pill ${nodeRunTone(result?.status)}`}>{result?.status || "loading"}</span>
+          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>Back to Node</button>
+          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>All Runs</button>
+          <button type="button" className="btn" onClick={copyLink}><Copy size={13} />Copy Link</button>
+          {result ? <button type="button" className="btn primary" onClick={() => controller.startNodeRun(result.nodeRunId)}><RefreshCw size={13} />Retry</button> : null}
+        </div>
+      </div>
+      {!selectedNodeRunId ? (
+        <div className="node-run-empty">没有指定 Node Run。请返回 Node Runs 选择一次执行。</div>
+      ) : (
+        <div className="node-run-detail-grid-page">
+          <aside className="node-run-flow-panel">
+            <div className="panel-head compact"><div><strong>Node Flow</strong><span>{result?.status || "loading"}</span></div></div>
+            {controller.detailQuery.isLoading && !result ? <Skeleton /> : <NodeRunFlow result={result} />}
+            <DetailBlock title="Execute Inner Flow">
+              <NodeRunInnerFlow result={result} />
+            </DetailBlock>
+          </aside>
+          <section className="node-run-output-panel">
+            {controller.detailQuery.isLoading && !result ? <Skeleton /> : (
+              <NodeRunDetail result={result} events={controller.events} onRetry={controller.startNodeRun} showBanner={false} showFlow={false} />
+            )}
+          </section>
+          <aside className="node-run-debug-panel">
+            <NodeRunContextPanel controller={controller} />
+            <NodeRunConfigPanel result={result} />
+          </aside>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2645,8 +2942,9 @@ export default function App() {
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes`;
       if (route.nodeId) nextPath += `/${encodeURIComponent(route.nodeId)}`;
       if (route.nodeRunId) nextPath += `/runs/${encodeURIComponent(route.nodeRunId)}`;
+      else if (route.nodeRunList) nextPath += `/runs`;
       else if (route.moduleId) nextPath += `/modules/${encodeURIComponent(route.moduleId)}`;
-      nextRoute = { view: "nodes", nodeId: route.nodeId, pipelineId: "", artifactId: "", moduleId: route.moduleId, nodeRunId: route.nodeRunId };
+      nextRoute = { view: "nodes", nodeId: route.nodeId, pipelineId: "", artifactId: "", moduleId: route.moduleId, nodeRunId: route.nodeRunId, nodeRunList: route.nodeRunList };
     } else if (viewMode === "instance" && routeContext.instanceId) {
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}`;
       nextRoute = { view: "instance", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
@@ -2713,6 +3011,18 @@ export default function App() {
     navigateTo("nodes", nodeId, moduleId);
   }
 
+  function openNodeRuns(nodeId: string) {
+    if (!nodeId) return;
+    setSelectedManagedNodeId(nodeId);
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const baseInstance = routeInstanceId(instance, instanceId);
+    const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
+    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs`;
+    const nextUrl = `${nextPath}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunId: "", nodeRunList: true });
+  }
+
   function openNodeRun(nodeId: string, nodeRunId: string) {
     if (!nodeId || !nodeRunId) return;
     setSelectedManagedNodeId(nodeId);
@@ -2722,7 +3032,7 @@ export default function App() {
     const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs/${encodeURIComponent(nodeRunId)}`;
     const nextUrl = `${nextPath}${window.location.search}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunId });
+    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunId, nodeRunList: true });
   }
 
   function addManualEndpoint(event: FormEvent) {
@@ -2752,12 +3062,12 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     params.set("test_source", "existing-run");
     params.set("test_run", pipelineId);
-    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}`;
+    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs`;
     const nextUrl = `${nextPath}?${params.toString()}`;
     setSelectedManagedNodeId(nodeId);
     setSelectedNodeModuleId("basic");
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
-    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "" });
+    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunList: true });
   }
 
   function handleCancelRun() {
@@ -3067,6 +3377,7 @@ export default function App() {
             loading={nodesQuery.isLoading}
             routeNodeId={route.nodeId || ""}
             routeModuleId={route.moduleId || ""}
+            nodeRunList={Boolean(route.nodeRunList)}
             selectedNodeId={selectedManagedNode?.nodeId || ""}
             selectedNodeRunId={route.nodeRunId || ""}
             selectedNode={selectedManagedNode}
@@ -3081,6 +3392,7 @@ export default function App() {
             onNodeSearch={setNodeSearch}
             onNodeFilter={setNodeFilter}
             onSelectNode={selectManagedNode}
+            onOpenNodeRuns={openNodeRuns}
             onOpenNodeRun={openNodeRun}
             onSelectModule={(moduleId) => {
               setSelectedNodeModuleId(moduleId);
@@ -6886,6 +7198,7 @@ function NodesWorkspace({
   loading,
   routeNodeId,
   routeModuleId,
+  nodeRunList,
   selectedNodeId,
   selectedNodeRunId,
   nodeSearch,
@@ -6894,6 +7207,7 @@ function NodesWorkspace({
   onNodeSearch,
   onNodeFilter,
   onSelectNode,
+  onOpenNodeRuns,
   onOpenNodeRun,
   onSelectModule,
   onOpenDraft,
@@ -6914,6 +7228,7 @@ function NodesWorkspace({
   loading: boolean;
   routeNodeId: string;
   routeModuleId: string;
+  nodeRunList: boolean;
   selectedNodeId: string;
   selectedNodeRunId: string;
   nodeSearch: string;
@@ -6922,6 +7237,7 @@ function NodesWorkspace({
   onNodeSearch: (value: string) => void;
   onNodeFilter: (value: string) => void;
   onSelectNode: (nodeId: string, moduleId?: string) => void;
+  onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
   onSelectModule: (moduleId: string) => void;
   onOpenDraft: () => void;
@@ -6933,6 +7249,8 @@ function NodesWorkspace({
   const workflowId = workflowBinding?.workflowId || workflowBinding?.workflowName || instance?.sopType || "workflow";
   const isRouteNode = Boolean(routeNodeId && selectedNode);
   const isModuleRoute = Boolean(isRouteNode && routeModuleId);
+  const isNodeRunDetailRoute = Boolean(isRouteNode && selectedNodeRunId);
+  const isNodeRunsRoute = Boolean(isRouteNode && nodeRunList && !selectedNodeRunId);
 
   const nodeListPanel = (
     <aside className="node-list-panel">
@@ -7039,7 +7357,7 @@ function NodesWorkspace({
 
   return (
     <>
-      <section className="ops-page-header node-compact-header">
+      {!isNodeRunsRoute && !isNodeRunDetailRoute ? <section className="ops-page-header node-compact-header">
         <div className="ops-page-title">
           <span className="status-pill running"><Boxes size={14} />Node Catalog</span>
           <div>
@@ -7053,7 +7371,7 @@ function NodesWorkspace({
           <span>{drafts.length} drafts</span>
           <span>{groupCounts.failed || 0} review</span>
         </div>
-      </section>
+      </section> : null}
 
       {!isRouteNode ? (
         <section className="node-list-route-workbench node-catalog-workbench">
@@ -7080,8 +7398,8 @@ function NodesWorkspace({
                   </div>
                   <div className="node-row-actions">
                     <button type="button" className="btn primary" onClick={() => onSelectNode(node.nodeId)}>Open</button>
-                    <button type="button" className="btn" onClick={() => onSelectNode(node.nodeId)}>Run</button>
-                    <button type="button" className="btn" onClick={() => onSelectNode(node.nodeId)}>History</button>
+                    <button type="button" className="btn" onClick={() => onOpenNodeRuns(node.nodeId)}>Run</button>
+                    <button type="button" className="btn" onClick={() => onOpenNodeRuns(node.nodeId)}>History</button>
                   </div>
                 </article>
               ))}
@@ -7095,6 +7413,32 @@ function NodesWorkspace({
           {definitionViews}
           <ModuleDetailPanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} onOpenNode={selectedNode ? () => onSelectNode(selectedNode.nodeId) : undefined} />
         </section>
+      ) : isNodeRunDetailRoute ? (
+        <NodeRunDetailPage
+          provider={provider}
+          runtime={runtime}
+          instance={instance}
+          workflowId={workflowId}
+          node={selectedNode}
+          runs={runs}
+          mode={mode}
+          selectedNodeRunId={selectedNodeRunId}
+          onOpenNode={onSelectNode}
+          onOpenNodeRuns={onOpenNodeRuns}
+          onOpenNodeRun={onOpenNodeRun}
+        />
+      ) : isNodeRunsRoute ? (
+        <NodeRunsIndexPage
+          provider={provider}
+          runtime={runtime}
+          instance={instance}
+          workflowId={workflowId}
+          node={selectedNode}
+          runs={runs}
+          mode={mode}
+          onOpenNode={onSelectNode}
+          onOpenNodeRun={onOpenNodeRun}
+        />
       ) : (
         <section className="node-detail-route-workbench node-catalog-workbench">
           {nodeListPanel}
@@ -7108,12 +7452,13 @@ function NodesWorkspace({
                 {modules.slice(0, 5).map((module) => (
                   <button key={module.id} type="button" className="btn" onClick={() => onSelectModule(module.id)}>{module.title || module.id}</button>
                 ))}
+                {selectedNode ? <button type="button" className="btn primary" onClick={() => onOpenNodeRuns(selectedNode.nodeId)}>Open Runs</button> : null}
               </div>
             </div>
             <NodeDetailPanel node={selectedNode} loading={loading} />
             {selectedNode && instance ? (
               <section className="node-run-route-panel">
-                <NodeRunWorkbench
+                <NodeDetailRunSummary
                   provider={provider}
                   runtime={runtime}
                   instance={instance}
@@ -7121,7 +7466,7 @@ function NodesWorkspace({
                   node={selectedNode}
                   runs={runs}
                   mode={mode}
-                  selectedNodeRunId={selectedNodeRunId}
+                  onOpenNodeRuns={onOpenNodeRuns}
                   onOpenNodeRun={onOpenNodeRun}
                 />
               </section>
