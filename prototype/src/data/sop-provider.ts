@@ -16,7 +16,9 @@ import type {
   NodeRegistryItem,
   NodeClassification,
   NodeContract,
+  NodePreflightInput,
   NodeTestInput,
+  NodeTestPlan,
   NodeTestResult,
   NodeTestRunResult,
   Run,
@@ -567,6 +569,55 @@ function mapNodeTestResult(raw: Record<string, unknown>): NodeTestResult {
   };
 }
 
+function mapNodeTestPlanInput(raw: Record<string, unknown>) {
+  return {
+    name: String(raw.name || ""),
+    source: raw.source ? String(raw.source) : undefined,
+    required: raw.required === undefined ? undefined : Boolean(raw.required),
+    resolved: raw.resolved === undefined ? undefined : Boolean(raw.resolved),
+    value: raw.value,
+    provenance: raw.provenance ? String(raw.provenance) : undefined,
+    reason: raw.reason ? String(raw.reason) : undefined,
+  };
+}
+
+function mapNodeTestPlan(raw: Record<string, unknown>): NodeTestPlan {
+  return {
+    sopId: raw.sop_id ? String(raw.sop_id) : undefined,
+    workflowId: raw.workflow_id ? String(raw.workflow_id) : undefined,
+    instanceId: raw.instance_id ? String(raw.instance_id) : undefined,
+    nodeId: String(raw.node_id || ""),
+    nodeTitle: raw.node_title ? String(raw.node_title) : undefined,
+    mode: raw.mode ? String(raw.mode) : undefined,
+    inputSource: (raw.input_source as NodeTestPlan["inputSource"]) || undefined,
+    baseRunId: raw.base_run_id ? String(raw.base_run_id) : undefined,
+    requiredInputs: ((raw.required_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
+    optionalInputs: ((raw.optional_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
+    resolvedInputs: ((raw.resolved_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
+    missingInputs: ((raw.missing_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
+    upstreamNodes: (raw.upstream_nodes as Array<Record<string, unknown>>) || [],
+    availableExistingRuns: (raw.available_existing_runs as Array<Record<string, unknown>>) || [],
+    sideEffects: (raw.side_effects as Record<string, unknown>) || {},
+    actions: (raw.actions as Record<string, unknown>) || {},
+    status: raw.status ? String(raw.status) : undefined,
+  };
+}
+
+function mapNodeTestRunResult(raw: Record<string, unknown>, nodeId: string, fallbackId: string): NodeTestRunResult {
+  return {
+    pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : fallbackId,
+    testId: raw.test_id ? String(raw.test_id) : undefined,
+    nodeId: raw.node_id ? String(raw.node_id) : nodeId,
+    status: raw.status ? String(raw.status) : undefined,
+    mode: raw.mode ? String(raw.mode) : undefined,
+    pending: Boolean(raw.pending),
+    startedAt: raw.started_at ? String(raw.started_at) : undefined,
+    finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
+    reason: raw.reason ? String(raw.reason) : undefined,
+    detail: (raw.detail as Record<string, unknown>) || {},
+  };
+}
+
 function mapNodeDraft(raw: Record<string, unknown>): NodeDraft {
   return {
     draftId: String(raw.draft_id || raw.draftId || ""),
@@ -1092,6 +1143,29 @@ export const sopProvider: SopDataProvider = {
     }
   },
 
+  async getNodeTestPlan(runtime, instanceId, nodeId): Promise<NodeTestPlan | null> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/test-plan`;
+    const response = await fetch(url);
+    if (response.status === 404) return null;
+    const text = await response.text();
+    if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 200)}`);
+    try {
+      return mapNodeTestPlan(JSON.parse(text) as Record<string, unknown>);
+    } catch {
+      return null;
+    }
+  },
+
+  async runNodePreflight(runtime, instanceId, nodeId, input: NodePreflightInput): Promise<NodeTestRunResult> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/tests`;
+    const raw = await postJsonResult<Record<string, unknown>>(url, {
+      input_source: input.inputSource || "generated-fixture",
+      pipeline_id: input.pipelineId || "",
+      manual_inputs: input.manualInputs || {},
+    });
+    return mapNodeTestRunResult(raw, nodeId, String(raw.pipeline_id || raw.test_id || ""));
+  },
+
   async triggerNodeTest(runtime, instanceId, nodeId, input: NodeTestInput): Promise<NodeTestResult> {
     const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/actions/trigger`;
     const body = {
@@ -1121,16 +1195,7 @@ export const sopProvider: SopDataProvider = {
   async getNodeTestResult(runtime, instanceId, nodeId, pipelineId): Promise<NodeTestRunResult> {
     const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}/test-result/${encodeURIComponent(pipelineId)}`;
     const raw = await requestJson<Record<string, unknown>>(url);
-    return {
-      pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : pipelineId,
-      nodeId: raw.node_id ? String(raw.node_id) : nodeId,
-      status: raw.status ? String(raw.status) : undefined,
-      pending: Boolean(raw.pending),
-      startedAt: raw.started_at ? String(raw.started_at) : undefined,
-      finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
-      reason: raw.reason ? String(raw.reason) : undefined,
-      detail: (raw.detail as Record<string, unknown>) || {},
-    };
+    return mapNodeTestRunResult(raw, nodeId, pipelineId);
   },
 
   async listNodes(runtime, instanceId) {

@@ -60,7 +60,9 @@ import type {
   NodeModuleDetail,
   NodeRegistryItem,
   NodeContract,
-  NodeTestResult,
+  NodeTestPlan,
+  NodeTestPlanInputState,
+  NodeTestRunResult,
   Run,
   RunNodeState,
   RuntimeInheritanceItem,
@@ -605,11 +607,47 @@ function NodeDepBadges({ contract }: { contract?: NodeContract | null }) {
   );
 }
 
-/** Self-contained single-node test surface, mounted in BOTH the asset center
- *  node panel and a Run's node panel. Reads the engine contract for dependency
- *  badges + guards, and launches an isolated --test run via the SPI trigger. */
+/** Self-contained node validation surface. Runtime-management nodes may still
+ * have engine contracts, but business nodes use the generic preflight plan. */
 function isSecretField(name: string): boolean {
   return /key|token|secret|password|private/i.test(name);
+}
+
+function planFromResult(result: NodeTestRunResult | null): NodeTestPlan | null {
+  if (!result?.detail) return null;
+  const detail = result.detail as Record<string, unknown>;
+  if (!detail.node_id && !detail.nodeId) return null;
+  return {
+    sopId: detail.sop_id ? String(detail.sop_id) : undefined,
+    workflowId: detail.workflow_id ? String(detail.workflow_id) : undefined,
+    instanceId: detail.instance_id ? String(detail.instance_id) : undefined,
+    nodeId: String(detail.node_id || detail.nodeId || ""),
+    nodeTitle: detail.node_title ? String(detail.node_title) : undefined,
+    mode: detail.mode ? String(detail.mode) : undefined,
+    inputSource: detail.input_source as NodeTestPlan["inputSource"],
+    baseRunId: detail.base_run_id ? String(detail.base_run_id) : undefined,
+    requiredInputs: (detail.required_inputs as NodeTestPlanInputState[]) || [],
+    optionalInputs: (detail.optional_inputs as NodeTestPlanInputState[]) || [],
+    resolvedInputs: (detail.resolved_inputs as NodeTestPlanInputState[]) || [],
+    missingInputs: (detail.missing_inputs as NodeTestPlanInputState[]) || [],
+    upstreamNodes: (detail.upstream_nodes as Array<Record<string, unknown>>) || [],
+    availableExistingRuns: (detail.available_existing_runs as Array<Record<string, unknown>>) || [],
+    sideEffects: (detail.side_effects as Record<string, unknown>) || {},
+    status: detail.status ? String(detail.status) : result.status,
+  };
+}
+
+function renderInputRows(items: NodeTestPlanInputState[] | undefined, empty: string) {
+  if (!items?.length) return <div className="node-test-pre muted">{empty}</div>;
+  return (
+    <div className="node-test-detail">
+      {items.map((item) => (
+        <span key={`${item.name}-${item.source || ""}`} className={`kv ${item.resolved ? "good" : "bad"}`}>
+          {item.name}: {item.resolved ? String(item.value ?? "").slice(0, 80) : item.reason || "missing"}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runId }: {
@@ -621,12 +659,10 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
   runs: Run[];
   runId?: string;
 }) {
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
-  const [seedRunId, setSeedRunId] = useState("");
-  const [confirmMutating, setConfirmMutating] = useState(false);
-  const [dryRun, setDryRun] = useState(false);
-  const [result, setResult] = useState<NodeTestResult | null>(null);
-  const [testPipelineId, setTestPipelineId] = useState("");
+  const [inputSource, setInputSource] = useState<NodeTestPlan["inputSource"]>("generated-fixture");
+  const [seedRunId, setSeedRunId] = useState(runId || "");
+  const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
+  const [preflight, setPreflight] = useState<NodeTestRunResult | null>(null);
   const [error, setError] = useState("");
 
   const contractQuery = useQuery({
@@ -636,130 +672,112 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
   });
   const contract = contractQuery.data;
 
-  const testMutation = useMutation({
-    mutationFn: () => {
-      const overrides: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(fieldValues)) {
-        if (v.trim()) overrides[k] = v.trim();
-      }
-      return provider.triggerNodeTest(runtime!, instanceId, nodeId, {
-        requestOverrides: overrides,
-        seedFromRunId: seedRunId || undefined,
-        fromRunId: runId || undefined,
-        confirmMutating,
-        dryRun,
-      });
-    },
+  const planQuery = useQuery({
+    queryKey: queryKeys.nodeTestPlan(mode, runtime, instanceId, nodeId),
+    queryFn: () => provider.getNodeTestPlan(runtime!, instanceId, nodeId),
+    enabled: Boolean(runtime && instanceId && nodeId),
+  });
+
+  const preflightMutation = useMutation({
+    mutationFn: () => provider.runNodePreflight(runtime!, instanceId, nodeId, {
+      inputSource: inputSource || "generated-fixture",
+      pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
+      manualInputs,
+    }),
     onSuccess: (r) => {
-      setResult(r);
+      setPreflight(r);
       setError("");
-      setTestPipelineId(r.status === "triggered" && r.pipelineId ? r.pipelineId : "");
     },
-    onError: (e: unknown) => { setError(e instanceof Error ? e.message : String(e)); setTestPipelineId(""); },
+    onError: (e: unknown) => { setError(e instanceof Error ? e.message : String(e)); },
   });
 
-  // Poll the isolated test's outcome until it reaches a terminal status.
-  const testResultQuery = useQuery({
-    queryKey: queryKeys.nodeTestResult(mode, runtime, instanceId, nodeId, testPipelineId),
-    queryFn: () => provider.getNodeTestResult(runtime!, instanceId, nodeId, testPipelineId),
-    enabled: Boolean(runtime && instanceId && testPipelineId),
-    refetchInterval: (query) => {
-      const s = query.state.data?.status;
-      return !s || s === "running" ? 1500 : false;
-    },
-  });
-  const testRun = testResultQuery.data;
+  if (contractQuery.isLoading || planQuery.isLoading) return <div className="node-test-panel muted">加载节点验证计划…</div>;
 
-  if (contractQuery.isLoading) return <div className="node-test-panel muted">加载节点契约…</div>;
-  if (!contract) return <div className="node-test-panel muted">该节点没有引擎契约，暂不支持独立测试。</div>;
-
-  const isMutating = contract.sideEffect === "mutating";
-  const needsSeed = contract.depClass === "artifact_dependent";
-  const requestInputs = contract.requestInputs || [];
-  // confirm is only required for a REAL run of a mutating node (dry-run is exempt).
-  const needsConfirm = isMutating && !dryRun;
-  const blockedByConfirm = needsConfirm && !confirmMutating;
-  const blockedBySeed = needsSeed && !seedRunId;
+  const resultPlan = planFromResult(preflight);
+  const plan = resultPlan || planQuery.data;
+  if (!plan) return <div className="node-test-panel muted">该节点暂未暴露验证计划。</div>;
+  const missingCount = plan.missingInputs?.length || 0;
+  const resolvedCount = plan.resolvedInputs?.length || 0;
+  const availableRuns = plan.availableExistingRuns || [];
+  const sideEffects = plan.sideEffects || {};
+  const requiredInputs = plan.requiredInputs || [];
 
   return (
     <div className="node-test-panel">
       <NodeDepBadges contract={contract} />
-      {contract.statePreconditions && contract.statePreconditions.length ? (
-        <div className="node-test-pre">前置节点：{contract.statePreconditions.map((p) => p.node).join("、")}</div>
-      ) : null}
-      {contract.artifactDeps && contract.artifactDeps.length ? (
-        <div className="node-test-pre">回读产物：{contract.artifactDeps.map((a) => a.file).join("、")}</div>
-      ) : null}
-      {runId ? (
-        <div className="node-test-pre">基于本 Run 的请求执行（目标机 / SSH 凭据沿用 <code>{runId}</code>）</div>
+      <div className="node-test-badges">
+        <span className={`pill ${missingCount ? "dep-artifact_dependent" : "ok"}`}>
+          {missingCount ? `${missingCount} missing input` : "preflight ready"}
+        </span>
+        <span className="pill">resolved {resolvedCount}</span>
+        {sideEffects.external_api ? <span className="pill side-mutating">external API</span> : null}
+        {sideEffects.telegram ? <span className="pill side-mutating">TG possible</span> : null}
+        {sideEffects.real_execution_enabled === false ? <span className="pill side-read_only">dry-run only</span> : null}
+      </div>
+      {plan.upstreamNodes && plan.upstreamNodes.length ? (
+        <div className="node-test-pre">
+          上游依赖：{plan.upstreamNodes.map((item) => `${String(item.node_id || item.nodeId || "")}.${String(item.output || "")}`).join("、")}
+        </div>
       ) : null}
       <div className="node-test-form">
-        {requestInputs.length ? requestInputs.map((field) => (
-          <label key={field}>{field}
-            <input
-              type={isSecretField(field) ? "password" : "text"}
-              value={fieldValues[field] || ""}
-              onChange={(e) => setFieldValues((prev) => ({ ...prev, [field]: e.target.value }))}
-              placeholder={isSecretField(field) ? "留空 = 沿用当前配置；填写 = 覆盖本次" : "留空 = 沿用当前配置"}
-              autoComplete="off"
-            />
-          </label>
-        )) : (
-          <div className="node-test-pre muted">该节点无需额外入参（沿用当前配置 / 本 Run 请求）。</div>
-        )}
-        {needsSeed ? (
-          <label>Seed 来源 Run
+        <label>Input Source
+          <select value={inputSource || "generated-fixture"} onChange={(e) => setInputSource(e.target.value as NodeTestPlan["inputSource"])}>
+            <option value="generated-fixture">Generated fixture</option>
+            <option value="existing-run">Existing run</option>
+            <option value="manual">Manual input</option>
+            <option value="deepseek-mock">DeepSeek mock</option>
+          </select>
+        </label>
+        {inputSource === "existing-run" ? (
+          <label>Existing Run
             <select value={seedRunId} onChange={(e) => setSeedRunId(e.target.value)}>
-              <option value="">选择历史 Run 作为产物来源</option>
-              {runs.map((r) => (
-                <option key={r.pipelineId} value={r.pipelineId}>{r.pipelineId}</option>
+              <option value="">选择可复用的历史 Run</option>
+              {[...runs.map((r) => ({ pipeline_id: r.pipelineId, status: r.status })), ...availableRuns]
+                .filter((run, index, all) => all.findIndex((item) => String(item.pipeline_id) === String(run.pipeline_id)) === index)
+                .map((r) => (
+                <option key={String(r.pipeline_id)} value={String(r.pipeline_id)}>
+                  {String(r.pipeline_id)}{r.status ? ` · ${String(r.status)}` : ""}
+                </option>
               ))}
             </select>
           </label>
         ) : null}
-        <label className="inline">
-          <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} /> dry-run 演练（不真正改动目标机）
-        </label>
-        {needsConfirm ? (
-          <label className="inline danger">
-            <input type="checkbox" checked={confirmMutating} onChange={(e) => setConfirmMutating(e.target.checked)} />
-            确认：真实执行，该节点会改动目标机
-          </label>
+        {inputSource === "manual" ? (
+          requiredInputs.map((field) => (
+            <label key={field.name}>{field.name}
+              <input
+                type={isSecretField(field.name) ? "password" : "text"}
+                value={manualInputs[field.name] || ""}
+                onChange={(e) => setManualInputs((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                placeholder={field.source || "手工输入测试值"}
+                autoComplete="off"
+              />
+            </label>
+          ))
         ) : null}
       </div>
       <button
         className="btn primary"
-        disabled={testMutation.isPending || blockedByConfirm || blockedBySeed}
-        onClick={() => testMutation.mutate()}
+        disabled={preflightMutation.isPending || (inputSource === "existing-run" && !seedRunId)}
+        onClick={() => preflightMutation.mutate()}
       >
-        <Play size={14} /> {dryRun ? "演练此节点" : "执行此节点"}
+        <Play size={14} /> Run Preflight
       </button>
-      {blockedByConfirm ? <span className="node-test-hint">真实执行 mutating 节点前需勾选确认（或改用 dry-run 演练）</span> : null}
-      {blockedBySeed ? <span className="node-test-hint">需选择 seed 来源 Run</span> : null}
-      {result && result.status !== "triggered" ? (
-        <div className="node-test-result warn">未启动：{result.reason || result.status}</div>
+      {inputSource === "existing-run" && !seedRunId ? <span className="node-test-hint">选择历史 Run 后再验证上游输出。</span> : null}
+      <div className="node-test-pre">Required Inputs</div>
+      {renderInputRows(plan.requiredInputs, "该节点没有声明必需输入。")}
+      {plan.optionalInputs?.length ? (
+        <>
+          <div className="node-test-pre">Optional Inputs</div>
+          {renderInputRows(plan.optionalInputs, "没有 optional input。")}
+        </>
       ) : null}
-      {testPipelineId ? (
-        <div className={`node-test-result ${testRun?.status === "done" ? "ok" : testRun?.status && testRun.status !== "running" ? "err" : "warn"}`}>
+      {preflight ? (
+        <div className={`node-test-result ${preflight.status === "done" ? "ok" : preflight.status === "needs_input" ? "warn" : "err"}`}>
           <div>
-            隔离测试 <code>{testPipelineId}</code> ·{" "}
-            {!testRun || testRun.status === "running"
-              ? "执行中…"
-              : <strong>{testRun.status}</strong>}
+            Preflight <code>{preflight.testId || preflight.pipelineId}</code> · <strong>{preflight.status}</strong>
           </div>
-          {testRun && testRun.status && testRun.status !== "running" ? (
-            <div className="node-test-detail">
-              {Object.entries(testRun.detail || {})
-                .filter(([k]) => ["ok", "ssh_ok", "permission_ok", "disk_ok", "http_status", "accepted", "target_url", "route"].includes(k))
-                .map(([k, v]) => (
-                  <span key={k} className={`kv ${v === true ? "good" : v === false ? "bad" : ""}`}>{k}: {String(v)}</span>
-                ))}
-              {typeof testRun.detail?.stdout === "string" && testRun.detail.stdout ? (
-                <pre className="node-test-stdout">{String(testRun.detail.stdout).slice(0, 600)}</pre>
-              ) : null}
-              {testRun.reason ? <div className="node-test-reason">原因：{testRun.reason}</div> : null}
-            </div>
-          ) : null}
+          {preflight.reason ? <div className="node-test-reason">原因：{preflight.reason}</div> : null}
         </div>
       ) : null}
       {error ? <div className="node-test-result err">{error}</div> : null}

@@ -441,6 +441,44 @@ export interface NodeTestInput {
   dryRun?: boolean;
 }
 
+export type NodeTestInputSource = "existing-run" | "generated-fixture" | "manual" | "deepseek-mock";
+
+export interface NodeTestPlanInputState {
+  name: string;
+  source?: string;
+  required?: boolean;
+  resolved?: boolean;
+  value?: unknown;
+  provenance?: string;
+  reason?: string;
+}
+
+export interface NodeTestPlan {
+  sopId?: string;
+  workflowId?: string;
+  instanceId?: string;
+  nodeId: string;
+  nodeTitle?: string;
+  mode?: string;
+  inputSource?: NodeTestInputSource;
+  baseRunId?: string;
+  requiredInputs?: NodeTestPlanInputState[];
+  optionalInputs?: NodeTestPlanInputState[];
+  resolvedInputs?: NodeTestPlanInputState[];
+  missingInputs?: NodeTestPlanInputState[];
+  upstreamNodes?: Array<Record<string, unknown>>;
+  availableExistingRuns?: Array<Record<string, unknown>>;
+  sideEffects?: Record<string, unknown>;
+  actions?: Record<string, unknown>;
+  status?: string;
+}
+
+export interface NodePreflightInput {
+  inputSource?: NodeTestInputSource;
+  pipelineId?: string;
+  manualInputs?: Record<string, unknown>;
+}
+
 export interface NodeTestResult {
   status: string;
   mode?: string;
@@ -456,8 +494,10 @@ export interface NodeTestResult {
 /** Polled outcome of an isolated single-node test run (nodetest namespace). */
 export interface NodeTestRunResult {
   pipelineId?: string;
+  testId?: string;
   nodeId?: string;
   status?: string;
+  mode?: string;
   pending?: boolean;
   startedAt?: string;
   finishedAt?: string;
@@ -587,6 +627,8 @@ export interface SopDataProvider {
   getNodeLog(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<NodeLog>;
   getNodeConfig(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeConfig>;
   getNodeContract(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeContract | null>;
+  getNodeTestPlan(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeTestPlan | null>;
+  runNodePreflight(runtime: Runtime, instanceId: string, nodeId: string, input: NodePreflightInput): Promise<NodeTestRunResult>;
   triggerNodeTest(runtime: Runtime, instanceId: string, nodeId: string, input: NodeTestInput): Promise<NodeTestResult>;
   getNodeTestResult(runtime: Runtime, instanceId: string, nodeId: string, pipelineId: string): Promise<NodeTestRunResult>;
   listNodes(runtime: Runtime, instanceId: string): Promise<NodeRegistryItem[]>;

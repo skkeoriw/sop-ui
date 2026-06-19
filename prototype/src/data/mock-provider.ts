@@ -7,7 +7,9 @@ import type {
   InstanceList,
   NodeConfig,
   NodeContract,
+  NodePreflightInput,
   NodeTestInput,
+  NodeTestPlan,
   NodeTestResult,
   NodeTestRunResult,
   NodeDraft,
@@ -526,6 +528,56 @@ export const mockProvider: SopDataProvider = {
       nodeId,
       pipelineId: `nodetest-${nodeId}-MOCK`,
       namespace: "nodetest",
+    };
+  },
+
+  async getNodeTestPlan(_target, instanceId, nodeId): Promise<NodeTestPlan> {
+    await delay();
+    const cfg = nodeConfigFromStage(nodeId);
+    const requiredInputs = Object.entries(cfg.inputs || {}).map(([name, spec]) => ({
+      name,
+      source: String((spec as Record<string, unknown>).from || ""),
+      required: true,
+      resolved: name === "source_url",
+      value: name === "source_url" ? "https://www.youtube.com/watch?v=dQw4w9WgXcQ" : undefined,
+      provenance: name === "source_url" ? "generated-fixture" : undefined,
+      reason: name === "source_url" ? undefined : "mock input missing",
+    }));
+    return {
+      sopId: instanceId,
+      workflowId: "youtube-research-wiki",
+      instanceId,
+      nodeId,
+      nodeTitle: cfg.title,
+      mode: "preflight",
+      inputSource: "generated-fixture",
+      requiredInputs,
+      optionalInputs: [],
+      resolvedInputs: requiredInputs.filter((item) => item.resolved),
+      missingInputs: requiredInputs.filter((item) => !item.resolved),
+      upstreamNodes: (cfg.needs || []).map((node) => ({ node_id: node })),
+      availableExistingRuns: baseRuns.slice(0, 3).map((run) => ({ pipeline_id: run.pipelineId, status: "done", satisfies_upstream: true })),
+      sideEffects: { writes_workspace: true, git_write: true, telegram: true, external_api: true, real_execution_enabled: false },
+      status: requiredInputs.some((item) => !item.resolved) ? "needs_input" : "ready",
+    };
+  },
+
+  async runNodePreflight(_target, _instanceId, nodeId, input: NodePreflightInput): Promise<NodeTestRunResult> {
+    await delay();
+    return {
+      pipelineId: `node-test-${nodeId}-MOCK`,
+      testId: `node-test-${nodeId}-MOCK`,
+      nodeId,
+      status: input.inputSource === "manual" ? "needs_input" : "done",
+      mode: "preflight",
+      pending: false,
+      detail: {
+        node_id: nodeId,
+        input_source: input.inputSource || "generated-fixture",
+        missing_inputs: input.inputSource === "manual" ? [{ name: "source_url" }] : [],
+        resolved_inputs: input.inputSource === "manual" ? [] : [{ name: "source_url", value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" }],
+        side_effects: { writes_workspace: true, git_write: true, telegram: true, external_api: true },
+      },
     };
   },
 
