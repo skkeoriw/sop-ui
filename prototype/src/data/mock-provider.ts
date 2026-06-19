@@ -19,6 +19,9 @@ import type {
   NodeModule,
   NodeModuleDetail,
   NodeRegistryItem,
+  NodeRunCreateInput,
+  NodeRunEvent,
+  NodeRunResult,
   Run,
   RuntimeManagementConfigSaveInput,
   RuntimeInheritancePreview,
@@ -308,6 +311,75 @@ function mockArtifacts(nodeId = "wiki-build"): Artifact[] {
     { id: `${nodeId}-report`, producer: nodeId, output: "report", type: "research.report", format: "markdown", path: `raw/pipeline-runs/mock/artifacts/${nodeId}-report.md`, title: `${nodeId} report.md`, size: 4096, mimeType: "text/markdown", tags: ["run-scoped"], resolution: "recorded", preview: "# 核心摘要\n当前 Run 的确认产物。" },
     { id: `${nodeId}-index`, producer: nodeId, output: "index", type: "wiki.page", format: "markdown", path: "index.md", title: "Knowledge Map", size: 8192, mimeType: "text/markdown", tags: ["wiki"], resolution: "recorded", preview: "# Knowledge Map\n- 34 pages\n- 8 clusters" },
   ];
+}
+
+function mockNodeRunEvents(nodeRunId: string, nodeId: string): NodeRunEvent[] {
+  const now = new Date().toISOString();
+  return [
+    "create-run",
+    "load-definition",
+    "resolve-context",
+    "resolve-inputs",
+    "resolve-config",
+    "probe-capabilities",
+    "build-execution-plan",
+    "execute-or-dry-run",
+    "validate-outputs",
+    "persist-artifacts",
+  ].map((stepId, index) => ({
+    sequence: index + 1,
+    event: index === 7 || index === 8 ? "node_run.step.skipped" : "node_run.step.done",
+    nodeRunId,
+    nodeId,
+    stepId,
+    ts: now,
+    data: { summary: `${stepId} mock event` },
+  }));
+}
+
+function mockNodeRun(instanceId: string, workflowId: string, nodeId: string, nodeRunId: string, mode: string = "preflight", inputSource: string = "generated-fixture"): NodeRunResult {
+  const now = new Date().toISOString();
+  const steps = [
+    ["create-run", "Create node run workspace", "done", "Mock node run workspace allocated."],
+    ["load-definition", "Load node definition", "done", `Loaded ${nodeId}.`],
+    ["resolve-context", "Resolve Runtime / Instance / Workflow context", "done", `${instanceId} · ${workflowId}`],
+    ["resolve-inputs", "Resolve node inputs", "done", "1 resolved, 0 missing."],
+    ["resolve-config", "Resolve execution config", "done", "Runtime, Instance and capability config resolved."],
+    ["probe-capabilities", "Probe attached capabilities", mode === "probe" ? "done" : "skipped", "Probe is explicit in mock mode."],
+    ["build-execution-plan", "Build node execution plan", "done", `Prepared ${mode} execution plan.`],
+    ["execute-or-dry-run", "Execute or dry-run node", mode === "real-node" ? "blocked" : "skipped", "No business node was executed in mock mode."],
+    ["validate-outputs", "Validate declared outputs", "skipped", "Output validation is informational only."],
+    ["persist-artifacts", "Persist node run artifacts", "done", "Node Run diagnostic result recorded."],
+  ].map(([id, title, status, summary]) => ({ id, title, status, summary }));
+  return {
+    nodeRunId,
+    pipelineId: nodeRunId,
+    runtimeId: "mock-runtime",
+    instanceId,
+    workflowId,
+    nodeId,
+    nodeTitle: stages.find((item) => item.id === nodeId)?.title || nodeId,
+    status: mode === "real-node" ? "blocked" : "done",
+    mode,
+    inputSource,
+    pending: false,
+    startedAt: now,
+    finishedAt: now,
+    steps,
+    events: mockNodeRunEvents(nodeRunId, nodeId),
+    artifacts: [{ id: "node-run-result", producer: nodeId, output: "result", type: "node-run.result", format: "json", path: `raw/node-runs/${nodeRunId}/result.json`, title: "Node Run result", size: 0, mimeType: "application/json", tags: ["node-run"], resolution: "recorded" }],
+    detail: {
+      resolved_inputs: [{ name: "source_url", value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", provenance: inputSource }],
+      missing_inputs: [],
+      resolved_config: {
+        telegram: { status: "ready", token: { key: "YOUTUBE_WIKI_TG_TOKEN", source: "runtime-env", present: true, masked_value: "tok***ret" }, chat_id: { source: "instance-sop", present: true, masked_value: "779***193" } },
+        youtube_research_worker: { status: "ready", base_url: { value: "https://worker.example" }, timeout: { value: 1200, unit: "seconds" }, poll_interval: { value: 10, unit: "seconds" } },
+        github: { status: "ready" },
+      },
+      capability_probes: { telegram: { status: "ready" }, github: { status: "ready" }, youtube_research_worker: { status: "ready" } },
+      fix_suggestions: [],
+    },
+  };
 }
 
 export const mockProvider: SopDataProvider = {
@@ -643,6 +715,26 @@ export const mockProvider: SopDataProvider = {
       pending: false,
       detail: { ok: true, ssh_ok: true, disk_ok: true, stdout: "mock-host\nmock-user" },
     };
+  },
+
+  async listNodeRuns(_target, instanceId, workflowId, nodeId): Promise<NodeRunResult[]> {
+    await delay();
+    return [mockNodeRun(instanceId, workflowId, nodeId, `node-run-${nodeId}-MOCK`)];
+  },
+
+  async createNodeRun(_target, instanceId, workflowId, nodeId, input: NodeRunCreateInput): Promise<NodeRunResult> {
+    await delay();
+    return mockNodeRun(instanceId, workflowId, nodeId, `node-run-${nodeId}-${Date.now()}`, input.mode || "preflight", input.inputSource || "generated-fixture");
+  },
+
+  async getNodeRun(_target, instanceId, workflowId, nodeId, nodeRunId): Promise<NodeRunResult> {
+    await delay();
+    return mockNodeRun(instanceId, workflowId, nodeId, nodeRunId);
+  },
+
+  async getNodeRunEvents(_target, _instanceId, _workflowId, nodeId, nodeRunId): Promise<NodeRunEvent[]> {
+    await delay();
+    return mockNodeRunEvents(nodeRunId, nodeId);
   },
 
   async listNodes(target): Promise<NodeRegistryItem[]> {

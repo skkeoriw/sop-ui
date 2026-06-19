@@ -16,6 +16,9 @@ import type {
   NodeRegistryItem,
   NodeClassification,
   NodeContract,
+  NodeRunCreateInput,
+  NodeRunEvent,
+  NodeRunResult,
   NodePreflightInput,
   NodeTestInput,
   NodeTestPlan,
@@ -643,6 +646,41 @@ function mapNodeTestRunResult(raw: Record<string, unknown>, nodeId: string, fall
   };
 }
 
+function mapNodeRunEvent(raw: Record<string, unknown>): NodeRunEvent {
+  return {
+    sequence: typeof raw.sequence === "number" ? raw.sequence : undefined,
+    event: String(raw.event || ""),
+    nodeRunId: raw.node_run_id ? String(raw.node_run_id) : undefined,
+    nodeId: raw.node_id ? String(raw.node_id) : undefined,
+    stepId: raw.step_id ? String(raw.step_id) : undefined,
+    ts: raw.ts ? String(raw.ts) : undefined,
+    data: (raw.data as Record<string, unknown>) || {},
+  };
+}
+
+function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallbackId = ""): NodeRunResult {
+  return {
+    nodeRunId: String(raw.node_run_id || raw.nodeRunId || raw.pipeline_id || fallbackId || ""),
+    pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : undefined,
+    runtimeId: raw.runtime_id ? String(raw.runtime_id) : undefined,
+    instanceId: raw.instance_id ? String(raw.instance_id) : undefined,
+    workflowId: raw.workflow_id ? String(raw.workflow_id) : undefined,
+    nodeId: raw.node_id ? String(raw.node_id) : nodeId,
+    nodeTitle: raw.node_title ? String(raw.node_title) : undefined,
+    status: raw.status ? String(raw.status) : undefined,
+    mode: raw.mode ? String(raw.mode) : undefined,
+    inputSource: raw.input_source ? String(raw.input_source) : undefined,
+    pending: Boolean(raw.pending),
+    startedAt: raw.started_at ? String(raw.started_at) : undefined,
+    finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
+    reason: raw.reason ? String(raw.reason) : undefined,
+    detail: (raw.detail as Record<string, unknown>) || {},
+    steps: ((raw.steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
+    events: ((raw.events as Array<Record<string, unknown>>) || []).map(mapNodeRunEvent),
+    artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+  };
+}
+
 function mapNodeDraft(raw: Record<string, unknown>): NodeDraft {
   return {
     draftId: String(raw.draft_id || raw.draftId || ""),
@@ -1233,6 +1271,36 @@ export const sopProvider: SopDataProvider = {
       const raw = await requestJson<Record<string, unknown>>(legacyUrl);
       return mapNodeTestRunResult(raw, nodeId, pipelineId);
     }
+  },
+
+  async listNodeRuns(runtime, instanceId, workflowId, nodeId): Promise<NodeRunResult[]> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/runs`;
+    const raw = await requestJson<{ runs?: Array<Record<string, unknown>> }>(url);
+    return (raw.runs || []).map((item) => mapNodeRunResult(item, nodeId, String(item.node_run_id || item.pipeline_id || "")));
+  },
+
+  async createNodeRun(runtime, instanceId, workflowId, nodeId, input: NodeRunCreateInput): Promise<NodeRunResult> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/runs`;
+    const raw = await postJsonResult<Record<string, unknown>>(url, {
+      mode: input.mode || "preflight",
+      input_source: input.inputSource || "generated-fixture",
+      pipeline_id: input.pipelineId || "",
+      manual_inputs: input.manualInputs || {},
+      overrides: input.overrides || {},
+    });
+    return mapNodeRunResult(raw, nodeId, String(raw.node_run_id || raw.pipeline_id || ""));
+  },
+
+  async getNodeRun(runtime, instanceId, workflowId, nodeId, nodeRunId): Promise<NodeRunResult> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/runs/${encodeURIComponent(nodeRunId)}`;
+    const raw = await requestJson<Record<string, unknown>>(url);
+    return mapNodeRunResult(raw, nodeId, nodeRunId);
+  },
+
+  async getNodeRunEvents(runtime, instanceId, workflowId, nodeId, nodeRunId): Promise<NodeRunEvent[]> {
+    const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/runs/${encodeURIComponent(nodeRunId)}/events`;
+    const raw = await requestJson<{ events?: Array<Record<string, unknown>> }>(url);
+    return (raw.events || []).map(mapNodeRunEvent);
   },
 
   async listNodes(runtime, instanceId) {

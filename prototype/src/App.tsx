@@ -60,6 +60,10 @@ import type {
   NodeModuleDetail,
   NodeRegistryItem,
   NodeContract,
+  NodeRunCreateInput,
+  NodeRunEvent,
+  NodeRunMode,
+  NodeRunResult,
   NodeTestPlan,
   NodeTestPlanInputState,
   NodeTestRunResult,
@@ -75,7 +79,7 @@ import type {
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
 type AppView = "runtime" | "instance" | "workflows" | "workflow" | "nodes" | "machines" | "settings";
-type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string };
+type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string; nodeRunId?: string };
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
 type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
   pipelineId: string;
@@ -284,12 +288,14 @@ function readRoute(): AppRoute {
       const executionIndex = parts.indexOf("executions");
       const runsIndex = parts.indexOf("runs");
       const nodeIndex = parts.indexOf("nodes");
+      const isNodeRoute = nodeIndex >= 0;
       return {
-        view: nodeIndex >= 0 ? "nodes" : "workflow",
+        view: isNodeRoute ? "nodes" : "workflow",
         ...empty,
-        pipelineId: executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 1] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 1] || "") : "",
-        nodeId: nodeIndex >= 0 ? decodeURIComponent(parts[nodeIndex + 1] || "") : executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 2] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 2] || "") : "",
+        pipelineId: isNodeRoute ? "" : executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 1] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 1] || "") : "",
+        nodeId: isNodeRoute ? decodeURIComponent(parts[nodeIndex + 1] || "") : executionIndex >= 0 ? decodeURIComponent(parts[executionIndex + 2] || "") : runsIndex >= 0 ? decodeURIComponent(parts[runsIndex + 2] || "") : "",
         moduleId: nodeIndex >= 0 && parts[nodeIndex + 2] === "modules" ? decodeURIComponent(parts[nodeIndex + 3] || "") : "",
+        nodeRunId: isNodeRoute && parts[nodeIndex + 2] === "runs" ? decodeURIComponent(parts[nodeIndex + 3] || "") : "",
       };
     }
     if (parts[2] === "instances" && parts[4] === "workflow") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[6] || ""), nodeId: decodeURIComponent(parts[7] || "") };
@@ -307,7 +313,13 @@ function readRoute(): AppRoute {
     return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[offset] || ""), nodeId: decodeURIComponent(parts[offset + 1] || "") };
   }
   if (parts[0] === "nodes") {
-    return { view: "nodes", ...empty, nodeId: decodeURIComponent(parts[1] || ""), moduleId: parts[2] === "modules" ? decodeURIComponent(parts[3] || "") : "" };
+    return {
+      view: "nodes",
+      ...empty,
+      nodeId: decodeURIComponent(parts[1] || ""),
+      moduleId: parts[2] === "modules" ? decodeURIComponent(parts[3] || "") : "",
+      nodeRunId: parts[2] === "runs" ? decodeURIComponent(parts[3] || "") : "",
+    };
   }
   if (parts[0] === "artifacts") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), artifactId: decodeURIComponent(parts[2] || "") };
   if (parts[0] === "machines") return { view: "machines", ...empty };
@@ -897,6 +909,269 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
         {historyQuery.isLoading ? <div className="node-test-pre muted">加载测试历史…</div> : null}
       </div>
       {error ? <div className="node-test-result err">{error}</div> : null}
+    </div>
+  );
+}
+
+function nodeRunTone(status?: string) {
+  if (status === "done" || status === "ready") return "ok";
+  if (status === "warning" || status === "needs_input" || status === "skipped" || status === "blocked") return "warn";
+  if (status === "failed" || status === "error") return "err";
+  return "";
+}
+
+function detailList(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
+}
+
+function detailRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function NodeRunFlow({ result }: { result: NodeRunResult | undefined }) {
+  const steps = result?.steps || [];
+  if (!steps.length) return <div className="node-run-empty">创建一次 Node Run 后展示节点级 flow。</div>;
+  return (
+    <div className="node-run-flow" aria-label="Node run flow">
+      {steps.map((step, index) => (
+        <div key={step.id || index} className={`node-run-step-card ${nodeRunTone(step.status)}`}>
+          <span>{index + 1}</span>
+          <strong>{step.title || step.id}</strong>
+          <small>{step.id} · {step.status}</small>
+          {step.summary ? <p>{step.summary}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
+  const detail = detailRecord(result?.detail);
+  const configs = detailRecord(detail.resolved_config);
+  const suggestions = detailList(detail.fix_suggestions);
+  return (
+    <div className="node-run-diagnosis">
+      <div className="section-title"><span>Config Sources</span><span>{Object.keys(configs).length}</span></div>
+      {Object.entries(configs).map(([key, value]) => {
+        const item = detailRecord(value);
+        return (
+          <article key={key} className={`node-run-config-card ${nodeRunTone(String(item.status || ""))}`}>
+            <div>
+              <strong>{String(item.label || key)}</strong>
+              <span className={`status-pill ${nodeRunTone(String(item.status || ""))}`}>{String(item.status || "unknown")}</span>
+            </div>
+            <code>{formatValue(item)}</code>
+          </article>
+        );
+      })}
+      {!Object.keys(configs).length ? <Empty text="还没有配置解析结果" /> : null}
+      <div className="section-title"><span>Fix Suggestions</span><span>{suggestions.length}</span></div>
+      {suggestions.map((item, index) => (
+        <article key={`${String(item.target || "fix")}-${index}`} className="node-run-fix-card">
+          <span className="status-pill waiting">{String(item.target || "fix")}</span>
+          <strong>{String(item.title || "Suggested fix")}</strong>
+          <p>{String(item.reason || "")}</p>
+          <small>{String(item.action || "")}</small>
+        </article>
+      ))}
+      {!suggestions.length ? <div className="node-run-empty">当前诊断没有给出必须修复项。</div> : null}
+    </div>
+  );
+}
+
+function NodeRunDetail({ result, events }: { result: NodeRunResult | undefined; events: NodeRunEvent[] }) {
+  if (!result) return <div className="node-run-empty">选择或创建一个 Node Run 查看详情。</div>;
+  const detail = detailRecord(result.detail);
+  const resolvedInputs = detailList(detail.resolved_inputs);
+  const missingInputs = detailList(detail.missing_inputs);
+  return (
+    <div className="node-run-detail">
+      <div className={`node-run-result-banner ${nodeRunTone(result.status)}`}>
+        <div>
+          <strong>{result.nodeRunId}</strong>
+          <span>{result.mode || "preflight"} · {result.inputSource || "generated-fixture"} · {result.status || "unknown"}</span>
+        </div>
+        {result.reason ? <p>{result.reason}</p> : null}
+      </div>
+      <NodeRunFlow result={result} />
+      <div className="node-run-detail-grid">
+        <DetailBlock title="Resolved Inputs">
+          {resolvedInputs.length ? (
+            <div className="node-test-detail">
+              {resolvedInputs.map((item) => (
+                <span key={String(item.name)} className="kv good">{String(item.name)}: {String(item.value ?? "").slice(0, 90)}</span>
+              ))}
+            </div>
+          ) : <Empty text="没有已解析输入" />}
+          {missingInputs.length ? (
+            <div className="node-test-detail">
+              {missingInputs.map((item) => (
+                <span key={String(item.name)} className="kv bad">{String(item.name)}: {String(item.reason || "missing")}</span>
+              ))}
+            </div>
+          ) : null}
+        </DetailBlock>
+        <DetailBlock title="Events">
+          <div className="node-run-events">
+            {(events.length ? events : result.events || []).slice(0, 12).map((event, index) => (
+              <div key={`${event.event}-${event.stepId || index}`} className="node-test-event">
+                <span>{event.sequence || index + 1}</span>
+                <strong>{event.event}</strong>
+                <small>{event.stepId || event.ts || ""}</small>
+              </div>
+            ))}
+            {!(events.length || result.events?.length) ? <Empty text="没有事件记录" /> : null}
+          </div>
+        </DetailBlock>
+        <DetailBlock title="Artifacts">
+          <div className="node-test-artifacts">
+            {(result.artifacts || []).map((artifact) => <code key={artifact.id || artifact.path}>{artifact.path || artifact.title}</code>)}
+            {!result.artifacts?.length ? <Empty text="没有产物记录" /> : null}
+          </div>
+        </DetailBlock>
+      </div>
+    </div>
+  );
+}
+
+function NodeRunWorkbench({
+  provider,
+  runtime,
+  instance,
+  workflowId,
+  node,
+  runs,
+  mode,
+  selectedNodeRunId,
+  onOpenNodeRun,
+}: {
+  provider: SopDataProvider;
+  runtime: Runtime | undefined;
+  instance: Instance | undefined;
+  workflowId: string;
+  node: NodeRegistryItem | undefined;
+  runs: Run[];
+  mode: DataMode;
+  selectedNodeRunId: string;
+  onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [runMode, setRunMode] = useState<NodeRunMode>("preflight");
+  const [inputSource, setInputSource] = useState<NodeRunCreateInput["inputSource"]>("generated-fixture");
+  const [seedRunId, setSeedRunId] = useState("");
+  const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
+  const [error, setError] = useState("");
+  const nodeId = node?.nodeId || "";
+  const instanceId = instance?.instanceId || "";
+
+  const historyQuery = useQuery({
+    queryKey: queryKeys.nodeRuns(mode, runtime, instanceId, workflowId, nodeId),
+    queryFn: () => provider.listNodeRuns(runtime!, instanceId, workflowId, nodeId),
+    enabled: Boolean(runtime && instanceId && workflowId && nodeId),
+  });
+  const activeNodeRunId = selectedNodeRunId || historyQuery.data?.[0]?.nodeRunId || "";
+  const detailQuery = useQuery({
+    queryKey: queryKeys.nodeRun(mode, runtime, instanceId, workflowId, nodeId, activeNodeRunId),
+    queryFn: () => provider.getNodeRun(runtime!, instanceId, workflowId, nodeId, activeNodeRunId),
+    enabled: Boolean(runtime && instanceId && workflowId && nodeId && activeNodeRunId),
+  });
+  const eventsQuery = useQuery({
+    queryKey: queryKeys.nodeRunEvents(mode, runtime, instanceId, workflowId, nodeId, activeNodeRunId),
+    queryFn: () => provider.getNodeRunEvents(runtime!, instanceId, workflowId, nodeId, activeNodeRunId),
+    enabled: Boolean(runtime && instanceId && workflowId && nodeId && activeNodeRunId),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: () => provider.createNodeRun(runtime!, instanceId, workflowId, nodeId, {
+      mode: runMode,
+      inputSource,
+      pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
+      manualInputs,
+    }),
+    onSuccess: (result) => {
+      setError("");
+      queryClient.invalidateQueries({ queryKey: queryKeys.nodeRuns(mode, runtime, instanceId, workflowId, nodeId) });
+      onOpenNodeRun(nodeId, result.nodeRunId);
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : String(e)),
+  });
+
+  if (!node || !instance || !runtime) return <div className="node-run-empty">选择 Runtime、Instance 和 Node 后才能创建 Node Run。</div>;
+  const inputFields = Object.entries(node.inputs || {});
+  const current = detailQuery.data;
+  return (
+    <div className="node-run-workbench">
+      <div className="node-run-head">
+        <div>
+          <span className="status-pill running"><Activity size={13} />Node Run</span>
+          <h2>{node.title || node.nodeId}</h2>
+          <p>{runtime.id} · {instance.instanceId} · {workflowId}</p>
+        </div>
+        <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => createMutation.mutate()}>
+          {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Run Node
+        </button>
+      </div>
+
+      <div className="node-run-controls">
+        <label>Mode
+          <select value={runMode} onChange={(event) => setRunMode(event.target.value as NodeRunMode)}>
+            <option value="preflight">Preflight</option>
+            <option value="probe">Probe capabilities</option>
+            <option value="dry-run">Dry run</option>
+            <option value="real-node">Real node</option>
+          </select>
+        </label>
+        <label>Input Source
+          <select value={inputSource || "generated-fixture"} onChange={(event) => setInputSource(event.target.value as NodeRunCreateInput["inputSource"])}>
+            <option value="generated-fixture">Generated fixture</option>
+            <option value="existing-run">Existing Workflow Run</option>
+            <option value="manual">Manual input</option>
+            <option value="deepseek-mock">DeepSeek mock</option>
+          </select>
+        </label>
+        {inputSource === "existing-run" ? (
+          <label>Workflow Run
+            <select value={seedRunId} onChange={(event) => setSeedRunId(event.target.value)}>
+              <option value="">选择历史 Workflow Run</option>
+              {runs.map((run) => <option key={run.pipelineId} value={run.pipelineId}>{run.pipelineId} · {run.status}</option>)}
+            </select>
+          </label>
+        ) : null}
+        {inputSource === "manual" ? inputFields.map(([name, spec]) => (
+          <label key={name}>{name}
+            <input
+              type={isSecretField(name) ? "password" : "text"}
+              value={manualInputs[name] || ""}
+              onChange={(event) => setManualInputs((prev) => ({ ...prev, [name]: event.target.value }))}
+              placeholder={String((spec as Record<string, unknown>)?.from || spec || "manual value")}
+              autoComplete="off"
+            />
+          </label>
+        )) : null}
+      </div>
+      {runMode === "real-node" ? <div className="node-run-warning"><AlertTriangle size={14} />Real node 目前只会生成 blocked 诊断，不会静默触发真实外部副作用。</div> : null}
+      {error ? <div className="node-test-result err">{error}</div> : null}
+
+      <div className="node-run-layout">
+        <aside className="node-run-history">
+          <div className="section-title"><span>Node Run History</span><span>{historyQuery.data?.length || 0}</span></div>
+          {(historyQuery.data || []).map((item) => (
+            <button key={item.nodeRunId} type="button" className={activeNodeRunId === item.nodeRunId ? "active" : ""} onClick={() => onOpenNodeRun(nodeId, item.nodeRunId)}>
+              <span className={`status-pill ${nodeRunTone(item.status)}`}>{item.status || "unknown"}</span>
+              <strong>{shortId(item.nodeRunId)}</strong>
+              <small>{item.mode || "preflight"} · {item.startedAt || item.finishedAt || ""}</small>
+            </button>
+          ))}
+          {historyQuery.isLoading ? <div className="node-run-empty">加载 Node Run 历史…</div> : null}
+          {!historyQuery.isLoading && !(historyQuery.data || []).length ? <div className="node-run-empty">还没有 Node Run。</div> : null}
+        </aside>
+        <section className="node-run-main">
+          {detailQuery.isLoading ? <Skeleton /> : <NodeRunDetail result={current} events={eventsQuery.data || []} />}
+        </section>
+        <aside className="node-run-side">
+          <NodeRunConfigPanel result={current} />
+        </aside>
+      </div>
     </div>
   );
 }
@@ -2220,6 +2495,18 @@ export default function App() {
     navigateTo("nodes", nodeId, moduleId);
   }
 
+  function openNodeRun(nodeId: string, nodeRunId: string) {
+    if (!nodeId || !nodeRunId) return;
+    setSelectedManagedNodeId(nodeId);
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const baseInstance = routeInstanceId(instance, instanceId);
+    const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
+    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs/${encodeURIComponent(nodeRunId)}`;
+    const nextUrl = `${nextPath}${window.location.search}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunId });
+  }
+
   function addManualEndpoint(event: FormEvent) {
     event.preventDefault();
     const endpoint = normalizeEndpoint(manualEndpoint);
@@ -2561,6 +2848,7 @@ export default function App() {
             drafts={nodeDraftsQuery.data || []}
             loading={nodesQuery.isLoading}
             selectedNodeId={selectedManagedNode?.nodeId || ""}
+            selectedNodeRunId={route.nodeRunId || ""}
             selectedNode={selectedManagedNode}
             modules={selectedNodeModules}
             selectedModule={selectedNodeModule}
@@ -2573,6 +2861,7 @@ export default function App() {
             onNodeSearch={setNodeSearch}
             onNodeFilter={setNodeFilter}
             onSelectNode={selectManagedNode}
+            onOpenNodeRun={openNodeRun}
             onSelectModule={(moduleId) => {
               setSelectedNodeModuleId(moduleId);
               if (selectedManagedNode) navigateTo("nodes", selectedManagedNode.nodeId, moduleId);
@@ -6376,12 +6665,14 @@ function NodesWorkspace({
   drafts,
   loading,
   selectedNodeId,
+  selectedNodeRunId,
   nodeSearch,
   nodeFilter,
   nodeFilters,
   onNodeSearch,
   onNodeFilter,
   onSelectNode,
+  onOpenNodeRun,
   onSelectModule,
   onOpenDraft,
 }: {
@@ -6400,12 +6691,14 @@ function NodesWorkspace({
   drafts: NodeDraft[];
   loading: boolean;
   selectedNodeId: string;
+  selectedNodeRunId: string;
   nodeSearch: string;
   nodeFilter: string;
   nodeFilters: string[];
   onNodeSearch: (value: string) => void;
   onNodeFilter: (value: string) => void;
   onSelectNode: (nodeId: string, moduleId?: string) => void;
+  onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
   onSelectModule: (moduleId: string) => void;
   onOpenDraft: () => void;
 }) {
@@ -6522,17 +6815,32 @@ function NodesWorkspace({
             </div>
           )}
           {selectedNode && instance ? (
-            <div className="node-test-strip">
-              <div className="section-title"><span>Definition Smoke Test</span><span>skill / webhook</span></div>
-              <NodeTestPanel
-                provider={provider}
-                runtime={runtime}
-                instanceId={instance.instanceId}
-                mode={mode}
-                nodeId={selectedNode.nodeId}
-                runs={runs}
-              />
-            </div>
+            <>
+              <div className="node-run-strip">
+                <NodeRunWorkbench
+                  provider={provider}
+                  runtime={runtime}
+                  instance={instance}
+                  workflowId={workflowBinding?.workflowId || instance.sopType || "workflow"}
+                  node={selectedNode}
+                  runs={runs}
+                  mode={mode}
+                  selectedNodeRunId={selectedNodeRunId}
+                  onOpenNodeRun={onOpenNodeRun}
+                />
+              </div>
+              <details className="node-test-strip legacy-node-test">
+                <summary><span>Legacy Definition Smoke Test</span><ChevronDown size={15} /></summary>
+                <NodeTestPanel
+                  provider={provider}
+                  runtime={runtime}
+                  instanceId={instance.instanceId}
+                  mode={mode}
+                  nodeId={selectedNode.nodeId}
+                  runs={runs}
+                />
+              </details>
+            </>
           ) : null}
           <div className="draft-strip">
             <div className="section-title"><span>Drafts</span><span>{drafts.length}</span></div>

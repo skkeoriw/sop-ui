@@ -526,6 +526,48 @@ export interface NodeTestRunResult {
   artifacts?: Artifact[];
 }
 
+export type NodeRunMode = "preflight" | "probe" | "dry-run" | "real-node";
+export type NodeRunInputSource = NodeTestInputSource | "artifact";
+
+export interface NodeRunCreateInput {
+  mode?: NodeRunMode;
+  inputSource?: NodeRunInputSource;
+  pipelineId?: string;
+  manualInputs?: Record<string, unknown>;
+  overrides?: Record<string, unknown>;
+}
+
+export interface NodeRunEvent {
+  sequence?: number;
+  event: string;
+  nodeRunId?: string;
+  nodeId?: string;
+  stepId?: string;
+  ts?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface NodeRunResult {
+  nodeRunId: string;
+  pipelineId?: string;
+  runtimeId?: string;
+  instanceId?: string;
+  workflowId?: string;
+  nodeId: string;
+  nodeTitle?: string;
+  status?: string;
+  mode?: NodeRunMode | string;
+  inputSource?: NodeRunInputSource | string;
+  pending?: boolean;
+  startedAt?: string;
+  finishedAt?: string;
+  reason?: string;
+  detail?: Record<string, unknown>;
+  steps?: NodeTestStep[];
+  events?: NodeRunEvent[];
+  artifacts?: Artifact[];
+}
+
 export interface NodeModule {
   id: string;
   title: string;
@@ -653,6 +695,10 @@ export interface SopDataProvider {
   triggerNodeTest(runtime: Runtime, instanceId: string, nodeId: string, input: NodeTestInput): Promise<NodeTestResult>;
   listNodeTests(runtime: Runtime, instanceId: string, nodeId: string): Promise<NodeTestRunResult[]>;
   getNodeTestResult(runtime: Runtime, instanceId: string, nodeId: string, pipelineId: string): Promise<NodeTestRunResult>;
+  listNodeRuns(runtime: Runtime, instanceId: string, workflowId: string, nodeId: string): Promise<NodeRunResult[]>;
+  createNodeRun(runtime: Runtime, instanceId: string, workflowId: string, nodeId: string, input: NodeRunCreateInput): Promise<NodeRunResult>;
+  getNodeRun(runtime: Runtime, instanceId: string, workflowId: string, nodeId: string, nodeRunId: string): Promise<NodeRunResult>;
+  getNodeRunEvents(runtime: Runtime, instanceId: string, workflowId: string, nodeId: string, nodeRunId: string): Promise<NodeRunEvent[]>;
   listNodes(runtime: Runtime, instanceId: string): Promise<NodeRegistryItem[]>;
   listNodeModules(runtime: Runtime, instanceId: string, nodeId: string, pipelineId?: string): Promise<NodeModule[]>;
   getNodeModule(runtime: Runtime, instanceId: string, nodeId: string, moduleId: string, pipelineId?: string): Promise<NodeModuleDetail>;
