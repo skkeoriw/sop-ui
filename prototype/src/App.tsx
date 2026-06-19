@@ -2051,6 +2051,7 @@ export default function App() {
     const machine = await controlPlaneProvider.getMachineSecret(machineId);
     const resolvedPrivateKey = privateKey.trim() || machine.privateKey || "";
     return {
+      machine_id: machine.id || machineId,
       ssh_command: sshCommand.trim() || machine.sshCommand,
       private_key_b64: encodeSecretB64(resolvedPrivateKey),
       ssh_password: machine.authType === "password" ? machine.password : "",
