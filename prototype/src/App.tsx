@@ -1353,9 +1353,11 @@ function useNodeRunController({
 function NodeRunStartPanel({
   controller,
   compact = false,
+  title = "Run Node",
 }: {
   controller: ReturnType<typeof useNodeRunController>;
   compact?: boolean;
+  title?: string;
 }) {
   const {
     runtime,
@@ -1380,11 +1382,11 @@ function NodeRunStartPanel({
     <section className={`node-run-start-panel ${compact ? "compact" : ""}`}>
       <div className="node-run-start-head">
         <div>
-          <strong>Run Node</strong>
+          <strong>{title}</strong>
           <span>{runtime.id} · {instance.instanceId} · {node.nodeId}</span>
         </div>
         <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => startNodeRun()}>
-          {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Start
+          {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Run Node
         </button>
       </div>
       <div className="node-run-controls">
@@ -1457,7 +1459,7 @@ function NodeRunHistoryRows({
   );
 }
 
-function NodeRunContextPanel({ controller }: { controller: ReturnType<typeof useNodeRunController> }) {
+function NodeRunContextPanel({ controller, showRaw = false }: { controller: ReturnType<typeof useNodeRunController>; showRaw?: boolean }) {
   const result = controller.current;
   const detail = detailRecord(result?.detail);
   return (
@@ -1483,10 +1485,141 @@ function NodeRunContextPanel({ controller }: { controller: ReturnType<typeof use
           status: result?.status || "no run selected",
         }} />
       </DetailBlock>
-      <DetailBlock title="Raw Detail">
+      {showRaw ? <DetailBlock title="Raw Detail">
         <code className="node-run-raw-detail">{formatValue(detail)}</code>
-      </DetailBlock>
+      </DetailBlock> : null}
     </div>
+  );
+}
+
+function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefined; events: NodeRunEvent[] }) {
+  const [tab, setTab] = useState<"events" | "inputs" | "artifacts" | "raw">("events");
+  if (!result) return <div className="node-run-empty">选择一次 Node Run 后展示事件、输入和产物。</div>;
+  const detail = detailRecord(result.detail);
+  const resolvedInputs = detailList(detail.resolved_inputs);
+  const missingInputs = detailList(detail.missing_inputs);
+  const visibleEvents = events.length ? events : result.events || [];
+  return (
+    <section className="node-run-results-panel">
+      <div className="node-run-results-tabs" role="tablist" aria-label="Node run result sections">
+        <button type="button" className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Events</button>
+        <button type="button" className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}>Inputs</button>
+        <button type="button" className={tab === "artifacts" ? "active" : ""} onClick={() => setTab("artifacts")}>Artifacts</button>
+        <button type="button" className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")}>Raw</button>
+      </div>
+      {tab === "events" ? (
+        <div className="node-run-events node-run-results-body">
+          {visibleEvents.slice(-20).map((event, index) => (
+            <div key={`${event.event}-${event.stepId || index}`} className="node-test-event">
+              <span>{event.sequence || index + 1}</span>
+              <strong>{event.event}</strong>
+              <small>{event.stepId || ""}{event.ts ? ` · ${event.ts}` : ""}</small>
+              {event.data?.summary ? <small>{String(event.data.summary)}</small> : null}
+            </div>
+          ))}
+          {!visibleEvents.length ? <Empty text="没有事件记录" /> : null}
+        </div>
+      ) : null}
+      {tab === "inputs" ? (
+        <div className="node-run-results-body">
+          <div className="node-test-detail">
+            {resolvedInputs.map((item) => (
+              <span key={String(item.name)} className="kv good">{String(item.name)}: {String(item.value ?? "").slice(0, 120)}</span>
+            ))}
+            {missingInputs.map((item) => (
+              <span key={String(item.name)} className="kv bad">{String(item.name)}: {String(item.reason || "missing")}</span>
+            ))}
+          </div>
+          {!(resolvedInputs.length || missingInputs.length) ? <Empty text="没有已解析输入" /> : null}
+        </div>
+      ) : null}
+      {tab === "artifacts" ? (
+        <div className="node-test-artifacts node-run-results-body">
+          {(result.artifacts || []).map((artifact) => <code key={artifact.id || artifact.path}>{artifact.path || artifact.title}</code>)}
+          {!result.artifacts?.length ? <Empty text="没有产物记录" /> : null}
+        </div>
+      ) : null}
+      {tab === "raw" ? (
+        <div className="node-run-results-body">
+          <code className="node-run-raw-detail">{formatValue(detail)}</code>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function NodeRunActiveStepCard({ result }: { result: NodeRunResult | undefined }) {
+  const steps = result?.steps || [];
+  const current = currentNodeRunStep(result);
+  const done = steps.filter((step) => ["done", "ok"].includes(step.status)).length;
+  const failed = steps.filter((step) => ["failed", "blocked", "needs_input"].includes(step.status)).length;
+  const progress = steps.length ? Math.round(((done + failed) / steps.length) * 100) : 0;
+  return (
+    <section className={`node-run-current-step ${nodeRunCardTone(current?.status || result?.status || "")}`}>
+      <div>
+        <span className={`status-pill ${nodeRunTone(result?.status)}`}>{result?.status || "loading"}</span>
+        <strong>{current?.title || "Waiting for node run"}</strong>
+        <p>{current?.summary || result?.reason || "Node Run workspace is loading."}</p>
+      </div>
+      <div className="node-run-progress-meter" aria-label="Node run progress">
+        <span><b style={{ width: `${Math.max(4, progress)}%` }} /></span>
+        <small>{done}/{steps.length || 0} done{failed ? ` · ${failed} failed` : ""}</small>
+      </div>
+      {current ? <code>{current.id} · {current.status}{nodeRunStepTiming(current) ? ` · ${nodeRunStepTiming(current)}` : ""}</code> : null}
+    </section>
+  );
+}
+
+function NodeDetailOverviewPanel({
+  node,
+  modules,
+  loading,
+  onSelectModule,
+}: {
+  node: NodeRegistryItem | undefined;
+  modules: NodeModule[];
+  loading: boolean;
+  onSelectModule: (moduleId: string) => void;
+}) {
+  if (loading) return <Skeleton />;
+  if (!node) return <Empty text="没有选中的 Node" />;
+  const inputs = Object.keys(node.inputs || {});
+  const outputs = Object.keys(node.outputs || {});
+  return (
+    <section className="node-detail-overview-panel">
+      <div className="node-detail-overview-hero">
+        <div>
+          <span className="status-pill done">{String(node.executor?.type || node.case || "node")}</span>
+          <h2>{node.title || node.nodeId}</h2>
+          <p>{node.description || contractSummary(node)}</p>
+        </div>
+        <span className={`status-pill ${(node.missingFields || []).length ? "waiting" : "done"}`}>{(node.missingFields || []).length ? "review" : "ready"}</span>
+      </div>
+      <div className="node-detail-overview-grid">
+        <article>
+          <strong>Contract</strong>
+          <span>{inputs.length} inputs · {outputs.length} outputs</span>
+          <code>{contractSummary(node)}</code>
+        </article>
+        <article>
+          <strong>Execution</strong>
+          <span>{String(node.executor?.type || node.case || "node")}</span>
+          <code>{String(node.executor?.skill || node.skill?.id || node.nodeId)}</code>
+        </article>
+        <article>
+          <strong>Capabilities</strong>
+          <span>Git · TG · SSE</span>
+          <code>{node.infra?.tgNotify === false ? "telegram optional/off" : "telegram enabled"}</code>
+        </article>
+      </div>
+      <div className="node-detail-module-strip">
+        <span>Modules</span>
+        {modules.slice(0, 5).map((module) => (
+          <button key={module.id} type="button" className="btn" onClick={() => onSelectModule(module.id)}>{module.title || module.id}</button>
+        ))}
+        {!modules.length ? <small>no modules</small> : null}
+      </div>
+    </section>
   );
 }
 
@@ -1512,16 +1645,17 @@ function NodeDetailRunSummary({
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
 }) {
   const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId: "", onOpenNodeRun });
+  const recent = controller.historyQuery.data || [];
   return (
     <section className="node-run-summary-panel">
       <div className="panel-head compact">
-        <div><strong>Node Runs</strong><span>独立执行历史和调试入口</span></div>
+        <div><strong>Run Node</strong><span>创建一次独立 Node Run，并进入运行工作台。</span></div>
         <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>Open Runs</button>
       </div>
-      <NodeRunStartPanel controller={controller} compact />
+      <NodeRunStartPanel controller={controller} compact title="Start Workspace" />
       <div className="node-run-summary-history">
-        <div className="section-title"><span>Recent Node Runs</span><span>{controller.historyQuery.data?.length || 0}</span></div>
-        <NodeRunHistoryRows controller={controller} onOpenNodeRun={onOpenNodeRun} limit={4} />
+        <div className="section-title"><span>Recent Node Runs</span><span>{recent.length}</span></div>
+        <NodeRunHistoryRows controller={controller} onOpenNodeRun={onOpenNodeRun} limit={3} />
       </div>
     </section>
   );
@@ -1551,11 +1685,17 @@ function NodeRunsIndexPage({
   const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId: "", onOpenNodeRun });
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const items = (controller.historyQuery.data || []).filter((item) => {
     const matchesStatus = statusFilter === "all" || String(item.status || "") === statusFilter;
     const haystack = `${item.nodeRunId} ${item.mode || ""} ${item.inputSource || ""}`.toLowerCase();
     return matchesStatus && (!search.trim() || haystack.includes(search.trim().toLowerCase()));
   });
+  const pageSize = 8;
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedItems = items.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  useEffect(() => setPage(1), [statusFilter, search, node?.nodeId]);
   return (
     <section className="node-runs-page">
       <div className="node-page-header">
@@ -1569,9 +1709,13 @@ function NodeRunsIndexPage({
         </div>
       </div>
       <div className="node-runs-index-grid">
+        <aside className="node-runs-side-panel">
+          <NodeRunStartPanel controller={controller} title="Start Node Run" />
+          <div className="node-run-start-note">Run Node 会立即打开独立工作台，flow、events 和 artifacts 会在该页面展示。</div>
+        </aside>
         <section className="node-runs-table-panel">
           <div className="panel-head compact">
-            <div><strong>Run History</strong><span>{items.length}/{controller.historyQuery.data?.length || 0} records</span></div>
+            <div><strong>Run History</strong><span>{items.length}/{controller.historyQuery.data?.length || 0} records · page {currentPage}/{pageCount}</span></div>
             <span className="status-pill done">{mode}</span>
           </div>
           <div className="node-runs-tools">
@@ -1579,7 +1723,7 @@ function NodeRunsIndexPage({
             <label className="filter-box"><SlidersHorizontal size={14} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All status</option><option value="done">Done</option><option value="running">Running</option><option value="failed">Failed</option><option value="waiting">Waiting</option></select></label>
           </div>
           <div className="node-runs-table">
-            {items.map((item) => (
+            {pagedItems.map((item) => (
               <article key={item.nodeRunId} className={`node-run-table-row ${nodeRunCardTone(item.status)}`}>
                 <div>
                   <span className={`status-pill ${nodeRunTone(item.status)}`}>{item.status || "unknown"}</span>
@@ -1596,11 +1740,14 @@ function NodeRunsIndexPage({
             {controller.historyQuery.isLoading ? <Skeleton /> : null}
             {!controller.historyQuery.isLoading && !items.length ? <Empty text="没有匹配的 Node Run" /> : null}
           </div>
+          {items.length > pageSize ? (
+            <div className="node-runs-pagination">
+              <button type="button" className="btn" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button>
+              <span>{(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, items.length)} / {items.length}</span>
+              <button type="button" className="btn" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</button>
+            </div>
+          ) : null}
         </section>
-        <aside className="node-runs-side-panel">
-          <NodeRunStartPanel controller={controller} />
-          <NodeRunContextPanel controller={controller} />
-        </aside>
       </div>
     </section>
   );
@@ -1634,6 +1781,7 @@ function NodeRunDetailPage({
   const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId, onOpenNodeRun });
   const result = controller.current;
   const live = nodeRunIsLive(result);
+  const current = currentNodeRunStep(result);
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -1666,24 +1814,36 @@ function NodeRunDetailPage({
       {!selectedNodeRunId ? (
         <div className="node-run-empty">没有指定 Node Run。请返回 Node Runs 选择一次执行。</div>
       ) : (
-        <div className="node-run-detail-grid-page">
-          <aside className="node-run-flow-panel">
-            <div className="panel-head compact"><div><strong>Node Flow</strong><span>{result?.status || "loading"}</span></div></div>
-            {controller.detailQuery.isLoading && !result ? <Skeleton /> : <NodeRunFlow result={result} />}
-            <DetailBlock title="Execute Inner Flow">
-              <NodeRunInnerFlow result={result} />
-            </DetailBlock>
-          </aside>
-          <section className="node-run-output-panel">
-            {controller.detailQuery.isLoading && !result ? <Skeleton /> : (
-              <NodeRunDetail result={result} events={controller.events} onRetry={controller.startNodeRun} showBanner={false} showFlow={false} />
-            )}
-          </section>
-          <aside className="node-run-debug-panel">
-            <NodeRunContextPanel controller={controller} />
-            <NodeRunConfigPanel result={result} />
-          </aside>
-        </div>
+        <>
+          <div className="node-run-workspace-hero">
+            <NodeRunActiveStepCard result={result} />
+            <section className="node-run-workspace-summary">
+              <strong>{live ? "Running Node Run" : "Node Run Snapshot"}</strong>
+              <span>{current?.id || "no active step"}</span>
+              <p>{result?.reason || current?.summary || "Use the flow and diagnostics below to inspect this node run."}</p>
+            </section>
+          </div>
+          <div className="node-run-detail-grid-page">
+            <section className="node-run-workspace-main">
+              <section className="node-run-flow-panel">
+                <div className="panel-head compact"><div><strong>Execution Flow</strong><span>{result?.status || "loading"}</span></div></div>
+                {controller.detailQuery.isLoading && !result ? <Skeleton /> : <NodeRunFlow result={result} />}
+              </section>
+              <details className="node-run-inner-details">
+                <summary><span>Inner Flow</span><ChevronDown size={15} /></summary>
+                <NodeRunInnerFlow result={result} />
+              </details>
+              <NodeRunResultTabs result={result} events={controller.events} />
+            </section>
+            <aside className="node-run-debug-panel">
+              <NodeRunConfigPanel result={result} />
+              <details className="node-run-context-details">
+                <summary><span>Run Context</span><ChevronDown size={15} /></summary>
+                <NodeRunContextPanel controller={controller} showRaw />
+              </details>
+            </aside>
+          </div>
+        </>
       )}
     </section>
   );
@@ -2283,8 +2443,11 @@ export default function App() {
     enabled: Boolean(runtime && instance && selectedManagedNode && selectedNodeModule && viewMode === "nodes" && route.moduleId),
   });
   const nodeFilters = useMemo(() => {
-    return ["all", "create-runtime", "delete-runtime", "create-instance", "common", "failed"];
-  }, []);
+    const managementGroups = ["create-runtime", "delete-runtime", "create-instance"].filter((group) => managedNodes.some((node) => matchesNodeGroup(node, group)));
+    const groups = ["all", ...managementGroups];
+    if (managedNodes.some((node) => matchesNodeGroup(node, "failed"))) groups.push("failed");
+    return groups;
+  }, [managedNodes]);
   const visibleManagedNodes = useMemo(() => {
     const query = nodeSearch.trim().toLowerCase();
     return managedNodes.filter((node) => {
@@ -7449,13 +7612,10 @@ function NodesWorkspace({
                 <span>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</span>
               </div>
               <div className="node-detail-module-links">
-                {modules.slice(0, 5).map((module) => (
-                  <button key={module.id} type="button" className="btn" onClick={() => onSelectModule(module.id)}>{module.title || module.id}</button>
-                ))}
-                {selectedNode ? <button type="button" className="btn primary" onClick={() => onOpenNodeRuns(selectedNode.nodeId)}>Open Runs</button> : null}
+                {selectedNode ? <button type="button" className="btn" onClick={() => onOpenNodeRuns(selectedNode.nodeId)}>Run History</button> : null}
               </div>
             </div>
-            <NodeDetailPanel node={selectedNode} loading={loading} />
+            <NodeDetailOverviewPanel node={selectedNode} modules={modules} loading={loading} onSelectModule={onSelectModule} />
             {selectedNode && instance ? (
               <section className="node-run-route-panel">
                 <NodeDetailRunSummary
@@ -7471,19 +7631,10 @@ function NodesWorkspace({
                 />
               </section>
             ) : null}
-            {selectedNode && instance ? (
-              <details className="node-test-strip legacy-node-test">
-                <summary><span>Legacy Definition Smoke Test</span><ChevronDown size={15} /></summary>
-                <NodeTestPanel
-                  provider={provider}
-                  runtime={runtime}
-                  instanceId={instance.instanceId}
-                  mode={mode}
-                  nodeId={selectedNode.nodeId}
-                  runs={runs}
-                />
-              </details>
-            ) : null}
+            <details className="node-definition-details">
+              <summary><span>Developer Definition Details</span><ChevronDown size={15} /></summary>
+              <NodeDetailPanel node={selectedNode} loading={loading} />
+            </details>
           </section>
         </section>
       )}
