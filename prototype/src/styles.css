@@ -7975,7 +7975,7 @@ pre {
 
 .node-run-detail-grid-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -7984,6 +7984,13 @@ pre {
   min-width: 0;
   display: grid;
   gap: 12px;
+}
+
+.node-run-detail-grid-page > .node-run-debug-panel {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  max-height: none;
+  overflow: visible;
 }
 
 .node-run-inner-details,
@@ -8000,10 +8007,11 @@ pre {
 .node-run-dag-layout {
   min-width: 0;
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) 380px;
   gap: 12px;
   padding: 12px;
   border-top: 1px solid var(--line-2);
+  align-items: stretch;
 }
 
 .node-run-dag-canvas {
@@ -8026,11 +8034,19 @@ pre {
   background: var(--surface);
   box-shadow: 0 10px 22px rgba(15, 23, 42, .06);
   color: var(--text);
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.node-run-flow-node:hover {
+  transform: translateY(-1px);
+  border-color: #9bb8ff;
+  box-shadow: 0 12px 26px rgba(15, 23, 42, .09);
 }
 
 .node-run-flow-node.selected {
   border-color: var(--blue);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, .16), 0 12px 26px rgba(37, 99, 235, .12);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .18), 0 16px 30px rgba(37, 99, 235, .16);
 }
 
 .node-run-flow-node.active {
@@ -8134,7 +8150,8 @@ pre {
 
 .node-run-step-detail-panel {
   min-width: 0;
-  max-height: 280px;
+  height: 560px;
+  max-height: 560px;
   overflow: auto;
   display: grid;
   gap: 10px;
@@ -8150,6 +8167,13 @@ pre {
   gap: 6px;
 }
 
+.node-run-step-detail-head > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .node-run-step-detail-head strong {
   font-size: 14px;
   line-height: 1.25;
@@ -8160,6 +8184,34 @@ pre {
 .node-run-step-fixes small {
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.node-run-step-meta-grid,
+.node-run-step-kv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.node-run-step-meta-grid span,
+.node-run-step-kv-grid span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px;
+  background: #fbfcfe;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.node-run-step-meta-grid b,
+.node-run-step-kv-grid b {
+  color: var(--text);
+  font-size: 10px;
+  text-transform: uppercase;
 }
 
 .node-run-step-raw {
@@ -8197,13 +8249,67 @@ pre {
   gap: 8px;
 }
 
-.node-run-step-fixes article {
+.node-run-step-fixes article,
+.node-run-step-events article {
   display: grid;
   gap: 5px;
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 8px;
   background: #fbfcfe;
+}
+
+.node-run-step-events {
+  display: grid;
+  gap: 8px;
+}
+
+.node-run-step-events article {
+  grid-template-columns: 26px minmax(0, 1fr);
+  align-items: start;
+}
+
+.node-run-step-events article > span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.node-run-step-events article > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.node-run-step-events strong,
+.node-run-step-events small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-run-step-events small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.node-run-step-inner-flow {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line-2);
+  padding-top: 8px;
+}
+
+.node-run-step-inner-flow .node-run-inner-flow {
+  grid-template-columns: 1fr;
 }
 
 .node-run-inner-details summary,
@@ -8911,6 +9017,10 @@ pre {
     overflow: visible;
   }
 
+  .node-run-detail-grid-page > .node-run-debug-panel {
+    grid-template-columns: 1fr;
+  }
+
   .node-run-workspace-hero,
   .node-run-dag-layout {
     grid-template-columns: 1fr;
@@ -8921,6 +9031,7 @@ pre {
   }
 
   .node-run-step-detail-panel {
+    height: auto;
     max-height: none;
   }
 

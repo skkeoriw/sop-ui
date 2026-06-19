@@ -686,6 +686,23 @@ function readNodeTestRouteDefaults(runId?: string): { inputSource: NonNullable<N
   return { inputSource: "generated-fixture", runId: "" };
 }
 
+function readSearchParam(name: string): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get(name) || "";
+}
+
+function writeSearchParam(name: string, value: string, mode: "push" | "replace" = "push") {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  if (value) url.searchParams.set(name, value);
+  else url.searchParams.delete(name);
+  const search = url.searchParams.toString();
+  const nextUrl = `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
+  if (`${window.location.pathname}${window.location.search}${window.location.hash}` === nextUrl) return;
+  if (mode === "replace") window.history.replaceState(null, "", nextUrl);
+  else window.history.pushState(null, "", nextUrl);
+}
+
 function nodeTestTone(status?: string) {
   if (status === "done") return "ok";
   if (status === "needs_input" || status === "skipped" || status === "waiting") return "warn";
@@ -1033,11 +1050,17 @@ function detailRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function nodeRunStepScalarRows(detail: Record<string, unknown>) {
+  return Object.entries(detail)
+    .filter(([, value]) => value === null || ["string", "number", "boolean"].includes(typeof value))
+    .slice(0, 8);
+}
+
 const NodeRunStepFlowNode = memo(({ data }: NodeProps<Node<NodeRunStepNodeData>>) => {
   const { step, index, selected, active } = data;
   const tone = nodeRunTone(step.status);
   return (
-    <div className={`node-run-flow-node ${tone} ${selected ? "selected" : ""} ${active ? "active" : ""}`}>
+    <div className={`node-run-flow-node ${tone} ${selected ? "selected" : ""} ${active ? "active" : ""}`} aria-label={`Inspect step ${step.id}`}>
       <Handle type="target" position={Position.Left} />
       <div className="node-run-flow-node-top">
         <span>{index + 1}</span>
@@ -1056,22 +1079,44 @@ const nodeRunNodeTypes = { nodeRunStep: NodeRunStepFlowNode };
 function NodeRunStepDetailPanel({
   step,
   result,
+  events,
 }: {
   step: NodeTestStep | undefined;
   result: NodeRunResult | undefined;
+  events?: NodeRunEvent[];
 }) {
   const detail = detailRecord(result?.detail);
+  const stepDetail = detailRecord(step?.detail);
   const suggestions = detailList(detail.fix_suggestions);
-  if (!step) return <aside className="node-run-step-detail-panel"><Empty text="选择一个阶段查看详情" /></aside>;
+  const stepEvents = (events?.length ? events : result?.events || []).filter((event) => event.stepId === step?.id);
+  const scalarRows = nodeRunStepScalarRows(stepDetail);
+  const innerFlowIsRelevant = step?.id === "execute-or-dry-run" || step?.id === "build-execution-plan";
+  if (!step) return <aside id="node-run-step-detail" className="node-run-step-detail-panel"><Empty text="选择一个阶段查看详情" /></aside>;
   const showFixes = ["failed", "blocked", "needs_input"].includes(step.status);
   return (
-    <aside className={`node-run-step-detail-panel ${nodeRunCardTone(step.status)}`}>
+    <aside id="node-run-step-detail" className={`node-run-step-detail-panel ${nodeRunCardTone(step.status)}`}>
       <div className="node-run-step-detail-head">
-        <span className={`status-pill ${nodeRunTone(step.status)}`}>{step.status || "waiting"}</span>
+        <div>
+          <span className={`status-pill ${nodeRunTone(step.status)}`}>{step.status || "waiting"}</span>
+          <span className="status-pill subtle">{stepEvents.length} events</span>
+        </div>
         <strong>{step.title || step.id}</strong>
-        <small>{step.id}{nodeRunStepTiming(step) ? ` · ${nodeRunStepTiming(step)}` : ""}</small>
+        <small>{step.id}</small>
       </div>
       {step.summary ? <p>{step.summary}</p> : null}
+      <div className="node-run-step-meta-grid">
+        <span><b>Status</b>{step.status || "waiting"}</span>
+        <span><b>Elapsed</b>{typeof step.elapsedMs === "number" ? formatElapsed(step.elapsedMs) : "-"}</span>
+        <span><b>Started</b>{step.startedAt || "-"}</span>
+        <span><b>Finished</b>{step.finishedAt || "-"}</span>
+      </div>
+      {scalarRows.length ? (
+        <div className="node-run-step-kv-grid">
+          {scalarRows.map(([key, value]) => (
+            <span key={key}><b>{key.replace(/_/g, " ")}</b>{String(value ?? "-")}</span>
+          ))}
+        </div>
+      ) : null}
       {showFixes && suggestions.length ? (
         <div className="node-run-step-fixes">
           <div className="section-title"><span>Fix</span><span>{suggestions.length}</span></div>
@@ -1080,8 +1125,30 @@ function NodeRunStepDetailPanel({
               <span className="status-pill waiting">{String(item.target || "fix")}</span>
               <strong>{String(item.title || "Suggested fix")}</strong>
               <small>{String(item.reason || "")}</small>
+              {item.action ? <small>{String(item.action)}</small> : null}
             </article>
           ))}
+        </div>
+      ) : null}
+      {stepEvents.length ? (
+        <div className="node-run-step-events">
+          <div className="section-title"><span>Events</span><span>{stepEvents.length}</span></div>
+          {stepEvents.slice(-6).map((event, index) => (
+            <article key={`${event.event}-${event.ts || index}`}>
+              <span>{event.sequence || index + 1}</span>
+              <div>
+                <strong>{event.event}</strong>
+                <small>{event.ts || ""}</small>
+                {event.data?.summary ? <small>{String(event.data.summary)}</small> : null}
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {innerFlowIsRelevant && (result?.innerSteps || []).length ? (
+        <div className="node-run-step-inner-flow">
+          <div className="section-title"><span>Node Inner Flow</span><span>{result?.innerSteps?.length || 0}</span></div>
+          <NodeRunInnerFlow result={result} />
         </div>
       ) : null}
       {step.detail && Object.keys(step.detail).length ? (
@@ -1094,14 +1161,21 @@ function NodeRunStepDetailPanel({
   );
 }
 
-function NodeRunFlow({ result }: { result: NodeRunResult | undefined }) {
+function NodeRunFlow({
+  result,
+  events,
+  selectedStepId,
+  onSelectStep,
+}: {
+  result: NodeRunResult | undefined;
+  events?: NodeRunEvent[];
+  selectedStepId?: string;
+  onSelectStep?: (stepId: string) => void;
+}) {
   const steps = result?.steps || [];
   const current = currentNodeRunStep(result);
-  const [selectedStepId, setSelectedStepId] = useState(current?.id || steps[0]?.id || "");
-  useEffect(() => {
-    setSelectedStepId((previous) => steps.some((step) => step.id === previous) ? previous : current?.id || steps[0]?.id || "");
-  }, [result?.nodeRunId, current?.id, steps]);
-  const selectedStep = steps.find((step) => step.id === selectedStepId) || current || steps[0];
+  const resolvedSelectedStepId = selectedStepId || current?.id || steps[0]?.id || "";
+  const selectedStep = steps.find((step) => step.id === resolvedSelectedStepId) || current || steps[0];
   const compactFlow = typeof window !== "undefined" && window.innerWidth < 700;
   const columns = compactFlow ? 2 : 4;
   const xSpacing = compactFlow ? 230 : 245;
@@ -1116,10 +1190,10 @@ function NodeRunFlow({ result }: { result: NodeRunResult | undefined }) {
     data: {
       step,
       index,
-      selected: (step.id || `step-${index}`) === selectedStepId,
+      selected: (step.id || `step-${index}`) === resolvedSelectedStepId,
       active: step.status === "running" || Boolean(current?.id && step.id === current.id),
     },
-  })), [steps, selectedStepId, current?.id, columns, xSpacing, ySpacing]);
+  })), [steps, resolvedSelectedStepId, current?.id, columns, xSpacing, ySpacing]);
   const flowEdges = useMemo<Edge[]>(() => steps.slice(0, -1).map((step, index) => {
     const next = steps[index + 1];
     const status = next.status || step.status || "waiting";
@@ -1147,14 +1221,14 @@ function NodeRunFlow({ result }: { result: NodeRunResult | undefined }) {
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable
-          onNodeClick={(_, node) => setSelectedStepId(node.id)}
+          onNodeClick={(_, node) => onSelectStep?.(node.id)}
           defaultEdgeOptions={{ className: "node-run-edge" }}
         >
           <Background color="#dfe4ec" gap={22} />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
-      <NodeRunStepDetailPanel step={selectedStep} result={result} />
+      <NodeRunStepDetailPanel step={selectedStep} result={result} events={events} />
     </div>
   );
 }
@@ -1898,6 +1972,29 @@ function NodeRunDetailPage({
   const result = controller.current;
   const live = nodeRunIsLive(result);
   const current = currentNodeRunStep(result);
+  const [selectedStepId, setSelectedStepId] = useState(() => readSearchParam("step"));
+  const stepKey = (result?.steps || []).map((step) => step.id).join("|");
+  useEffect(() => {
+    const onPopState = () => setSelectedStepId(readSearchParam("step"));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+  useEffect(() => {
+    const steps = result?.steps || [];
+    if (!steps.length) return;
+    const routeStepId = readSearchParam("step");
+    const fallback = current?.id || steps[0]?.id || "";
+    const routeStepExists = Boolean(routeStepId && steps.some((step) => step.id === routeStepId));
+    const previousExists = Boolean(selectedStepId && steps.some((step) => step.id === selectedStepId));
+    const nextStepId = routeStepExists ? routeStepId : previousExists ? selectedStepId : fallback;
+    if (nextStepId && selectedStepId !== nextStepId) setSelectedStepId(nextStepId);
+    if (nextStepId && routeStepId !== nextStepId) writeSearchParam("step", nextStepId, "replace");
+  }, [result?.nodeRunId, stepKey, current?.id, selectedStepId]);
+  function selectNodeRunStep(stepId: string) {
+    if (!stepId) return;
+    setSelectedStepId(stepId);
+    writeSearchParam("step", stepId, "push");
+  }
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href);
@@ -1943,7 +2040,14 @@ function NodeRunDetailPage({
             <section className="node-run-workspace-main">
               <section className="node-run-flow-panel">
                 <div className="panel-head compact"><div><strong>Execution Flow</strong><span>{result?.status || "loading"}</span></div></div>
-                {controller.detailQuery.isLoading && !result ? <Skeleton /> : <NodeRunFlow result={result} />}
+                {controller.detailQuery.isLoading && !result ? <Skeleton /> : (
+                  <NodeRunFlow
+                    result={result}
+                    events={controller.events}
+                    selectedStepId={selectedStepId}
+                    onSelectStep={selectNodeRunStep}
+                  />
+                )}
               </section>
               <details className="node-run-inner-details">
                 <summary><span>Inner Flow</span><ChevronDown size={15} /></summary>
