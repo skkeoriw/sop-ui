@@ -736,6 +736,11 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
+    runtimeContext: (raw.runtime_context as Record<string, unknown>) || {},
+    instanceContext: (raw.instance_context as Record<string, unknown>) || {},
+    definitionDefaults: (raw.definition_defaults as Record<string, unknown>) || {},
+    capabilityOverrides: (raw.capability_overrides as Record<string, unknown>) || {},
+    definitionScopeReports: (raw.definition_scope_reports as Record<string, unknown>) || {},
     environmentSnapshot: ((raw.environment_snapshot as Array<Record<string, unknown>>) || []).map(mapNodeRunEnvironmentItem),
     capabilityResults: ((raw.capability_results as Array<Record<string, unknown>>) || []).map(mapNodeRunCapabilityResult),
     issues: ((raw.issues as Array<Record<string, unknown>>) || []).map(mapNodeRunIssue),
@@ -1349,6 +1354,7 @@ export const sopProvider: SopDataProvider = {
       pipeline_id: input.pipelineId || "",
       manual_inputs: input.manualInputs || {},
       overrides: input.overrides || {},
+      capability_overrides: input.capabilityOverrides || {},
       retry_of: input.retryOf || "",
     });
     return mapNodeRunResult(raw, nodeId, String(raw.node_run_id || raw.pipeline_id || ""));

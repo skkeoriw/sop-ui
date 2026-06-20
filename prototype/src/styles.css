@@ -7182,6 +7182,96 @@ pre {
   background: var(--surface);
 }
 
+.node-run-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.node-run-context-grid.compact {
+  grid-column: 1 / -1;
+  grid-template-columns: 1fr;
+}
+
+.node-run-context-grid > article,
+.node-run-health-strip,
+.node-run-capability-edit-card,
+.node-three-layer-grid > article {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfcfe;
+}
+
+.node-run-context-grid strong,
+.node-run-health-strip strong,
+.node-run-capability-edit-card strong,
+.node-three-layer-grid strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.node-run-health-strip {
+  display: grid;
+  gap: 10px;
+}
+
+.node-run-health-strip > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.node-run-health-strip span,
+.node-run-capability-edit-card small,
+.node-three-layer-grid small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.node-run-capability-editor {
+  display: grid;
+  gap: 9px;
+}
+
+.node-run-capability-edit-card {
+  display: grid;
+  gap: 8px;
+}
+
+.node-run-capability-edit-card.enabled {
+  border-color: #bed1ff;
+  background: #f8fbff;
+}
+
+.node-run-capability-edit-card label:not(.inline-check) {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 750;
+  color: var(--muted);
+}
+
+.node-run-capability-edit-card textarea,
+.node-run-capability-edit-card select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 9px;
+  color: var(--text);
+  background: var(--surface);
+  resize: vertical;
+}
+
+.node-run-capability-edit-card textarea:disabled,
+.node-run-capability-edit-card select:disabled {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
 .node-run-warning {
   display: flex;
   align-items: center;
@@ -7985,6 +8075,23 @@ pre {
 
 .node-run-start-panel.compact {
   box-shadow: none;
+}
+
+.node-three-layer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.node-three-layer-grid > article {
+  display: grid;
+  gap: 7px;
+  align-content: start;
+}
+
+.node-three-layer-grid .kv-list,
+.node-three-layer-grid .kv-stack {
+  min-width: 0;
 }
 
 .node-run-start-note {
@@ -9358,6 +9465,11 @@ pre {
   }
 
   .node-run-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .node-run-context-grid,
+  .node-three-layer-grid {
     grid-template-columns: 1fr;
   }
 

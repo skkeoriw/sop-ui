@@ -1200,6 +1200,39 @@ function nodeRunDiagnosticArtifacts(result?: NodeRunResult): Artifact[] {
   return (result?.artifacts || []).filter((artifact) => !businessIds.has(artifact.id || artifact.path));
 }
 
+function nodeCapabilityRecord(node: NodeRegistryItem | undefined, capability: string): Record<string, unknown> {
+  const caps = detailRecord(node?.capabilities);
+  return detailRecord(caps[capability]);
+}
+
+function nodeCapabilityPaths(node: NodeRegistryItem | undefined): string[] {
+  const git = nodeCapabilityRecord(node, "git");
+  const raw = Array.isArray(git.paths) ? git.paths : Array.isArray(git.managed_paths) ? git.managed_paths : [];
+  return raw.map(String).filter(Boolean);
+}
+
+function nodeRunCapabilityOverridePayload(params: {
+  gitEnabled: boolean;
+  gitPathsText: string;
+  gitSaveScope: string;
+  telegramEnabled: boolean;
+  telegramSaveScope: string;
+}) {
+  return {
+    git: {
+      enabled: params.gitEnabled,
+      save_scope: params.gitSaveScope,
+      managed_by: "runtime-harness",
+      paths: params.gitPathsText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+    },
+    telegram: {
+      enabled: params.telegramEnabled,
+      save_scope: params.telegramSaveScope,
+      managed_by: "runtime-harness",
+    },
+  };
+}
+
 function nodeRunCapabilityRows(result?: NodeRunResult): Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> {
   const issues = result?.issues || [];
   if (result?.capabilityResults?.length) {
@@ -1453,6 +1486,10 @@ function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
   const detail = detailRecord(result?.detail);
   const configs = detailRecord(detail.resolved_config);
   const sideEffects = detailRecord(detail.side_effects);
+  const runtimeContext = result?.runtimeContext && Object.keys(result.runtimeContext).length ? result.runtimeContext : detailRecord(detail.runtime_context);
+  const instanceContext = result?.instanceContext && Object.keys(result.instanceContext).length ? result.instanceContext : detailRecord(detail.instance_context);
+  const capabilityOverrides = result?.capabilityOverrides && Object.keys(result.capabilityOverrides).length ? result.capabilityOverrides : detailRecord(detail.capability_overrides);
+  const definitionReports = result?.definitionScopeReports && Object.keys(result.definitionScopeReports).length ? result.definitionScopeReports : detailRecord(detail.definition_scope_reports);
   const current = currentNodeRunStep(result);
   const environment = result?.environmentSnapshot || [];
   const legacySuggestions = detailList(detail.fix_suggestions).map((item, index) => ({
@@ -1486,6 +1523,31 @@ function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
           {!Object.keys(sideEffects).length ? <div className="node-run-empty">还没有 side-effect 快照。</div> : null}
         </div>
       </div>
+      <div className="section-title"><span>运行上下文</span><span>Runtime / Instance</span></div>
+      <div className="node-run-context-grid compact">
+        <article>
+          <strong>Runtime</strong>
+          <KeyValues data={runtimeContext} />
+        </article>
+        <article>
+          <strong>Instance</strong>
+          <KeyValues data={instanceContext} />
+        </article>
+      </div>
+      <div className="section-title"><span>本次能力挂载</span><span>{Object.keys(capabilityOverrides).length}</span></div>
+      {Object.keys(capabilityOverrides).length ? (
+        <div className="node-run-raw-config always-open">
+          <code>{formatValue(capabilityOverrides)}</code>
+        </div>
+      ) : <div className="node-run-empty">本次运行没有显式 capability override。</div>}
+      {Object.keys(definitionReports).length ? (
+        <>
+          <div className="section-title"><span>定义保存结果</span><span>scope</span></div>
+          <div className="node-run-raw-config always-open">
+            <code>{formatValue(definitionReports)}</code>
+          </div>
+        </>
+      ) : null}
       <div className="section-title"><span>需要处理</span><span>{issues.length}</span></div>
       {issues.map((item, index) => (
         <article key={item.id || `${item.target || "issue"}-${index}`} className={`node-run-fix-card ${nodeRunCardTone(issueTone(item.severity))}`}>
@@ -1640,6 +1702,21 @@ function useNodeRunController({
   const [error, setError] = useState("");
   const nodeId = node?.nodeId || "";
   const instanceId = instance?.instanceId || "";
+  const gitDefault = nodeCapabilityRecord(node, "git");
+  const telegramDefault = nodeCapabilityRecord(node, "telegram");
+  const [gitEnabled, setGitEnabled] = useState(Boolean(gitDefault.enabled ?? true));
+  const [gitPathsText, setGitPathsText] = useState(nodeCapabilityPaths(node).join("\n"));
+  const [gitSaveScope, setGitSaveScope] = useState("run");
+  const [telegramEnabled, setTelegramEnabled] = useState(Boolean(telegramDefault.enabled ?? true));
+  const [telegramSaveScope, setTelegramSaveScope] = useState("run");
+
+  useEffect(() => {
+    setGitEnabled(Boolean(nodeCapabilityRecord(node, "git").enabled ?? true));
+    setGitPathsText(nodeCapabilityPaths(node).join("\n"));
+    setGitSaveScope("run");
+    setTelegramEnabled(Boolean(nodeCapabilityRecord(node, "telegram").enabled ?? true));
+    setTelegramSaveScope("run");
+  }, [nodeId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1688,6 +1765,13 @@ function useNodeRunController({
       inputSource,
       pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
       manualInputs,
+      capabilityOverrides: nodeRunCapabilityOverridePayload({
+        gitEnabled,
+        gitPathsText,
+        gitSaveScope,
+        telegramEnabled,
+        telegramSaveScope,
+      }),
       retryOf,
     };
     const optimistic = makeOptimisticNodeRun({
@@ -1709,6 +1793,7 @@ function useNodeRunController({
 
   const inputFields = Object.entries(node?.inputs || {});
   return {
+    provider,
     runtime,
     instance,
     workflowId,
@@ -1725,6 +1810,16 @@ function useNodeRunController({
     setSeedRunId,
     manualInputs,
     setManualInputs,
+    gitEnabled,
+    setGitEnabled,
+    gitPathsText,
+    setGitPathsText,
+    gitSaveScope,
+    setGitSaveScope,
+    telegramEnabled,
+    setTelegramEnabled,
+    telegramSaveScope,
+    setTelegramSaveScope,
     error,
     historyQuery,
     activeNodeRunId,
@@ -1760,6 +1855,16 @@ function NodeRunStartPanel({
     setSeedRunId,
     manualInputs,
     setManualInputs,
+    gitEnabled,
+    setGitEnabled,
+    gitPathsText,
+    setGitPathsText,
+    gitSaveScope,
+    setGitSaveScope,
+    telegramEnabled,
+    setTelegramEnabled,
+    telegramSaveScope,
+    setTelegramSaveScope,
     createMutation,
     startNodeRun,
     inputFields,
@@ -1776,6 +1881,38 @@ function NodeRunStartPanel({
         <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => startNodeRun()}>
           {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} 运行节点
         </button>
+      </div>
+      <div className="node-run-context-grid">
+        <article>
+          <strong>Runtime Context</strong>
+          <KeyValues data={{
+            runtime_id: runtime.id,
+            endpoint: runtime.endpoint || runtime.channelUrl || "-",
+            spi_base_url: runtime.spiBaseUrl || "-",
+            local_status: runtime.localStatus || runtime.status || "-",
+          }} />
+        </article>
+        <article>
+          <strong>Instance Context</strong>
+          <KeyValues data={{
+            instance_id: instance.instanceId,
+            repo: instance.repo || "-",
+            repo_branch: instance.repoBranch || "-",
+            wiki_local_path: instance.wikiLocalPath || "-",
+            workspace_status: instance.workspaceStatus || "-",
+            run_index_status: instance.runIndexStatus || "-",
+          }} />
+        </article>
+      </div>
+      <div className="node-run-health-strip">
+        <div>
+          <strong>Instance Health</strong>
+          <span>运行前先确认 GitHub 与 TG 可用；这些测试复用 Instance 页面现有能力。</span>
+        </div>
+        <div className="instance-health-actions compact">
+          <InstanceHealthTestButton provider={controller.provider} runtime={runtime} instance={instance} mode={controller.mode} kind="github" />
+          <InstanceHealthTestButton provider={controller.provider} runtime={runtime} instance={instance} mode={controller.mode} kind="telegram" />
+        </div>
       </div>
       <div className="node-run-controls">
         <label>模式
@@ -1814,6 +1951,43 @@ function NodeRunStartPanel({
           </label>
         )) : null}
       </div>
+      <section className="node-run-capability-editor">
+        <div className="section-title"><span>挂载能力</span><span>Runtime Harness</span></div>
+        <article className={`node-run-capability-edit-card ${gitEnabled ? "enabled" : ""}`}>
+          <label className="inline-check">
+            <input type="checkbox" checked={gitEnabled} onChange={(event) => setGitEnabled(event.target.checked)} />
+            <span>GitHub 持久化</span>
+          </label>
+          <small>把该节点产物保存到当前 Instance repo。路径来自 Node Definition，可按本次运行或当前 Instance 覆盖。</small>
+          <label>
+            <span>GitHub 保存路径</span>
+            <textarea value={gitPathsText} onChange={(event) => setGitPathsText(event.target.value)} rows={4} disabled={!gitEnabled} />
+          </label>
+          <label>
+            <span>保存范围</span>
+            <select value={gitSaveScope} onChange={(event) => setGitSaveScope(event.target.value)} disabled={!gitEnabled}>
+              <option value="run">仅本次运行</option>
+              <option value="instance">保存到当前 Instance sop.yaml</option>
+              <option value="project">生成项目默认变更请求</option>
+            </select>
+          </label>
+        </article>
+        <article className={`node-run-capability-edit-card ${telegramEnabled ? "enabled" : ""}`}>
+          <label className="inline-check">
+            <input type="checkbox" checked={telegramEnabled} onChange={(event) => setTelegramEnabled(event.target.checked)} />
+            <span>Telegram 通知</span>
+          </label>
+          <small>使用当前 Instance 解析出的 TG token/chat_id 发送节点进度通知。</small>
+          <label>
+            <span>保存范围</span>
+            <select value={telegramSaveScope} onChange={(event) => setTelegramSaveScope(event.target.value)} disabled={!telegramEnabled}>
+              <option value="run">仅本次运行</option>
+              <option value="instance">保存到当前 Instance sop.yaml</option>
+              <option value="project">生成项目默认变更请求</option>
+            </select>
+          </label>
+        </article>
+      </section>
       {runMode === "real-node" ? <div className="node-run-warning"><AlertTriangle size={14} />真实执行会调用节点实际逻辑，并可能写入 Git、调用外部 API 或发送 TG 通知。</div> : null}
       {error ? <div className="node-test-result err">{error}</div> : null}
     </section>
@@ -8109,6 +8283,36 @@ function NodesWorkspace({
                 {selectedNode ? <button type="button" className="btn primary" onClick={() => onOpenNodeRuns(selectedNode.nodeId)}>Open Runs</button> : null}
               </div>
             </div>
+            <section className="node-three-layer-grid">
+              <article>
+                <span className="status-pill done">Definition</span>
+                <strong>节点定义层</strong>
+                <small>来自 SOP / agent-brains 定义：Executor、Skill、Inputs、Outputs、默认 capability 和 GitHub 路径。</small>
+                <KeyValues data={{
+                  node_id: selectedNode?.nodeId || "-",
+                  executor: String(selectedNode?.executor?.type || selectedNode?.case || "-"),
+                  skill: String((selectedNode?.skill || {}).id || selectedNode?.executor?.skill || "-"),
+                  outputs: Object.keys(selectedNode?.outputs || {}).length,
+                }} />
+              </article>
+              <article>
+                <span className="status-pill running">Runtime Context</span>
+                <strong>运行环境层</strong>
+                <small>当前 Runtime + Instance 提供执行环境、repo、workspace、Hermes、TG/GitHub 配置。</small>
+                <KeyValues data={{
+                  runtime_id: runtime?.id || "-",
+                  instance_id: instance?.instanceId || "-",
+                  repo: instance?.repo || "-",
+                  wiki_local_path: instance?.wikiLocalPath || "-",
+                }} />
+              </article>
+              <article>
+                <span className="status-pill waiting">Runs</span>
+                <strong>执行记录层</strong>
+                <small>Node Run 保存本次输入、override、执行流、events、产物和能力结果。</small>
+                <button type="button" className="btn primary" disabled={!selectedNode} onClick={() => selectedNode && onOpenNodeRuns(selectedNode.nodeId)}>打开运行工作台</button>
+              </article>
+            </section>
             <NodeDetailOverviewPanel
               node={selectedNode}
               modules={modules}

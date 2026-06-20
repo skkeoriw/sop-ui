@@ -539,6 +539,7 @@ export interface NodeRunCreateInput {
   pipelineId?: string;
   manualInputs?: Record<string, unknown>;
   overrides?: Record<string, unknown>;
+  capabilityOverrides?: Record<string, unknown>;
   retryOf?: string;
 }
 
@@ -620,6 +621,11 @@ export interface NodeRunResult {
   actualOutputs?: Record<string, unknown>;
   validation?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  runtimeContext?: Record<string, unknown>;
+  instanceContext?: Record<string, unknown>;
+  definitionDefaults?: Record<string, unknown>;
+  capabilityOverrides?: Record<string, unknown>;
+  definitionScopeReports?: Record<string, unknown>;
   environmentSnapshot?: NodeRunEnvironmentItem[];
   capabilityResults?: NodeRunCapabilityResult[];
   issues?: NodeRunIssue[];
