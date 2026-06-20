@@ -1233,6 +1233,154 @@ function nodeRunCapabilityOverridePayload(params: {
   };
 }
 
+function compactEdits(values: Record<string, string>) {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim()));
+}
+
+function capabilityConfigQueryKey(mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId = "") {
+  return ["capability-config", mode, runtime?.id || runtime?.endpoint || "", instanceId, nodeId];
+}
+
+function CapabilityConfigEditor({
+  provider,
+  runtime,
+  instance,
+  mode,
+  nodeId,
+  title = "Capability Config",
+  description = "查看当前解析到的配置来源；填写新值后可以仅用于本次运行，或保存到 Instance / Runtime / Global。",
+  defaultScope = "instance",
+  allowRunScope = false,
+  compact = false,
+  onRunOverrideChange,
+}: {
+  provider: SopDataProvider;
+  runtime?: Runtime;
+  instance?: Instance;
+  mode: DataMode;
+  nodeId?: string;
+  title?: string;
+  description?: string;
+  defaultScope?: "run" | "instance" | "runtime" | "global";
+  allowRunScope?: boolean;
+  compact?: boolean;
+  onRunOverrideChange?: (values: Record<string, string>) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [scope, setScope] = useState<"run" | "instance" | "runtime" | "global">(defaultScope);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const instanceId = instance?.instanceId || "";
+  const query = useQuery({
+    queryKey: capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || ""),
+    queryFn: () => provider.getCapabilityConfig(runtime!, instanceId, nodeId),
+    enabled: Boolean(runtime && instanceId),
+    retry: 1,
+  });
+  const saveMutation = useMutation({
+    mutationFn: () => provider.saveCapabilityConfig(runtime!, instanceId, {
+      scope: scope === "run" ? "instance" : scope,
+      values: compactEdits(edits),
+      nodeId,
+    }),
+    onSuccess: (config) => {
+      setEdits({});
+      queryClient.setQueryData(capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || ""), config);
+      queryClient.invalidateQueries({ queryKey: capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || "") });
+    },
+  });
+  useEffect(() => {
+    if (scope === "run") onRunOverrideChange?.(compactEdits(edits));
+    else onRunOverrideChange?.({});
+  }, [edits, scope, onRunOverrideChange]);
+  useEffect(() => {
+    setScope(defaultScope);
+    setEdits({});
+  }, [defaultScope, instanceId, nodeId]);
+  const config = query.data;
+  const fields = config?.items || [];
+  const editedCount = Object.keys(compactEdits(edits)).length;
+  const scopes = allowRunScope ? ["run", "instance", "runtime", "global"] : ["instance", "runtime", "global"];
+  return (
+    <section className={`capability-config-editor ${compact ? "compact" : ""}`}>
+      <div className="capability-config-head">
+        <div>
+          <strong>{title}</strong>
+          <span>{description}</span>
+        </div>
+        <div className="capability-config-actions">
+          <label>
+            <span>保存范围</span>
+            <select value={scope} onChange={(event) => setScope(event.target.value as "run" | "instance" | "runtime" | "global")}>
+              {scopes.map((item) => (
+                <option key={item} value={item}>
+                  {item === "run" ? "仅本次运行" : item === "instance" ? "保存到 Instance" : item === "runtime" ? "提升到 Runtime" : "提升到 Global Settings"}
+                </option>
+              ))}
+            </select>
+          </label>
+          {scope !== "run" ? (
+            <button type="button" className="btn primary" disabled={!editedCount || saveMutation.isPending || !runtime || !instance} onClick={() => saveMutation.mutate()}>
+              {saveMutation.isPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
+              保存配置{editedCount ? ` (${editedCount})` : ""}
+            </button>
+          ) : (
+            <span className="status-pill waiting">本次运行覆盖 {editedCount}</span>
+          )}
+        </div>
+      </div>
+      {query.isLoading ? <Skeleton /> : null}
+      {query.error ? <div className="inline-error">{String(query.error instanceof Error ? query.error.message : query.error)}</div> : null}
+      {saveMutation.error ? <div className="inline-error">{String(saveMutation.error instanceof Error ? saveMutation.error.message : saveMutation.error)}</div> : null}
+      {config ? (
+        <>
+          <div className="capability-config-meta">
+            <span>{config.backend || "settings"}</span>
+            <span>{config.updatedAt ? formatBeijingTime(config.updatedAt) : "not saved"}</span>
+            <span>{config.precedence?.join(" > ") || "resolved precedence"}</span>
+          </div>
+          <div className="capability-config-grid">
+            {fields.map((field) => {
+              const scopeInfo = field.valuesByScope || {};
+              const secret = Boolean(field.secret || /TOKEN|KEY|SECRET|PRIVATE/.test(field.key));
+              return (
+                <article key={field.key} className={`capability-config-field ${field.present ? "present" : "missing"} ${edits[field.key]?.trim() ? "edited" : ""}`}>
+                  <div className="capability-config-field-head">
+                    <div>
+                      <strong>{field.label || field.key}</strong>
+                      <code>{field.key}</code>
+                    </div>
+                    <span className={`status-pill ${field.present ? "done" : field.required ? "failed" : "waiting"}`}>{field.present ? field.sourceKind || "resolved" : "missing"}</span>
+                  </div>
+                  <div className="capability-config-current">
+                    <span>当前值</span>
+                    <code title={field.maskedValue || ""}>{field.present ? field.maskedValue || "已配置" : "未配置"}</code>
+                    <small>{field.source || "missing"}</small>
+                  </div>
+                  <div className="capability-config-scope-row">
+                    {["instance", "runtime", "global", "runtime_env_file"].map((scopeName) => (
+                      <span key={scopeName} className={scopeInfo[scopeName]?.present ? "on" : ""}>
+                        {scopeName.replace("_", " ")}
+                      </span>
+                    ))}
+                  </div>
+                  <input
+                    type={secret ? "password" : "text"}
+                    value={edits[field.key] || ""}
+                    onChange={(event) => setEdits((current) => ({ ...current, [field.key]: event.target.value }))}
+                    placeholder={field.present ? "填写新值覆盖；留空保持当前值" : "填写配置值"}
+                    autoComplete="off"
+                  />
+                </article>
+              );
+            })}
+          </div>
+          {!fields.length ? <Empty text="当前没有可编辑 capability 配置" /> : null}
+        </>
+      ) : null}
+    </section>
+  );
+}
+
 function nodeRunCapabilityRows(result?: NodeRunResult): Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> {
   const issues = result?.issues || [];
   if (result?.capabilityResults?.length) {
@@ -1699,6 +1847,7 @@ function useNodeRunController({
   const [inputSource, setInputSource] = useState<NodeRunCreateInput["inputSource"]>("generated-fixture");
   const [seedRunId, setSeedRunId] = useState("");
   const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
+  const [runtimeOverrides, setRuntimeOverrides] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
   const nodeId = node?.nodeId || "";
   const instanceId = instance?.instanceId || "";
@@ -1716,6 +1865,7 @@ function useNodeRunController({
     setGitSaveScope("run");
     setTelegramEnabled(Boolean(nodeCapabilityRecord(node, "telegram").enabled ?? true));
     setTelegramSaveScope("run");
+    setRuntimeOverrides({});
   }, [nodeId]);
 
   useEffect(() => {
@@ -1765,6 +1915,7 @@ function useNodeRunController({
       inputSource,
       pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
       manualInputs,
+      overrides: runtimeOverrides,
       capabilityOverrides: nodeRunCapabilityOverridePayload({
         gitEnabled,
         gitPathsText,
@@ -1810,6 +1961,8 @@ function useNodeRunController({
     setSeedRunId,
     manualInputs,
     setManualInputs,
+    runtimeOverrides,
+    setRuntimeOverrides,
     gitEnabled,
     setGitEnabled,
     gitPathsText,
@@ -1855,6 +2008,7 @@ function NodeRunStartPanel({
     setSeedRunId,
     manualInputs,
     setManualInputs,
+    setRuntimeOverrides,
     gitEnabled,
     setGitEnabled,
     gitPathsText,
@@ -1951,6 +2105,19 @@ function NodeRunStartPanel({
           </label>
         )) : null}
       </div>
+      <CapabilityConfigEditor
+        provider={controller.provider}
+        runtime={runtime}
+        instance={instance}
+        mode={controller.mode}
+        nodeId={node.nodeId}
+        title="运行配置"
+        description="这些是当前 Node Run 会解析的环境配置。可以只覆盖本次运行，也可以保存到 Instance / Runtime / Global。"
+        defaultScope="run"
+        allowRunScope
+        compact
+        onRunOverrideChange={setRuntimeOverrides}
+      />
       <section className="node-run-capability-editor">
         <div className="section-title"><span>挂载能力</span><span>Runtime Harness</span></div>
         <article className={`node-run-capability-edit-card ${gitEnabled ? "enabled" : ""}`}>
@@ -2203,14 +2370,12 @@ function NodeDetailOverviewPanel({
   selectedModuleId,
   loading,
   onSelectModule,
-  onOpenRuns,
 }: {
   node: NodeRegistryItem | undefined;
   modules: NodeModule[];
   selectedModuleId?: string;
   loading: boolean;
   onSelectModule: (moduleId: string) => void;
-  onOpenRuns?: () => void;
 }) {
   if (loading) return <Skeleton />;
   if (!node) return <Empty text="没有选中的 Node" />;
@@ -2245,7 +2410,6 @@ function NodeDetailOverviewPanel({
       </div>
       <div className="node-detail-module-strip">
         <span>节点详情</span>
-        {onOpenRuns ? <button type="button" className="btn primary" onClick={onOpenRuns}>Open Runs</button> : null}
         {modules.map((module) => (
           <button key={module.id} type="button" className={`btn ${selectedModuleId === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>{module.title || module.id}</button>
         ))}
@@ -3107,11 +3271,11 @@ export default function App() {
     : selectedManagedNode?.modules?.length
       ? selectedManagedNode.modules
       : fallbackNodeModules(selectedManagedNode, Boolean(selectedRun));
-  const selectedNodeModule = selectedNodeModules.find((module) => module.id === selectedNodeModuleId) || selectedNodeModules[0];
+  const selectedNodeModule = selectedNodeModules.find((module) => module.id === selectedNodeModuleId) || selectedNodeModules.find((module) => module.id === "basic") || selectedNodeModules[0];
   const nodeModuleQuery = useQuery({
     queryKey: queryKeys.nodeModule(mode, runtime, instance?.instanceId || "", selectedManagedNode?.nodeId || "", selectedNodeModule?.id || "", selectedRun?.pipelineId || ""),
     queryFn: () => provider.getNodeModule(runtime!, instance!.instanceId, selectedManagedNode!.nodeId, selectedNodeModule!.id, selectedRun?.pipelineId),
-    enabled: Boolean(runtime && instance && selectedManagedNode && selectedNodeModule && viewMode === "nodes" && route.moduleId),
+    enabled: Boolean(runtime && instance && selectedManagedNode && selectedNodeModule && viewMode === "nodes" && !route.nodeRunList && !route.nodeRunId),
   });
   const nodeFilters = useMemo(() => {
     const managementGroups = ["create-runtime", "delete-runtime", "create-instance"].filter((group) => managedNodes.some((node) => matchesNodeGroup(node, group)));
@@ -6200,6 +6364,18 @@ function InstanceOverview({
           </div>
         </div>
 
+        <div className="flow-panel instance-config-panel">
+          <CapabilityConfigEditor
+            provider={provider}
+            runtime={runtime}
+            instance={instance}
+            mode={mode}
+            title="Instance Config"
+            description="配置当前 Instance 的 GitHub、Telegram 和节点运行依赖。测试失败后可在这里修复并重新测试。"
+            defaultScope="instance"
+          />
+        </div>
+
         <div className="flow-panel">
           <div className="panel-head"><div><strong>Available Workflow Context</strong><span>Workflow 执行时选择；从当前 Instance 进入时会默认选中它</span></div><button type="button" onClick={() => onOpenWorkflow()}>Open Workflow</button></div>
           <KeyValues data={{
@@ -8279,9 +8455,6 @@ function NodesWorkspace({
                 <strong>Node Detail</strong>
                 <span>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</span>
               </div>
-              <div className="node-detail-module-links">
-                {selectedNode ? <button type="button" className="btn primary" onClick={() => onOpenNodeRuns(selectedNode.nodeId)}>Open Runs</button> : null}
-              </div>
             </div>
             <section className="node-three-layer-grid">
               <article>
@@ -8319,7 +8492,6 @@ function NodesWorkspace({
               selectedModuleId={selectedModule?.id || routeModuleId}
               loading={loading}
               onSelectModule={onSelectModule}
-              onOpenRuns={selectedNode ? () => onOpenNodeRuns(selectedNode.nodeId) : undefined}
             />
             <NodeModuleInlinePanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} />
             <details className="node-definition-details">

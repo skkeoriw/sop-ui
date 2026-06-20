@@ -1,6 +1,8 @@
 import { normalizeEndpoint } from "./provider";
 import { controlPlaneApiUrl } from "./control-plane-provider";
 import type {
+  CapabilityConfigPreview,
+  CapabilityConfigSaveInput,
   Dag,
   Instance,
   InstanceList,
@@ -616,6 +618,47 @@ function mapNodeTestStep(raw: Record<string, unknown>) {
     finishedAt: raw.finished_at ? String(raw.finished_at) : undefined,
     elapsedMs: typeof raw.elapsed_ms === "number" ? raw.elapsed_ms : undefined,
     detail: (raw.detail as Record<string, unknown>) || {},
+  };
+}
+
+function mapCapabilityConfigPreview(raw: Record<string, unknown>): CapabilityConfigPreview {
+  const rawItems = Array.isArray(raw.items) ? raw.items as Array<Record<string, unknown>> : [];
+  return {
+    runtimeId: raw.runtime_id ? String(raw.runtime_id) : raw.runtimeId ? String(raw.runtimeId) : undefined,
+    instanceId: raw.instance_id ? String(raw.instance_id) : raw.instanceId ? String(raw.instanceId) : undefined,
+    nodeId: raw.node_id ? String(raw.node_id) : raw.nodeId ? String(raw.nodeId) : undefined,
+    backend: raw.backend ? String(raw.backend) : undefined,
+    updatedAt: raw.updated_at ? String(raw.updated_at) : raw.updatedAt ? String(raw.updatedAt) : undefined,
+    envFile: raw.env_file ? String(raw.env_file) : raw.envFile ? String(raw.envFile) : undefined,
+    precedence: Array.isArray(raw.precedence) ? raw.precedence.map(String) : [],
+    groups: (raw.groups as Record<string, boolean>) || {},
+    scopes: (raw.scopes as Record<string, string>) || {},
+    note: raw.note ? String(raw.note) : undefined,
+    items: rawItems.map((item) => {
+      const valuesByScopeRaw = (item.values_by_scope || item.valuesByScope || {}) as Record<string, Record<string, unknown>>;
+      const valuesByScope = Object.fromEntries(Object.entries(valuesByScopeRaw).map(([scope, value]) => [scope, {
+        present: Boolean(value?.present),
+        matchedKey: value?.matched_key ? String(value.matched_key) : value?.matchedKey ? String(value.matchedKey) : undefined,
+        maskedValue: value?.masked_value ? String(value.masked_value) : value?.maskedValue ? String(value.maskedValue) : undefined,
+        secret: typeof value?.secret === "boolean" ? value.secret : undefined,
+      }]));
+      return {
+        key: String(item.key || ""),
+        aliases: Array.isArray(item.aliases) ? item.aliases.map(String) : [],
+        label: item.label ? String(item.label) : undefined,
+        capability: item.capability ? String(item.capability) : undefined,
+        category: item.category ? String(item.category) : undefined,
+        required: typeof item.required === "boolean" ? item.required : undefined,
+        secret: typeof item.secret === "boolean" ? item.secret : undefined,
+        editableScopes: Array.isArray(item.editable_scopes) ? item.editable_scopes.map(String) : Array.isArray(item.editableScopes) ? item.editableScopes.map(String) : [],
+        matchedKey: item.matched_key ? String(item.matched_key) : item.matchedKey ? String(item.matchedKey) : undefined,
+        source: item.source ? String(item.source) : undefined,
+        sourceKind: item.source_kind ? String(item.source_kind) : item.sourceKind ? String(item.sourceKind) : undefined,
+        present: typeof item.present === "boolean" ? item.present : undefined,
+        maskedValue: item.masked_value ? String(item.masked_value) : item.maskedValue ? String(item.maskedValue) : undefined,
+        valuesByScope,
+      };
+    }),
   };
 }
 
@@ -1455,6 +1498,35 @@ export const sopProvider: SopDataProvider = {
       }
     );
     return mapRuntimeInheritancePreview((raw.config as Record<string, unknown>) || raw);
+  },
+
+  async getCapabilityConfig(runtime, instanceId, nodeId) {
+    const suffix = nodeId
+      ? `/nodes/${encodeURIComponent(nodeId)}/config/capabilities`
+      : "/config/capabilities";
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}${suffix}`
+    );
+    return mapCapabilityConfigPreview(raw);
+  },
+
+  async saveCapabilityConfig(runtime, instanceId, input: CapabilityConfigSaveInput) {
+    const suffix = input.nodeId
+      ? `/nodes/${encodeURIComponent(input.nodeId)}/config/capabilities`
+      : "/config/capabilities";
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}${suffix}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: input.scope,
+          values: input.values,
+          node_id: input.nodeId || "",
+        }),
+      }
+    );
+    return mapCapabilityConfigPreview((raw.config as Record<string, unknown>) || raw);
   },
 
   async triggerRun(runtime, instanceId, input: TriggerInput): Promise<TriggerResult> {

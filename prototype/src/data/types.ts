@@ -130,6 +130,50 @@ export interface RuntimeManagementConfigSaveInput {
   values: Record<string, string>;
 }
 
+export interface CapabilityConfigScopeValue {
+  present?: boolean;
+  matchedKey?: string;
+  maskedValue?: string;
+  secret?: boolean;
+}
+
+export interface CapabilityConfigItem {
+  key: string;
+  aliases?: string[];
+  label?: string;
+  capability?: string;
+  category?: string;
+  required?: boolean;
+  secret?: boolean;
+  editableScopes?: string[];
+  matchedKey?: string;
+  source?: string;
+  sourceKind?: string;
+  present?: boolean;
+  maskedValue?: string;
+  valuesByScope?: Record<string, CapabilityConfigScopeValue>;
+}
+
+export interface CapabilityConfigPreview {
+  runtimeId?: string;
+  instanceId?: string;
+  nodeId?: string;
+  backend?: string;
+  updatedAt?: string;
+  envFile?: string;
+  precedence?: string[];
+  items: CapabilityConfigItem[];
+  groups?: Record<string, boolean>;
+  scopes?: Record<string, string>;
+  note?: string;
+}
+
+export interface CapabilityConfigSaveInput {
+  scope: "instance" | "runtime" | "global";
+  values: Record<string, string>;
+  nodeId?: string;
+}
+
 export interface MachineConfig {
   id: string;
   name: string;
@@ -772,6 +816,8 @@ export interface SopDataProvider {
   getRuntimeManagementConfig(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   saveRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview>;
   initializeRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: { overwrite?: boolean }): Promise<RuntimeInheritancePreview>;
+  getCapabilityConfig(runtime: Runtime, instanceId: string, nodeId?: string): Promise<CapabilityConfigPreview>;
+  saveCapabilityConfig(runtime: Runtime, instanceId: string, input: CapabilityConfigSaveInput): Promise<CapabilityConfigPreview>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;
   retryNode(runtime: Runtime, instanceId: string, pipelineId: string, nodeId: string): Promise<void>;
   cancelRun(runtime: Runtime, instanceId: string, pipelineId: string, reason?: string): Promise<void>;

@@ -3,6 +3,8 @@ import type { RunMock } from "../mock";
 import type {
   Dag,
   Artifact,
+  CapabilityConfigPreview,
+  CapabilityConfigSaveInput,
   Instance,
   InstanceList,
   NodeConfig,
@@ -487,6 +489,69 @@ function mockNodeRun(instanceId: string, workflowId: string, nodeId: string, nod
   };
 }
 
+function mockCapabilityConfig(runtimeId: string, instanceId: string, nodeId = ""): CapabilityConfigPreview {
+  return {
+    runtimeId,
+    instanceId,
+    nodeId,
+    backend: "mock",
+    updatedAt: new Date().toISOString(),
+    envFile: "~/.agent-brain-plugins.env",
+    precedence: ["node-run-overrides", "instance-settings", "runtime-settings", "global-settings", "runtime-env-file", "bridge-env"],
+    groups: { github: true, telegram: false, runtime: true },
+    scopes: {
+      run: "Only this Node Run",
+      instance: "Saved for this Instance",
+      runtime: "Saved for this Runtime",
+      global: "Global default",
+    },
+    items: [
+      {
+        key: "GITHUB_TOKEN",
+        label: "GitHub Token",
+        capability: "git",
+        category: "github",
+        present: true,
+        secret: true,
+        required: false,
+        source: "global-settings:GITHUB_TOKEN",
+        sourceKind: "global-settings",
+        maskedValue: "ghp***123",
+        editableScopes: ["run", "instance", "runtime", "global"],
+        valuesByScope: { global: { present: true, maskedValue: "ghp***123", secret: true } },
+      },
+      {
+        key: "YOUTUBE_WIKI_TG_TOKEN",
+        label: "Telegram Bot Token",
+        capability: "telegram",
+        category: "telegram",
+        present: false,
+        secret: true,
+        required: false,
+        source: "missing:YOUTUBE_WIKI_TG_TOKEN",
+        sourceKind: "missing",
+        maskedValue: "",
+        editableScopes: ["run", "instance", "runtime", "global"],
+        valuesByScope: {},
+      },
+      {
+        key: "YOUTUBE_WIKI_TG_CHAT_ID",
+        label: "Telegram Chat ID",
+        capability: "telegram",
+        category: "telegram",
+        present: true,
+        secret: false,
+        required: false,
+        source: "instance-settings:YOUTUBE_WIKI_TG_CHAT_ID",
+        sourceKind: "instance-settings",
+        maskedValue: "779***193",
+        editableScopes: ["run", "instance", "runtime", "global"],
+        valuesByScope: { instance: { present: true, maskedValue: "779***193" } },
+      },
+    ],
+  };
+}
+
 export const mockProvider: SopDataProvider = {
   mode: "mock",
 
@@ -945,6 +1010,35 @@ export const mockProvider: SopDataProvider = {
       ),
     };
     return mockRuntimeManagementConfig;
+  },
+
+  async getCapabilityConfig(target, instanceId, nodeId): Promise<CapabilityConfigPreview> {
+    await delay();
+    return mockCapabilityConfig(target.id, instanceId, nodeId);
+  },
+
+  async saveCapabilityConfig(target, instanceId, input: CapabilityConfigSaveInput): Promise<CapabilityConfigPreview> {
+    await delay();
+    const config = mockCapabilityConfig(target.id, instanceId, input.nodeId);
+    const savedKeys = new Set(Object.entries(input.values).filter(([, value]) => value.trim()).map(([key]) => key));
+    return {
+      ...config,
+      updatedAt: new Date().toISOString(),
+      items: config.items.map((item) => savedKeys.has(item.key)
+        ? {
+          ...item,
+          present: true,
+          source: `${input.scope}-settings:${item.key}`,
+          sourceKind: `${input.scope}-settings`,
+          maskedValue: item.secret ? "new***ved" : input.values[item.key],
+          valuesByScope: {
+            ...(item.valuesByScope || {}),
+            [input.scope]: { present: true, maskedValue: item.secret ? "new***ved" : input.values[item.key], secret: item.secret },
+          },
+        }
+        : item
+      ),
+    };
   },
 
   async triggerRun(target, _instanceId, input: TriggerInput) {
