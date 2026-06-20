@@ -338,15 +338,10 @@ const mockNodeRunStepDefs = [
   ["persist-artifacts", "Persist node run artifacts", "Node Run artifacts recorded."],
 ] as const;
 
-const youtubeDeepResearchInnerDefs = [
-  ["prepare-request", "Prepare request", "Build worker request from resolved source_url."],
-  ["call-worker", "Call worker", "Submit job to YouTube Deep Research Worker."],
-  ["wait-worker-job", "Wait worker job", "Wait for accepted job to become readable."],
-  ["poll-result", "Poll result", "Poll worker result until done or timeout."],
-  ["download-artifacts", "Download artifacts", "Download transcript and analysis files."],
-  ["write-workspace", "Write workspace", "Write raw/youtube-deep-research artifacts."],
-  ["commit-git", "Commit git", "Persist artifacts to instance repo."],
-  ["send-progress-notification", "Send progress notification", "Send explicit TG progress notification if enabled."],
+const nodeLifecycleInnerDefs = [
+  ["pre", "执行前", "解析上下文、输入和运行配置，并进入 stage_runner on_start。"],
+  ["doing", "执行中", "执行节点 Skill / agent 业务逻辑。"],
+  ["post", "执行后", "记录结果、校验输出，并按 capability 配置处理 GitHub / Telegram。"],
 ] as const;
 
 function mockRunElapsed(nodeRunId: string) {
@@ -365,13 +360,13 @@ function mockStepStatus(index: number, elapsedMs: number, mode: string) {
 }
 
 function mockInnerStepStatus(index: number, elapsedMs: number, mode: string) {
-  if (mode !== "dry-run") return "waiting";
+  if (mode !== "real-node") return index === 0 ? "done" : "skipped";
   const start = 650 * 7;
-  const activeIndex = Math.min(Math.max(Math.floor((elapsedMs - start) / 420), 0), youtubeDeepResearchInnerDefs.length - 1);
+  const activeIndex = Math.min(Math.max(Math.floor((elapsedMs - start) / 700), 0), nodeLifecycleInnerDefs.length - 1);
   if (elapsedMs < start) return "waiting";
   if (index < activeIndex) return "done";
   if (index > activeIndex) return "waiting";
-  if (elapsedMs < start + 420 * youtubeDeepResearchInnerDefs.length) return "running";
+  if (elapsedMs < start + 700 * nodeLifecycleInnerDefs.length) return "running";
   return "done";
 }
 
@@ -401,19 +396,19 @@ function mockNodeRunSteps(nodeRunId: string, mode: string): NodeTestStep[] {
 }
 
 function mockInnerSteps(nodeRunId: string, nodeId: string, mode: string): NodeTestStep[] {
-  if (nodeId !== "youtube-deep-research") return [];
+  void nodeId;
   const elapsed = mockRunElapsed(nodeRunId);
-  return youtubeDeepResearchInnerDefs.map(([id, title, summary], index) => {
+  return nodeLifecycleInnerDefs.map(([id, title, summary], index) => {
     const status = mockInnerStepStatus(index, elapsed, mode);
     return {
       id,
       title,
       status,
       summary,
-      startedAt: status === "waiting" ? undefined : mockTimestamp(nodeRunId, 650 * 7 + index * 420),
-      finishedAt: status === "done" ? mockTimestamp(nodeRunId, 650 * 7 + index * 420 + 320) : undefined,
-      elapsedMs: status === "running" ? Math.max(1, elapsed - (650 * 7 + index * 420)) : status === "waiting" ? undefined : 320,
-      detail: { inner_flow: true },
+      startedAt: status === "waiting" ? undefined : mockTimestamp(nodeRunId, 650 * 7 + index * 700),
+      finishedAt: status === "done" || status === "skipped" ? mockTimestamp(nodeRunId, 650 * 7 + index * 700 + 520) : undefined,
+      elapsedMs: status === "running" ? Math.max(1, elapsed - (650 * 7 + index * 700)) : status === "waiting" ? undefined : 520,
+      detail: { lifecycle: true },
     };
   });
 }

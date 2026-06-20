@@ -1059,28 +1059,10 @@ const NODE_RUN_OUTER_STEP_COPY: Record<string, { title: string; summary?: string
   "persist-artifacts": { title: "持久化运行产物", summary: "写入 Node Run 诊断结果和业务产物索引。" },
 };
 
-const YOUTUBE_DEEP_RESEARCH_ACTION_STEPS = [
-  "准备请求参数",
-  "提交 YouTube 深度研究任务",
-  "等待 Worker 接收任务",
-  "轮询 Worker 结果",
-  "下载分析与字幕产物",
-  "写入 Instance 工作区",
-  "提交并推送 Git 产物",
-  "发送 Telegram 进度通知",
-];
-
-const NODE_INNER_STEP_COPY: Record<string, Record<string, { title: string; summary?: string }>> = {
-  "youtube-deep-research": {
-    "prepare-request": { title: "准备请求参数", summary: "根据输入 source_url 和 Instance 配置生成 Worker 请求。" },
-    "call-worker": { title: "提交 YouTube 深度研究任务", summary: "调用 YouTube Deep Research Worker 创建研究任务。" },
-    "wait-worker-job": { title: "等待 Worker 接收任务", summary: "等待 Worker 返回可查询的任务状态。" },
-    "poll-result": { title: "轮询 Worker 结果", summary: "持续查询 Worker，直到任务完成或超时。" },
-    "download-artifacts": { title: "下载分析与字幕产物", summary: "拉取 transcript、analysis 等业务产物。" },
-    "write-workspace": { title: "写入 Instance 工作区", summary: "把业务产物写入当前 Instance 的工作目录。" },
-    "commit-git": { title: "提交并推送 Git 产物", summary: "把产物提交到当前 Instance 绑定的 GitHub repo。" },
-    "send-progress-notification": { title: "发送 Telegram 进度通知", summary: "使用 Instance/Runtime 中解析出的 TG 配置发送进度消息。" },
-  },
+const NODE_RUN_LIFECYCLE_STEP_COPY: Record<string, { title: string; summary?: string }> = {
+  pre: { title: "执行前", summary: "解析上下文、输入和运行配置，并进入 stage_runner on_start。" },
+  doing: { title: "执行中", summary: "执行节点 Skill / agent 业务逻辑。" },
+  post: { title: "执行后", summary: "记录结果、校验输出，并按 capability 配置处理 GitHub / Telegram。" },
 };
 
 function nodeRunModeLabel(value?: string) {
@@ -1170,13 +1152,13 @@ function nodeRunInputPreviewRows(
 
 function nodeActionSteps(nodeId?: string, actions?: string[]) {
   const declared = (actions || []).filter(Boolean);
-  if (declared.length) return declared;
-  if (nodeId === "youtube-deep-research") return YOUTUBE_DEEP_RESEARCH_ACTION_STEPS;
+  void nodeId;
   return declared;
 }
 
 function localizedNodeRunStep(step: NodeTestStep, nodeId?: string): NodeTestStep {
-  const copy = NODE_INNER_STEP_COPY[nodeId || ""]?.[step.id] || NODE_RUN_OUTER_STEP_COPY[step.id];
+  void nodeId;
+  const copy = NODE_RUN_LIFECYCLE_STEP_COPY[step.id] || NODE_RUN_OUTER_STEP_COPY[step.id];
   if (!copy) return step;
   return {
     ...step,
@@ -1886,6 +1868,83 @@ const NodeRunStepFlowNode = memo(({ data }: NodeProps<Node<NodeRunStepNodeData>>
 
 const nodeRunNodeTypes = { nodeRunStep: NodeRunStepFlowNode };
 
+function nodeRunOutputValue(value: unknown) {
+  if (Array.isArray(value)) return value.length ? value.map((item) => String(item)).join("\n") : "未生成";
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.path) return String(record.path);
+    if (record.from) return String(record.from);
+    return formatValue(record);
+  }
+  return value === undefined || value === null || value === "" ? "未生成" : String(value);
+}
+
+function nodeRunStringArray(value: unknown) {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+}
+
+function NodeRunOutputValidationSummary({
+  result,
+  step,
+}: {
+  result: NodeRunResult | undefined;
+  step: NodeTestStep | undefined;
+}) {
+  const detail = detailRecord(result?.detail);
+  const realExecution = detailRecord(detail.real_execution);
+  const realDetail = detailRecord(realExecution.detail);
+  const nodeState = detailRecord(realDetail.node_state);
+  const stepDetail = detailRecord(step?.detail);
+  const stepDeclaredOutputs = detailRecord(stepDetail.declared_outputs);
+  const stateDeclaredOutputs = detailRecord(nodeState.declared_outputs);
+  const declaredOutputs = Object.keys(stepDeclaredOutputs).length ? stepDeclaredOutputs : stateDeclaredOutputs;
+  const actualOutputs = result?.actualOutputs && Object.keys(result.actualOutputs).length
+    ? result.actualOutputs
+    : Object.keys(detailRecord(realExecution.actual_outputs)).length
+      ? detailRecord(realExecution.actual_outputs)
+      : detailRecord(stepDetail.actual_outputs);
+  const stepValidation = detailRecord(stepDetail.validation);
+  const validation = result?.validation && Object.keys(result.validation).length
+    ? result.validation
+    : Object.keys(stepValidation).length ? stepValidation : stepDetail;
+  const missing = nodeRunStringArray(validation.missing_outputs);
+  const unexpected = nodeRunStringArray(validation.unexpected_outputs);
+  const declaredEntries = Object.entries(declaredOutputs);
+  const actualEntries = Object.entries(actualOutputs || {});
+  return (
+    <div className="node-run-validation-summary">
+      <div className="section-title"><span>输出校验摘要</span><span>{String(validation.status || step?.status || "unknown")}</span></div>
+      <div className="node-run-validation-stats">
+        <span><b>声明输出</b>{declaredEntries.length}</span>
+        <span><b>实际输出</b>{actualEntries.length}</span>
+        <span><b>缺失</b>{missing.length}</span>
+        <span><b>多余</b>{unexpected.length}</span>
+      </div>
+      <div className="node-run-output-grid">
+        {declaredEntries.map(([name, spec]) => {
+          const isMissing = missing.includes(name);
+          return (
+            <article key={name} className={isMissing ? "err" : "done"}>
+              <div><strong>{name}</strong><span className={`status-pill ${isMissing ? "failed" : "done"}`}>{isMissing ? "missing" : "declared"}</span></div>
+              <code>{nodeRunOutputValue(spec)}</code>
+              {actualOutputs && Object.prototype.hasOwnProperty.call(actualOutputs, name) ? (
+                <small>实际：{nodeRunOutputValue((actualOutputs as Record<string, unknown>)[name])}</small>
+              ) : null}
+            </article>
+          );
+        })}
+        {!declaredEntries.length && actualEntries.map(([name, value]) => (
+          <article key={name} className="done">
+            <div><strong>{name}</strong><span className="status-pill done">actual</span></div>
+            <code>{nodeRunOutputValue(value)}</code>
+          </article>
+        ))}
+        {!declaredEntries.length && !actualEntries.length ? <div className="node-run-empty">当前结果没有声明输出或实际输出记录。</div> : null}
+      </div>
+    </div>
+  );
+}
+
 function NodeRunStepDetailPanel({
   step,
   result,
@@ -1900,7 +1959,7 @@ function NodeRunStepDetailPanel({
   const suggestions = detailList(detail.fix_suggestions);
   const stepEvents = (events?.length ? events : result?.events || []).filter((event) => event.stepId === step?.id);
   const scalarRows = nodeRunStepScalarRows(stepDetail);
-  const innerFlowIsRelevant = step?.id === "execute-or-dry-run" || step?.id === "build-execution-plan";
+  const innerFlowIsRelevant = step?.id === "execute-or-dry-run";
   if (!step) return <aside id="node-run-step-detail" className="node-run-step-detail-panel"><Empty text="选择一个阶段查看详情" /></aside>;
   const showFixes = ["failed", "blocked", "needs_input"].includes(step.status);
   return (
@@ -1957,10 +2016,11 @@ function NodeRunStepDetailPanel({
       ) : null}
       {innerFlowIsRelevant && (result?.innerSteps || []).length ? (
         <div className="node-run-step-inner-flow">
-          <div className="section-title"><span>内部执行步骤</span><span>{result?.innerSteps?.length || 0}</span></div>
+          <div className="section-title"><span>执行节点逻辑</span><span>{result?.innerSteps?.length || 0}</span></div>
           <NodeRunInnerFlow result={result} />
         </div>
       ) : null}
+      {step.id === "validate-outputs" ? <NodeRunOutputValidationSummary result={result} step={step} /> : null}
       {step.detail && Object.keys(step.detail).length ? (
         <details className="node-run-step-raw">
           <summary><span>阶段原始详情</span><ChevronDown size={14} /></summary>
@@ -2058,7 +2118,7 @@ function NodeRunInnerFlow({ result }: { result: NodeRunResult | undefined }) {
       detail: detailRecord(item.detail),
     }))).map((step) => localizedNodeRunStep(step, result?.nodeId));
   if (!innerSteps.length) {
-    return <div className="node-run-empty">该 Node 暂未提供内部执行步骤。</div>;
+    return <div className="node-run-empty">该 Node Run 暂未提供执行生命周期。</div>;
   }
   return (
     <div className="node-run-inner-flow" aria-label="Node inner flow">
@@ -2156,34 +2216,36 @@ function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
         </article>
       ))}
       {!issues.length ? <div className="node-run-empty">当前诊断没有给出必须修复项。</div> : null}
-      <div className="section-title"><span>本次加载的运行配置</span><span>{environment.length}</span></div>
-      {environment.map((item) => (
-        <article key={item.id || `${item.capability || "config"}-${item.key}-${item.source || ""}`} className={`node-run-config-card ${item.present === false ? "err" : nodeRunCardTone(item.status || "")}`}>
-          <div>
-            <strong>{item.label || item.key}</strong>
-            <span className={`status-pill ${nodeRunTone(item.present === false ? "failed" : item.status || "done")}`}>{item.present === false ? "missing" : item.sourceKind || "loaded"}</span>
-          </div>
-          <div className="node-run-env-meta">
-            <span>{item.capability || "runtime"}</span>
-            <span>{item.source || "-"}</span>
-            {item.required ? <span>required</span> : null}
-          </div>
-          <code>{item.value || (item.present === false ? "missing" : "-")}</code>
-        </article>
-      ))}
-      {!environment.length ? (
-        Object.keys(configs).length ? (
+      <details className="node-run-config-details">
+        <summary><span>本次加载的运行配置</span><em>{environment.length}</em><ChevronDown size={14} /></summary>
+        {environment.map((item) => (
+          <article key={item.id || `${item.capability || "config"}-${item.key}-${item.source || ""}`} className={`node-run-config-card ${item.present === false ? "err" : nodeRunCardTone(item.status || "")}`}>
+            <div>
+              <strong>{item.label || item.key}</strong>
+              <span className={`status-pill ${nodeRunTone(item.present === false ? "failed" : item.status || "done")}`}>{item.present === false ? "missing" : item.sourceKind || "loaded"}</span>
+            </div>
+            <div className="node-run-env-meta">
+              <span>{item.capability || "runtime"}</span>
+              <span>{item.source || "-"}</span>
+              {item.required ? <span>required</span> : null}
+            </div>
+            <code>{item.value || (item.present === false ? "missing" : "-")}</code>
+          </article>
+        ))}
+        {!environment.length ? (
+          Object.keys(configs).length ? (
+            <details className="node-run-raw-config">
+              <summary><span>查看原始配置解析</span><ChevronDown size={14} /></summary>
+              <code>{formatValue(configs)}</code>
+            </details>
+          ) : <Empty text="还没有配置解析结果" />
+        ) : (
           <details className="node-run-raw-config">
-            <summary><span>查看原始配置解析</span><ChevronDown size={14} /></summary>
+            <summary><span>原始配置解析</span><ChevronDown size={14} /></summary>
             <code>{formatValue(configs)}</code>
           </details>
-        ) : <Empty text="还没有配置解析结果" />
-      ) : (
-        <details className="node-run-raw-config">
-          <summary><span>原始配置解析</span><ChevronDown size={14} /></summary>
-          <code>{formatValue(configs)}</code>
-        </details>
-      )}
+        )}
+      </details>
     </div>
   );
 }
@@ -2223,7 +2285,7 @@ function NodeRunDetail({
         {result.reason ? <p>{result.reason}</p> : null}
       </div> : null}
       {showFlow ? <NodeRunFlow result={result} /> : null}
-      {showFlow ? <DetailBlock title="内部执行步骤">
+      {showFlow ? <DetailBlock title="执行节点逻辑">
         <NodeRunInnerFlow result={result} />
       </DetailBlock> : null}
       <div className="node-run-detail-grid">
@@ -3143,7 +3205,7 @@ function NodeRunDetailPage({
                 )}
               </section>
               <details className="node-run-inner-details">
-                <summary><span>内部执行步骤</span><ChevronDown size={15} /></summary>
+                <summary><span>执行节点逻辑</span><ChevronDown size={15} /></summary>
                 <NodeRunInnerFlow result={result} />
               </details>
               <NodeRunResultTabs result={result} events={controller.events} />
@@ -3151,17 +3213,20 @@ function NodeRunDetailPage({
             <aside className="node-run-debug-panel">
               <NodeRunCapabilitySummary result={result} />
               <NodeRunConfigPanel result={result} />
-              <InheritedSettingsPanel
-                provider={provider}
-                runtime={runtime}
-                instance={instance}
-                mode={mode}
-                nodeId={node?.nodeId}
-                title="运行配置继承"
-                description="这里展示本次 Node Run 解析到的 Settings/Runtime/Instance 配置。当前页面不保存上游配置；默认值请去 Settings，工作区身份请去 Instance。"
-                compact
-                onOpenSettings={onOpenSettings}
-              />
+              <details className="node-run-context-details">
+                <summary><span>运行配置继承</span><ChevronDown size={15} /></summary>
+                <InheritedSettingsPanel
+                  provider={provider}
+                  runtime={runtime}
+                  instance={instance}
+                  mode={mode}
+                  nodeId={node?.nodeId}
+                  title="配置来源"
+                  description="这里展示本次 Node Run 解析到的 Settings/Runtime/Instance 配置。当前页面不保存上游配置；默认值请去 Settings，工作区身份请去 Instance。"
+                  compact
+                  onOpenSettings={onOpenSettings}
+                />
+              </details>
               <div className="node-run-repair-actions">
                 <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="github" />
                 <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="telegram" />
