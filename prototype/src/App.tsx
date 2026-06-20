@@ -1234,17 +1234,6 @@ function nodeRunCapabilityOverridePayload(params: {
   };
 }
 
-function compactEdits(values: Record<string, string>) {
-  return Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim()));
-}
-
-const CONFIG_SCOPE_LABELS: Record<string, string> = {
-  run: "仅本次 Node Run",
-  instance: "保存到当前 Instance",
-  runtime: "保存到当前 Runtime",
-  global: "保存到 Settings 默认值",
-};
-
 const CONFIG_SOURCE_LABELS: Record<string, string> = {
   "node-run-overrides": "本次运行",
   "instance-settings": "Instance",
@@ -1261,43 +1250,146 @@ const CONFIG_SOURCE_LABELS: Record<string, string> = {
   bridge_env: "进程环境",
 };
 
-function configScopeLabel(scope: string) {
-  return CONFIG_SCOPE_LABELS[scope] || scope;
-}
-
 function configSourceLabel(source: string) {
   return CONFIG_SOURCE_LABELS[source] || source.replace(/_/g, " ");
 }
 
-function compactConfigTags(values: Array<string | undefined>, limit = 5) {
-  const seen = new Set<string>();
-  const tags = values.filter((item): item is string => Boolean(item?.trim())).filter((item) => {
-    if (seen.has(item)) return false;
-    seen.add(item);
-    return true;
-  });
-  return {
-    visible: tags.slice(0, limit),
-    hiddenCount: Math.max(0, tags.length - limit),
-  };
+const SETTING_GROUP_WORKFLOW_TAGS: Record<string, string[]> = {
+  cloudflare: ["runtime-management"],
+  github: ["runtime-management", "youtube-research-wiki"],
+  "hermes-auth": ["runtime-management", "node-run"],
+  "telegram-defaults": ["youtube-research-wiki"],
+  "runtime-defaults": ["runtime-management"],
+  "instance-defaults": ["runtime-management", "youtube-research-wiki"],
+  "core-repos": ["runtime-management"],
+  "infra-repos": ["runtime-management"],
+  "machine-defaults": ["runtime-management"],
+  other: ["runtime-management", "youtube-research-wiki"],
+};
+
+const SETTING_CONFIG_GROUPS = [
+  {
+    id: "cloudflare",
+    title: "Cloudflare",
+    subtitle: "全局 DNS / tunnel 路由认证",
+    keys: [
+      { key: "CLOUDFLARE_EMAIL", label: "Cloudflare Email", placeholder: "name@example.com" },
+      { key: "CLOUDFLARE_API_KEY", label: "Global API Key", placeholder: "已保存时会显示 masked；填写则覆盖" },
+      { key: "TUNNEL_API", label: "Tunnel API", placeholder: "" },
+    ],
+  },
+  {
+    id: "github",
+    title: "GitHub",
+    subtitle: "全局代码访问凭据和 owner 级 token",
+    keys: [
+      { key: "GITHUB_TOKEN", label: "Default GitHub Token", placeholder: "默认 GitHub token" },
+      { key: "GITHUB_CHANGFENGHU_TOKEN", label: "ChangfengHU Token", placeholder: "用于 ChangfengHU 下的基础设施仓库" },
+      { key: "GITHUB_SKKEORIW_TOKEN", label: "skkeoriw Token", placeholder: "用于 skkeoriw 下的 runtime brain 仓库" },
+    ],
+  },
+  {
+    id: "hermes-auth",
+    title: "Hermes Auth",
+    subtitle: "Hermes CLI / gateway 默认 OpenAI-compatible 模型配置",
+    keys: [
+      { key: "HERMES_MODEL_PROVIDER", label: "Provider", placeholder: "openai" },
+      { key: "HERMES_MODEL", label: "Default Model", placeholder: "deepseek-v4-flash 或 deepseek-v4-pro" },
+      { key: "HERMES_MODEL_BASE_URL", label: "Base URL", placeholder: "https://api-proxy.chxyka.ccwu.cc/v1" },
+      { key: "HERMES_OPENAI_API_KEY", label: "OpenAI-compatible API Key", placeholder: "Bearer token，不要带 Bearer 前缀" },
+    ],
+  },
+  {
+    id: "telegram-defaults",
+    title: "Telegram Defaults",
+    subtitle: "作为 create-instance 的默认 TG 通知配置，可被 Instance 覆盖",
+    keys: [
+      { key: "YOUTUBE_WIKI_TG_TOKEN", label: "Default TG Bot Token", placeholder: "create-instance 默认 Telegram bot token" },
+      { key: "YOUTUBE_WIKI_TG_CHAT_ID", label: "Default TG Chat ID", placeholder: "create-instance 默认 Telegram chat id" },
+    ],
+  },
+  {
+    id: "runtime-defaults",
+    title: "Runtime Defaults",
+    subtitle: "create-runtime / runtime-management 初始化默认值",
+    keys: [
+      { key: "BRIDGE_PORT", label: "Bridge Port", placeholder: "18121" },
+      { key: "HERMES_WEBHOOK_PORT", label: "Hermes Webhook Port", placeholder: "8644" },
+      { key: "WEBHOOK_PUBLIC_HOST", label: "Webhook Public Host", placeholder: "runtime 初始化后写入" },
+    ],
+  },
+  {
+    id: "instance-defaults",
+    title: "Instance Defaults",
+    subtitle: "create-instance 默认仓库、模型和业务配置",
+    keys: [
+      { key: "WIKI_GITHUB_REPO", label: "Default Wiki Repo", placeholder: "skkeoriw/runtime-management" },
+      { key: "WIKI_LLM_PROVIDER", label: "Wiki LLM Provider", placeholder: "vertex" },
+      { key: "WIKI_VERTEX_MODEL", label: "Vertex Model", placeholder: "gemini-1.5-pro" },
+    ],
+  },
+  {
+    id: "core-repos",
+    title: "Core Repositories",
+    subtitle: "创建 runtime 时需要继承的核心源码地址",
+    keys: [
+      { key: "AGENT_REPO", label: "Brain Repo", placeholder: "https://github.com/skkeoriw/agent-brain-plugins" },
+      { key: "SKILL_REPO", label: "Runtime Skill Repo", placeholder: "https://github.com/skkeoriw/auto-youtube-wiki-skill" },
+    ],
+  },
+  {
+    id: "infra-repos",
+    title: "Tunnel / Skill Infrastructure",
+    subtitle: "非核心但必须可追踪的发布与隧道基础设施",
+    keys: [
+      { key: "AUTO_DOMAIN_REPO", label: "Auto Domain CLI", placeholder: "https://github.com/ChangfengHU/auto-domain-cli" },
+      { key: "AUTO_DOMAIN_TUNNEL_REPO", label: "Auto Domain Tunnel", placeholder: "https://github.com/ChangfengHU/cloudflare-youtube-pipeline/tree/main/auto-domain-tunnel" },
+      { key: "SKILL_PUBLISHER_REPO", label: "Skill Publisher", placeholder: "https://github.com/ChangfengHU/skill-publisher" },
+    ],
+  },
+  {
+    id: "machine-defaults",
+    title: "Machine Defaults",
+    subtitle: "SOP UI 和当前控制面状态",
+    keys: [
+      { key: "SOP_UI_URL", label: "SOP UI URL", placeholder: "" },
+      { key: "BRIDGE_PORT", label: "Bridge Port", placeholder: "18121" },
+    ],
+  },
+];
+
+function settingGroupIcon(id: string) {
+  if (id === "cloudflare") return <Cloud size={18} />;
+  if (id === "github") return <Github size={18} />;
+  if (id === "hermes-auth") return <Bot size={18} />;
+  if (id === "telegram-defaults") return <Send size={18} />;
+  if (id === "runtime-defaults") return <Server size={18} />;
+  if (id === "instance-defaults") return <LayoutDashboard size={18} />;
+  if (id === "core-repos") return <GitBranch size={18} />;
+  if (id === "infra-repos") return <PackageSearch size={18} />;
+  if (id === "machine-defaults") return <ShieldCheck size={18} />;
+  return <SlidersHorizontal size={18} />;
+}
+
+function settingWorkflowTags(id: string) {
+  return SETTING_GROUP_WORKFLOW_TAGS[id] || [];
 }
 
 function capabilityConfigQueryKey(mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId = "") {
   return ["capability-config", mode, runtime?.id || runtime?.endpoint || "", instanceId, nodeId];
 }
 
-function CapabilityConfigEditor({
+function InheritedSettingsPanel({
   provider,
   runtime,
   instance,
   mode,
   nodeId,
-  title = "Capability Config",
-  description = "查看当前解析到的配置来源；填写新值后可以仅用于本次运行，或保存到 Instance、Runtime 或 Settings 默认值。",
-  defaultScope = "instance",
-  allowRunScope = false,
+  title = "Inherited Settings",
+  description = "当前上下文只读取 Settings 默认值和下游覆盖结果；这里不修改 Settings。",
   compact = false,
-  onRunOverrideChange,
+  onOpenSettings,
+  onOpenInstance,
 }: {
   provider: SopDataProvider;
   runtime?: Runtime;
@@ -1306,134 +1398,114 @@ function CapabilityConfigEditor({
   nodeId?: string;
   title?: string;
   description?: string;
-  defaultScope?: "run" | "instance" | "runtime" | "global";
-  allowRunScope?: boolean;
   compact?: boolean;
-  onRunOverrideChange?: (values: Record<string, string>) => void;
+  onOpenSettings?: () => void;
+  onOpenInstance?: () => void;
 }) {
-  const queryClient = useQueryClient();
-  const [scope, setScope] = useState<"run" | "instance" | "runtime" | "global">(defaultScope);
-  const [edits, setEdits] = useState<Record<string, string>>({});
   const instanceId = instance?.instanceId || "";
   const query = useQuery({
-    queryKey: capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || ""),
+    queryKey: ["inherited-settings", ...capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || "")],
     queryFn: () => provider.getCapabilityConfig(runtime!, instanceId, nodeId),
     enabled: Boolean(runtime && instanceId),
     retry: 1,
   });
-  const saveMutation = useMutation({
-    mutationFn: () => provider.saveCapabilityConfig(runtime!, instanceId, {
-      scope: scope === "run" ? "instance" : scope,
-      values: compactEdits(edits),
-      nodeId,
-    }),
-    onSuccess: (config) => {
-      setEdits({});
-      queryClient.setQueryData(capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || ""), config);
-      queryClient.invalidateQueries({ queryKey: capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || "") });
-    },
+  const settingsDefaultsQuery = useQuery({
+    queryKey: ["inherited-settings-defaults", mode],
+    queryFn: () => controlPlaneProvider.getSettings(),
+    enabled: Boolean(runtime && instanceId),
+    retry: 1,
   });
-  useEffect(() => {
-    if (scope === "run") onRunOverrideChange?.(compactEdits(edits));
-    else onRunOverrideChange?.({});
-  }, [edits, scope, onRunOverrideChange]);
-  useEffect(() => {
-    setScope(defaultScope);
-    setEdits({});
-  }, [defaultScope, instanceId, nodeId]);
   const config = query.data;
-  const fields = config?.items || [];
-  const editedCount = Object.keys(compactEdits(edits)).length;
-  const scopes = allowRunScope ? ["run", "instance", "runtime", "global"] : ["instance", "runtime", "global"];
+  const byKey = useMemo(() => {
+    const items = new Map<string, CapabilityConfigPreview["items"][number]>();
+    (config?.items || []).forEach((item) => {
+      items.set(item.key, item);
+      (item.aliases || []).forEach((alias) => items.set(alias, item));
+    });
+    return items;
+  }, [config]);
+  const settingsDefaultsByKey = useMemo(() => {
+    const items = new Map<string, RuntimeInheritancePreview["items"][number]>();
+    (settingsDefaultsQuery.data?.items || []).forEach((item) => {
+      items.set(item.key, item);
+      (item.aliases || []).forEach((alias) => items.set(alias, item));
+    });
+    return items;
+  }, [settingsDefaultsQuery.data]);
+  const displayItemForKey = (key: string) => {
+    const resolved = byKey.get(key);
+    const inherited = settingsDefaultsByKey.get(key);
+    const present = Boolean(resolved?.present || inherited?.present);
+    return {
+      label: resolved?.label || key.replace(/_/g, " "),
+      present,
+      required: Boolean(resolved?.required || inherited?.required),
+      maskedValue: resolved?.present ? resolved.maskedValue || "已配置" : inherited?.present ? inherited.maskedValue || "已配置" : "",
+      sourceKind: resolved?.present ? resolved.sourceKind || "resolved" : inherited?.present ? "global-settings" : "missing",
+    };
+  };
+  const knownKeys = new Set(SETTING_CONFIG_GROUPS.flatMap((group) => group.keys.map((field) => field.key)));
+  const extraItems = (config?.items || []).filter((item) => item.key && !knownKeys.has(item.key));
+  const groups = extraItems.length
+    ? [...SETTING_CONFIG_GROUPS, { id: "other", title: "Other Settings", subtitle: "当前上下文解析到但未归入固定分组的配置", keys: extraItems.map((item) => ({ key: item.key, label: item.label || item.key, placeholder: "" })) }]
+    : SETTING_CONFIG_GROUPS;
   return (
-    <section className={`capability-config-editor ${compact ? "compact" : ""}`}>
-      <div className="capability-config-head">
+    <section className={`inherited-settings-panel ${compact ? "compact" : ""}`}>
+      <div className="inherited-settings-head">
         <div>
           <strong>{title}</strong>
           <span>{description}</span>
         </div>
-        <div className="capability-config-actions">
-          <label>
-            <span>保存范围</span>
-            <select value={scope} onChange={(event) => setScope(event.target.value as "run" | "instance" | "runtime" | "global")}>
-              {scopes.map((item) => (
-                <option key={item} value={item}>
-                  {configScopeLabel(item)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {scope !== "run" ? (
-            <button type="button" className="btn primary" disabled={!editedCount || saveMutation.isPending || !runtime || !instance} onClick={() => saveMutation.mutate()}>
-              {saveMutation.isPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
-              保存配置{editedCount ? ` (${editedCount})` : ""}
-            </button>
-          ) : (
-            <span className="status-pill waiting">本次运行覆盖 {editedCount}</span>
-          )}
+        <div className="inherited-settings-actions">
+          {onOpenSettings ? <button type="button" className="btn" onClick={onOpenSettings}><Settings size={14} />Open Settings</button> : null}
+          {onOpenInstance ? <button type="button" className="btn" onClick={onOpenInstance}><LayoutDashboard size={14} />Open Instance</button> : null}
         </div>
       </div>
-      {query.isLoading ? <Skeleton /> : null}
+      {query.isLoading || settingsDefaultsQuery.isLoading ? <Skeleton /> : null}
       {query.error ? <div className="inline-error">{String(query.error instanceof Error ? query.error.message : query.error)}</div> : null}
-      {saveMutation.error ? <div className="inline-error">{String(saveMutation.error instanceof Error ? saveMutation.error.message : saveMutation.error)}</div> : null}
-      {config ? (
+      {settingsDefaultsQuery.error ? <div className="inline-error">{String(settingsDefaultsQuery.error instanceof Error ? settingsDefaultsQuery.error.message : settingsDefaultsQuery.error)}</div> : null}
+      {config || settingsDefaultsQuery.data ? (
         <>
-          <div className="capability-config-meta">
-            <span>{config.backend || "settings"}</span>
-            <span>{config.updatedAt ? formatBeijingTime(config.updatedAt) : "not saved"}</span>
-            <span>{config.workflowId || config.registryFilters?.workflow_id || "workflow context"}</span>
-            <span>{config.registryTotal ? `${fields.length}/${config.registryTotal} registry items` : `${fields.length} items`}</span>
-            <span>{(config.precedence || []).map(configSourceLabel).join(" > ") || "resolved precedence"}</span>
+          <div className="inherited-settings-meta">
+            <span>{config?.workflowId || config?.registryFilters?.workflow_id || "workflow context"}</span>
+            <span>{nodeId || "instance context"}</span>
+            <span>{(config?.precedence || ["global-settings"]).map(configSourceLabel).join(" > ")}</span>
           </div>
-          <div className="capability-config-grid">
-            {fields.map((field) => {
-              const scopeInfo = field.valuesByScope || {};
-              const secret = Boolean(field.secret || /TOKEN|KEY|SECRET|PRIVATE/.test(field.key));
-              const sourceKind = field.sourceKind || "missing";
-              const tagBundle = compactConfigTags([
-                field.category,
-                ...(field.workflowTags || []),
-                ...(field.nodeTags || []),
-                ...(field.capabilityTags || []),
-                ...(field.operationTags || []),
-              ]);
+          <div className="inherited-settings-groups">
+            {groups.map((group) => {
+              const presentCount = group.keys.filter((field) => displayItemForKey(field.key).present).length;
               return (
-                <article key={field.key} className={`capability-config-field ${field.present ? "present" : "missing"} ${edits[field.key]?.trim() ? "edited" : ""}`}>
-                  <div className="capability-config-field-head">
+                <article key={group.id} className="inherited-settings-group">
+                  <div className="inherited-settings-group-head">
+                    <span>{settingGroupIcon(group.id)}</span>
                     <div>
-                      <strong>{field.label || field.key}</strong>
-                      <code>{field.key}</code>
+                      <strong>{group.title}</strong>
+                      <small>{group.subtitle}</small>
                     </div>
-                    <span className={`status-pill ${field.present ? "done" : field.required ? "failed" : "waiting"}`}>{field.present ? configSourceLabel(sourceKind) : "未配置"}</span>
+                    <em>{presentCount}/{group.keys.length}</em>
                   </div>
-                  <div className="capability-config-tags">
-                    {tagBundle.visible.map((tag) => <span key={tag}>{tag}</span>)}
-                    {tagBundle.hiddenCount ? <span>+{tagBundle.hiddenCount}</span> : null}
+                  <div className="settings-group-tags">
+                    {settingWorkflowTags(group.id).map((tag) => <span key={tag}>{tag}</span>)}
                   </div>
-                  <div className="capability-config-current">
-                    <span>当前值</span>
-                    <code title={field.maskedValue || ""}>{field.present ? field.maskedValue || "已配置" : "未配置"}</code>
-                    <small>{field.source || "missing"}</small>
+                  <div className="inherited-settings-rows">
+                    {group.keys.map((field) => {
+                      const item = displayItemForKey(field.key);
+                      return (
+                        <div key={field.key} className={`inherited-settings-row ${item.present ? "present" : "missing"}`}>
+                          <div>
+                            <strong>{item.label || field.label}</strong>
+                            <code>{field.key}</code>
+                          </div>
+                          <code title={item.maskedValue || ""}>{item.present ? item.maskedValue || "已配置" : "未配置"}</code>
+                          <span className={`status-pill ${item.present ? "done" : item.required ? "failed" : "waiting"}`}>{configSourceLabel(item.sourceKind)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="capability-config-scope-row">
-                    {["instance", "runtime", "global", "runtime_env_file"].map((scopeName) => (
-                      <span key={scopeName} className={scopeInfo[scopeName]?.present ? "on" : ""}>
-                        {configSourceLabel(scopeName)}
-                      </span>
-                    ))}
-                  </div>
-                  <input
-                    type={secret ? "password" : "text"}
-                    value={edits[field.key] || ""}
-                    onChange={(event) => setEdits((current) => ({ ...current, [field.key]: event.target.value }))}
-                    placeholder={field.present ? "填写新值覆盖；留空保持当前值" : "填写配置值"}
-                    autoComplete="off"
-                  />
                 </article>
               );
             })}
           </div>
-          {!fields.length ? <Empty text="当前没有可编辑 capability 配置" /> : null}
         </>
       ) : null}
     </section>
@@ -2067,7 +2139,6 @@ function NodeRunStartPanel({
     setSeedRunId,
     manualInputs,
     setManualInputs,
-    setRuntimeOverrides,
     gitEnabled,
     setGitEnabled,
     gitPathsText,
@@ -2164,18 +2235,15 @@ function NodeRunStartPanel({
           </label>
         )) : null}
       </div>
-      <CapabilityConfigEditor
+      <InheritedSettingsPanel
         provider={controller.provider}
         runtime={runtime}
         instance={instance}
         mode={controller.mode}
         nodeId={node.nodeId}
-        title="运行配置"
-        description="这些是当前 Node Run 会解析的环境配置。可以只覆盖本次运行，也可以保存到当前 Instance、当前 Runtime 或 Settings 默认值。"
-        defaultScope="run"
-        allowRunScope
+        title="运行配置继承"
+        description="Node Run 只读取当前 Runtime、Instance 和 Settings 的解析结果；需要改默认值请回到 Settings，需要改工作区身份请回到 Instance。"
         compact
-        onRunOverrideChange={setRuntimeOverrides}
       />
       <section className="node-run-capability-editor">
         <div className="section-title"><span>挂载能力</span><span>Runtime Harness</span></div>
@@ -2624,6 +2692,7 @@ function NodeRunDetailPage({
   onOpenNode,
   onOpenNodeRuns,
   onOpenNodeRun,
+  onOpenSettings,
 }: {
   provider: SopDataProvider;
   runtime: Runtime | undefined;
@@ -2636,6 +2705,7 @@ function NodeRunDetailPage({
   onOpenNode: (nodeId: string) => void;
   onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+  onOpenSettings: () => void;
 }) {
   const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId, onOpenNodeRun });
   const result = controller.current;
@@ -2731,16 +2801,16 @@ function NodeRunDetailPage({
             <aside className="node-run-debug-panel">
               <NodeRunCapabilitySummary result={result} />
               <NodeRunConfigPanel result={result} />
-              <CapabilityConfigEditor
+              <InheritedSettingsPanel
                 provider={provider}
                 runtime={runtime}
                 instance={instance}
                 mode={mode}
                 nodeId={node?.nodeId}
-                title="修复运行配置"
-                description="这里显示当前 Node Run 对应 Node 会解析的配置。修改后可保存到当前 Instance、当前 Runtime 或 Settings 默认值，再重试本次 Node Run。"
-                defaultScope="instance"
+                title="运行配置继承"
+                description="这里展示本次 Node Run 解析到的 Settings/Runtime/Instance 配置。当前页面不保存上游配置；默认值请去 Settings，工作区身份请去 Instance。"
                 compact
+                onOpenSettings={onOpenSettings}
               />
               <div className="node-run-repair-actions">
                 <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="github" />
@@ -4396,6 +4466,7 @@ export default function App() {
             }}
             onOpenExecutions={() => openWorkflowForInstance(instance?.instanceId || instanceId, selectedRun?.pipelineId || runs[0]?.pipelineId || "")}
             onOpenNodes={() => navigateTo("nodes")}
+            onOpenSettings={() => navigateTo("settings")}
             onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "workflow" ? (
@@ -4473,6 +4544,7 @@ export default function App() {
             onSelectNode={selectManagedNode}
             onOpenNodeRuns={openNodeRuns}
             onOpenNodeRun={openNodeRun}
+            onOpenSettings={() => navigateTo("settings")}
             onSelectModule={(moduleId) => {
               setSelectedNodeModuleId(moduleId);
               if (selectedManagedNode) navigateTo("nodes", selectedManagedNode.nodeId, moduleId);
@@ -6244,6 +6316,7 @@ function InstanceOverview({
   onOpenWorkflow,
   onOpenExecutions,
   onOpenNodes,
+  onOpenSettings,
   onOpenManagement,
 }: {
   runtime: Runtime | undefined;
@@ -6263,6 +6336,7 @@ function InstanceOverview({
   onOpenWorkflow: (instanceId?: string) => void;
   onOpenExecutions: () => void;
   onOpenNodes: () => void;
+  onOpenSettings: () => void;
   onOpenManagement: (action: RuntimeManagementAction, targetInstanceId?: string) => void;
 }) {
   const binding = instance?.workflowBinding;
@@ -6449,14 +6523,14 @@ function InstanceOverview({
         </div>
 
         <div className="flow-panel instance-config-panel">
-          <CapabilityConfigEditor
+          <InheritedSettingsPanel
             provider={provider}
             runtime={runtime}
             instance={instance}
             mode={mode}
-            title="Instance Config"
-            description="配置当前 Instance 的 GitHub、Telegram 和节点运行依赖。测试失败后可在这里修复并重新测试。"
-            defaultScope="instance"
+            title="Settings 继承"
+            description="Instance 默认继承 Settings 配置。这里按 Settings 分组只读展示解析结果；Instance 自己只负责 repo、branch、workspace 等工作区身份。"
+            onOpenSettings={onOpenSettings}
           />
         </div>
 
@@ -7531,14 +7605,6 @@ function SettingsPage({
     });
     return items;
   }, [managementConfig]);
-  const registryByKey = useMemo(() => {
-    const items = new Map<string, CapabilityConfigPreview["items"][number]>();
-    (settingRegistry?.items || []).forEach((item) => {
-      items.set(item.key, item);
-      (item.aliases || []).forEach((alias) => items.set(alias, item));
-    });
-    return items;
-  }, [settingRegistry]);
   const updateConfigValue = (key: string, value: string) => {
     setManagementConfigValues({ ...managementConfigValues, [key]: value });
   };
@@ -7678,14 +7744,6 @@ function SettingsPage({
   const activeConfigCard = configCards.find((card) => card.id === selectedSettingsSection);
   const renderConfigField = (field: { key: string; label: string; placeholder: string }) => {
     const item = itemByKey.get(field.key);
-    const registryItem = registryByKey.get(field.key);
-    const tagBundle = compactConfigTags([
-      registryItem?.category,
-      ...(registryItem?.workflowTags || []),
-      ...(registryItem?.nodeTags || []),
-      ...(registryItem?.capabilityTags || []),
-      ...(registryItem?.operationTags || []),
-    ], 6);
     const edited = Boolean(managementConfigValues[field.key]?.trim());
     const present = Boolean(item?.present);
     const currentValue = item?.present
@@ -7705,12 +7763,6 @@ function SettingsPage({
           <code title={item?.maskedValue || field.placeholder}>{currentValue}</code>
         </div>
         <small>{currentHint}</small>
-        {registryItem ? (
-          <div className="global-config-tags">
-            {tagBundle.visible.map((tag) => <span key={tag}>{tag}</span>)}
-            {tagBundle.hiddenCount ? <span>+{tagBundle.hiddenCount}</span> : null}
-          </div>
-        ) : null}
         <input
           type={item?.secret || /TOKEN|KEY|SECRET|PRIVATE/.test(field.key) ? "password" : "text"}
           value={managementConfigValues[field.key] || ""}
@@ -7787,6 +7839,9 @@ function SettingsPage({
               </div>
               <div className="settings-scope-note">
                 {activeConfigCard.id === "telegram-defaults" ? "作为 create-instance 默认通知配置；每个 Instance 可以覆盖。" : "保存到 Settings 默认值；Runtime 和 Instance 可以分别覆盖。"}
+              </div>
+              <div className="settings-group-tags">
+                {settingWorkflowTags(activeConfigCard.id).map((tag) => <span key={tag}>{tag}</span>)}
               </div>
               {settingRegistryLoading ? <Skeleton /> : null}
               <div className="global-config-fields">
@@ -8332,6 +8387,7 @@ function NodesWorkspace({
   onSelectNode,
   onOpenNodeRuns,
   onOpenNodeRun,
+  onOpenSettings,
   onSelectModule,
   onOpenDraft,
 }: {
@@ -8362,6 +8418,7 @@ function NodesWorkspace({
   onSelectNode: (nodeId: string, moduleId?: string) => void;
   onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+  onOpenSettings: () => void;
   onSelectModule: (moduleId: string) => void;
   onOpenDraft: () => void;
 }) {
@@ -8546,6 +8603,7 @@ function NodesWorkspace({
           onOpenNode={onSelectNode}
           onOpenNodeRuns={onOpenNodeRuns}
           onOpenNodeRun={onOpenNodeRun}
+          onOpenSettings={onOpenSettings}
         />
       ) : isNodeRunsRoute ? (
         <NodeRunsIndexPage

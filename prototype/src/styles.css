@@ -2632,6 +2632,24 @@ pre {
   line-height: 1.45;
 }
 
+.settings-group-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 14px 0;
+}
+
+.settings-group-tags span {
+  border: 1px solid rgba(22, 101, 52, .22);
+  border-radius: 999px;
+  background: rgba(22, 101, 52, .06);
+  color: #166534;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
 .global-config-field {
   display: grid;
   gap: 6px;
@@ -7272,189 +7290,135 @@ pre {
   background: var(--surface-2);
 }
 
-.capability-config-editor {
-  display: grid;
-  gap: 14px;
-}
-
-.capability-config-editor.compact {
-  padding: 12px 0 0;
-}
-
-.capability-config-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.capability-config-head > div:first-child {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.capability-config-head strong {
-  font-size: 14px;
-}
-
-.capability-config-head span,
-.capability-config-meta,
-.capability-config-field small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.capability-config-actions {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.capability-config-actions label {
-  display: grid;
-  gap: 4px;
-  min-width: 190px;
-}
-
-.capability-config-actions select,
-.capability-config-field input {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 8px 10px;
-  font: inherit;
-}
-
-.capability-config-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.capability-config-meta span {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px 8px;
-  background: var(--surface-2);
-}
-
-.capability-config-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px;
-}
-
-.capability-config-field {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 12px;
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.capability-config-field.missing {
-  border-color: rgba(227, 194, 95, .5);
-}
-
-.capability-config-field.edited {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 1px rgba(63, 107, 246, .12);
-}
-
-.capability-config-field-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.capability-config-field-head > div {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.capability-config-field code,
-.capability-config-current code {
-  overflow-wrap: anywhere;
-}
-
-.capability-config-current {
-  display: grid;
-  gap: 3px;
-}
-
-.capability-config-current span {
-  color: var(--muted);
-  font-size: 11px;
-  text-transform: uppercase;
-}
-
-.capability-config-scope-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
-  gap: 6px;
-}
-
-.capability-config-scope-row span {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 3px 7px;
-  color: var(--muted);
-  font-size: 11px;
-  min-width: 0;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.capability-config-scope-row span.on {
-  color: #0d7a45;
-  border-color: rgba(13, 122, 69, .35);
-  background: rgba(13, 122, 69, .08);
-}
-
-.capability-config-tags,
-.global-config-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  min-width: 0;
-}
-
-.capability-config-tags span,
-.global-config-tags span {
-  max-width: 100%;
-  min-width: 0;
-  border: 1px solid rgba(63, 107, 246, .18);
-  border-radius: 999px;
-  padding: 2px 7px;
-  background: rgba(63, 107, 246, .06);
-  color: #3351b8;
-  font-size: 11px;
-  line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.global-config-tags {
-  margin-top: -2px;
-}
-
 .node-run-repair-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 8px;
   align-items: stretch;
+}
+
+.inherited-settings-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.inherited-settings-panel.compact {
+  gap: 10px;
+}
+
+.inherited-settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inherited-settings-head > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.inherited-settings-head strong {
+  font-size: 14px;
+}
+
+.inherited-settings-head span,
+.inherited-settings-meta,
+.inherited-settings-group small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inherited-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.inherited-settings-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inherited-settings-meta span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  padding: 4px 8px;
+}
+
+.inherited-settings-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 10px;
+}
+
+.inherited-settings-group {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.inherited-settings-group-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 12px 12px 0;
+}
+
+.inherited-settings-group-head > span {
+  color: var(--blue);
+}
+
+.inherited-settings-group-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.inherited-settings-group-head em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.inherited-settings-rows {
+  display: grid;
+  gap: 1px;
+  padding: 10px 0 0;
+}
+
+.inherited-settings-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.1fr) minmax(100px, .9fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.inherited-settings-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inherited-settings-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inherited-settings-row.missing {
+  background: rgba(227, 194, 95, .05);
 }
 
 .instance-config-panel {
