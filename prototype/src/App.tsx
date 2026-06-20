@@ -6533,18 +6533,43 @@ function InstanceHealthTestButton({
 }
 
 function WorkspaceIdentityPanel({
+  instance,
+  latestFailure,
+}: {
+  instance?: Instance;
+  latestFailure?: Run;
+}) {
+  return (
+    <div className="workspace-identity-body">
+      {instance ? (
+        <div className="kv-stack">
+          <KeyValues data={{
+            instance_id: instance.instanceId,
+            status: instance.status || "unknown",
+            repo: instance.repo || "-",
+            repo_branch: instance.repoBranch || "-",
+            wiki_local_path: instance.wikiLocalPath || "-",
+            workspace_status: instance.workspaceStatus || "-",
+            run_index_status: instance.runIndexStatus || "-",
+            latest_failure: latestFailure?.pipelineId || "-",
+          }} />
+        </div>
+      ) : <Empty text="请选择一个 Instance" />}
+    </div>
+  );
+}
+
+function InstanceConfigEditor({
   provider,
   runtime,
   instance,
   mode,
-  latestFailure,
   onOpenSettings,
 }: {
   provider: SopDataProvider;
   runtime?: Runtime;
   instance?: Instance;
   mode: DataMode;
-  latestFailure?: Run;
   onOpenSettings?: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -6581,24 +6606,9 @@ function WorkspaceIdentityPanel({
   const editedCount = Object.keys(compactNonEmptyValues(edits)).length;
 
   return (
-    <div className="workspace-identity-body">
+    <section className="workspace-config-editor">
       {instance ? (
-        <div className="kv-stack">
-          <KeyValues data={{
-            instance_id: instance.instanceId,
-            status: instance.status || "unknown",
-            repo: instance.repo || "-",
-            repo_branch: instance.repoBranch || "-",
-            wiki_local_path: instance.wikiLocalPath || "-",
-            workspace_status: instance.workspaceStatus || "-",
-            run_index_status: instance.runIndexStatus || "-",
-            latest_failure: latestFailure?.pipelineId || "-",
-          }} />
-        </div>
-      ) : <Empty text="请选择一个 Instance" />}
-
-      {instance ? (
-        <section className="workspace-config-editor">
+        <>
           <div className="workspace-config-head">
             <div>
               <strong>GitHub / Telegram Overrides</strong>
@@ -6646,9 +6656,9 @@ function WorkspaceIdentityPanel({
               保存覆盖{editedCount ? ` (${editedCount})` : ""}
             </button>
           </div>
-        </section>
-      ) : null}
-    </div>
+        </>
+      ) : <Empty text="请选择一个 Instance" />}
+    </section>
   );
 }
 
@@ -6702,6 +6712,7 @@ function InstanceOverview({
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | StageStatus>("all");
   const [instanceSearch, setInstanceSearch] = useState("");
   const [instanceStatusFilter, setInstanceStatusFilter] = useState("all");
+  const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const visibleInstanceRuns = useMemo(() => {
     const query = runSearch.trim().toLowerCase();
     return runs.filter((run) => {
@@ -6846,17 +6857,16 @@ function InstanceOverview({
         <div className="flow-panel">
           <div className="panel-head"><div><strong>Workspace Identity</strong><span>Instance 是 Runtime/Hermes 上的执行工作区，不是 Workflow</span></div></div>
           <WorkspaceIdentityPanel
-            provider={provider}
-            runtime={runtime}
             instance={instance}
-            mode={mode}
             latestFailure={latestFailure}
-            onOpenSettings={onOpenSettings}
           />
         </div>
 
         <div className="flow-panel">
-          <div className="panel-head"><div><strong>Instance Health</strong><span>创建 Instance 后应优先确认 GitHub 与 TG 可用</span></div></div>
+          <div className="panel-head">
+            <div><strong>Instance Health</strong><span>创建 Instance 后应优先确认 GitHub 与 TG 可用</span></div>
+            <button type="button" className="btn" disabled={!instance} onClick={() => setConfigDialogOpen(true)}><Settings size={14} />修改配置</button>
+          </div>
           <KeyValues data={{
             workspace: instance?.workspaceStatus || "-",
             registry: instance?.enabled === false ? "disabled" : "enabled",
@@ -6869,6 +6879,27 @@ function InstanceOverview({
             <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="telegram" />
           </div>
         </div>
+
+        {configDialogOpen ? (
+          <div className="modal-backdrop" role="presentation" onClick={() => setConfigDialogOpen(false)}>
+            <section className="trigger-modal instance-config-modal" role="dialog" aria-modal="true" aria-label="Instance configuration" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-head">
+                <div>
+                  <h2>Instance 配置</h2>
+                  <span>{runtime?.id || runtime?.name || "-"} · {instance?.instanceId || "-"}</span>
+                </div>
+                <button type="button" className="ghost-btn" onClick={() => setConfigDialogOpen(false)}><X size={16} />关闭</button>
+              </div>
+              <InstanceConfigEditor
+                provider={provider}
+                runtime={runtime}
+                instance={instance}
+                mode={mode}
+                onOpenSettings={onOpenSettings}
+              />
+            </section>
+          </div>
+        ) : null}
 
         <div className="flow-panel">
           <div className="panel-head"><div><strong>Available Workflow Context</strong><span>Workflow 执行时选择；从当前 Instance 进入时会默认选中它</span></div><button type="button" onClick={() => onOpenWorkflow()}>Open Workflow</button></div>

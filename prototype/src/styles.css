@@ -6820,6 +6820,14 @@ pre {
   align-items: center;
 }
 
+.instance-config-modal {
+  max-width: 760px;
+}
+
+.instance-config-modal .workspace-config-editor {
+  margin: 0;
+}
+
 .instance-health-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
