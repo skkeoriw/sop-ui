@@ -2731,6 +2731,21 @@ function NodeRunDetailPage({
             <aside className="node-run-debug-panel">
               <NodeRunCapabilitySummary result={result} />
               <NodeRunConfigPanel result={result} />
+              <CapabilityConfigEditor
+                provider={provider}
+                runtime={runtime}
+                instance={instance}
+                mode={mode}
+                nodeId={node?.nodeId}
+                title="修复运行配置"
+                description="这里显示当前 Node Run 对应 Node 会解析的配置。修改后可保存到当前 Instance、当前 Runtime 或 Settings 默认值，再重试本次 Node Run。"
+                defaultScope="instance"
+                compact
+              />
+              <div className="node-run-repair-actions">
+                <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="github" />
+                <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="telegram" />
+              </div>
               <details className="node-run-context-details">
                 <summary><span>运行上下文</span><ChevronDown size={15} /></summary>
                 <NodeRunContextPanel controller={controller} showRaw />

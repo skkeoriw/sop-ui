@@ -7450,6 +7450,13 @@ pre {
   margin-top: -2px;
 }
 
+.node-run-repair-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
 .instance-config-panel {
   grid-column: 1 / -1;
 }
