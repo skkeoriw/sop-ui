@@ -703,6 +703,40 @@ function writeSearchParam(name: string, value: string, mode: "push" | "replace" 
   else window.history.pushState(null, "", nextUrl);
 }
 
+function removeSearchParams(names: string[], mode: "push" | "replace" = "replace") {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  let changed = false;
+  names.forEach((name) => {
+    if (url.searchParams.has(name)) {
+      url.searchParams.delete(name);
+      changed = true;
+    }
+  });
+  if (!changed) return;
+  const search = url.searchParams.toString();
+  const nextUrl = `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
+  if (mode === "replace") window.history.replaceState(null, "", nextUrl);
+  else window.history.pushState(null, "", nextUrl);
+}
+
+function searchForNodeRunsPage() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams(window.location.search);
+  params.delete("step");
+  const search = params.toString();
+  return search ? `?${search}` : "";
+}
+
+function searchForNodeRunDetailPage() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams();
+  const mode = readSearchParam("mode");
+  if (mode) params.set("mode", mode);
+  const search = params.toString();
+  return search ? `?${search}` : "";
+}
+
 function nodeTestTone(status?: string) {
   if (status === "done") return "ok";
   if (status === "needs_input" || status === "skipped" || status === "waiting") return "warn";
@@ -747,7 +781,7 @@ function NodeTestExecution({ result }: { result: NodeTestRunResult | null }) {
               <div key={`${event.event}-${event.stepId || index}`} className="node-test-event">
                 <span>{event.sequence || index + 1}</span>
                 <strong>{event.event}</strong>
-                <small>{event.stepId || event.ts || ""}</small>
+                <small>{event.stepId || formatBeijingTime(event.ts, "")}</small>
               </div>
             ))}
           </div>
@@ -930,7 +964,7 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
           >
             <span className={`status-pill ${nodeTestTone(item.status)}`}>{item.status || "unknown"}</span>
             <strong>{item.testId || item.pipelineId}</strong>
-            <small>{item.startedAt || item.finishedAt || ""}</small>
+            <small>{formatBeijingTime(item.startedAt || item.finishedAt, "")}</small>
           </button>
         ))}
         {!historyQuery.isLoading && !(historyQuery.data || []).length ? <div className="node-test-pre muted">还没有测试记录。</div> : null}
@@ -966,6 +1000,103 @@ function formatElapsed(ms?: number) {
   return `${minutes}m ${seconds % 60}s`;
 }
 
+function formatBeijingTime(value?: string | number | Date, fallback = "-") {
+  if (!value) return fallback;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date).reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== "literal") acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+const NODE_RUN_MODE_LABELS: Record<string, string> = {
+  preflight: "节点检查",
+  probe: "能力探测",
+  "dry-run": "试运行计划",
+  "real-node": "真实执行",
+};
+
+const NODE_RUN_INPUT_SOURCE_LABELS: Record<string, string> = {
+  "generated-fixture": "系统测试输入",
+  "existing-run": "历史 Workflow Run",
+  manual: "手动输入",
+  "deepseek-mock": "DeepSeek 模拟输入",
+  artifact: "指定 Artifact",
+};
+
+const NODE_RUN_OUTER_STEP_COPY: Record<string, { title: string; summary?: string }> = {
+  "create-run": { title: "创建 Node Run 工作区", summary: "为本次节点执行分配独立运行记录。" },
+  "load-definition": { title: "加载节点定义", summary: "读取当前 Workflow 中的节点契约、执行器和声明输入输出。" },
+  "resolve-context": { title: "解析执行环境", summary: "确认 Runtime、Instance、Workflow 和 Node 的执行上下文。" },
+  "resolve-inputs": { title: "解析节点输入", summary: "从历史 Run、系统测试输入或手动输入中准备本次节点入参。" },
+  "resolve-config": { title: "解析运行配置", summary: "加载 Runtime 与 Instance 配置，检查 GitHub、TG、Worker 等依赖。" },
+  "probe-capabilities": { title: "探测附属能力", summary: "检查节点可能用到的外部能力是否可用。" },
+  "build-execution-plan": { title: "生成执行计划", summary: "根据模式和输入生成节点级执行计划。" },
+  "execute-or-dry-run": { title: "执行节点逻辑", summary: "真实执行节点，或生成试运行计划。" },
+  "validate-outputs": { title: "校验节点输出", summary: "检查声明输出和实际产物是否匹配。" },
+  "persist-artifacts": { title: "持久化运行产物", summary: "写入 Node Run 诊断结果和业务产物索引。" },
+};
+
+const YOUTUBE_DEEP_RESEARCH_ACTION_STEPS = [
+  "准备请求参数",
+  "提交 YouTube 深度研究任务",
+  "等待 Worker 接收任务",
+  "轮询 Worker 结果",
+  "下载分析与字幕产物",
+  "写入 Instance 工作区",
+  "提交并推送 Git 产物",
+  "发送 Telegram 进度通知",
+];
+
+const NODE_INNER_STEP_COPY: Record<string, Record<string, { title: string; summary?: string }>> = {
+  "youtube-deep-research": {
+    "prepare-request": { title: "准备请求参数", summary: "根据输入 source_url 和 Instance 配置生成 Worker 请求。" },
+    "call-worker": { title: "提交 YouTube 深度研究任务", summary: "调用 YouTube Deep Research Worker 创建研究任务。" },
+    "wait-worker-job": { title: "等待 Worker 接收任务", summary: "等待 Worker 返回可查询的任务状态。" },
+    "poll-result": { title: "轮询 Worker 结果", summary: "持续查询 Worker，直到任务完成或超时。" },
+    "download-artifacts": { title: "下载分析与字幕产物", summary: "拉取 transcript、analysis 等业务产物。" },
+    "write-workspace": { title: "写入 Instance 工作区", summary: "把业务产物写入当前 Instance 的工作目录。" },
+    "commit-git": { title: "提交并推送 Git 产物", summary: "把产物提交到当前 Instance 绑定的 GitHub repo。" },
+    "send-progress-notification": { title: "发送 Telegram 进度通知", summary: "使用 Instance/Runtime 中解析出的 TG 配置发送进度消息。" },
+  },
+};
+
+function nodeRunModeLabel(value?: string) {
+  return value ? NODE_RUN_MODE_LABELS[value] || value : "-";
+}
+
+function nodeRunInputSourceLabel(value?: string) {
+  return value ? NODE_RUN_INPUT_SOURCE_LABELS[value] || value : "-";
+}
+
+function nodeActionSteps(nodeId?: string, actions?: string[]) {
+  const declared = (actions || []).filter(Boolean);
+  if (declared.length) return declared;
+  if (nodeId === "youtube-deep-research") return YOUTUBE_DEEP_RESEARCH_ACTION_STEPS;
+  return declared;
+}
+
+function localizedNodeRunStep(step: NodeTestStep, nodeId?: string): NodeTestStep {
+  const copy = NODE_INNER_STEP_COPY[nodeId || ""]?.[step.id] || NODE_RUN_OUTER_STEP_COPY[step.id];
+  if (!copy) return step;
+  return {
+    ...step,
+    title: copy.title,
+    summary: step.summary && step.summary !== step.title ? step.summary : copy.summary,
+  };
+}
+
 function nodeRunTimestamp() {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
@@ -977,13 +1108,13 @@ function makeNodeRunId(nodeId: string) {
 
 function nodeRunStepTiming(step: { startedAt?: string; finishedAt?: string; elapsedMs?: number }) {
   const parts = [];
-  if (step.startedAt) parts.push(`start ${step.startedAt}`);
-  if (step.finishedAt) parts.push(`finish ${step.finishedAt}`);
+  if (step.startedAt) parts.push(`开始 ${formatBeijingTime(step.startedAt)}`);
+  if (step.finishedAt) parts.push(`结束 ${formatBeijingTime(step.finishedAt)}`);
   if (typeof step.elapsedMs === "number") parts.push(formatElapsed(step.elapsedMs));
   return parts.join(" · ");
 }
 
-function currentNodeRunStep(result?: NodeRunResult) {
+function currentNodeRunStep(result?: { steps?: NodeTestStep[] }) {
   const steps = result?.steps || [];
   return steps.find((step) => step.status === "running")
     || steps.find((step) => ["failed", "blocked", "needs_input"].includes(step.status))
@@ -1022,18 +1153,18 @@ function makeOptimisticNodeRun(params: {
     startedAt,
     retryOf: params.retryOf,
     steps: [
-      { id: "create-run", title: "Create node run workspace", status: "running", summary: "Node Run request is being created.", startedAt },
-      { id: "load-definition", title: "Load node definition", status: "waiting" },
-      { id: "resolve-context", title: "Resolve Runtime / Instance / Workflow context", status: "waiting" },
-      { id: "resolve-inputs", title: "Resolve node inputs", status: "waiting" },
-      { id: "resolve-config", title: "Resolve execution config", status: "waiting" },
-      { id: "probe-capabilities", title: "Probe attached capabilities", status: "waiting" },
-      { id: "build-execution-plan", title: "Build node execution plan", status: "waiting" },
-      { id: "execute-or-dry-run", title: "Execute or dry-run node", status: "waiting" },
-      { id: "validate-outputs", title: "Validate declared outputs", status: "waiting" },
-      { id: "persist-artifacts", title: "Persist node run artifacts", status: "waiting" },
+      { id: "create-run", title: NODE_RUN_OUTER_STEP_COPY["create-run"].title, status: "running", summary: NODE_RUN_OUTER_STEP_COPY["create-run"].summary, startedAt },
+      { id: "load-definition", title: NODE_RUN_OUTER_STEP_COPY["load-definition"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["load-definition"].summary },
+      { id: "resolve-context", title: NODE_RUN_OUTER_STEP_COPY["resolve-context"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["resolve-context"].summary },
+      { id: "resolve-inputs", title: NODE_RUN_OUTER_STEP_COPY["resolve-inputs"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["resolve-inputs"].summary },
+      { id: "resolve-config", title: NODE_RUN_OUTER_STEP_COPY["resolve-config"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["resolve-config"].summary },
+      { id: "probe-capabilities", title: NODE_RUN_OUTER_STEP_COPY["probe-capabilities"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["probe-capabilities"].summary },
+      { id: "build-execution-plan", title: NODE_RUN_OUTER_STEP_COPY["build-execution-plan"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["build-execution-plan"].summary },
+      { id: "execute-or-dry-run", title: NODE_RUN_OUTER_STEP_COPY["execute-or-dry-run"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["execute-or-dry-run"].summary },
+      { id: "validate-outputs", title: NODE_RUN_OUTER_STEP_COPY["validate-outputs"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["validate-outputs"].summary },
+      { id: "persist-artifacts", title: NODE_RUN_OUTER_STEP_COPY["persist-artifacts"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["persist-artifacts"].summary },
     ],
-    events: [{ sequence: 1, event: "node_run.step.running", nodeRunId: params.nodeRunId, nodeId: params.nodeId, stepId: "create-run", ts: startedAt, data: { summary: "Node Run request is being created." } }],
+    events: [{ sequence: 1, event: "node_run.step.running", nodeRunId: params.nodeRunId, nodeId: params.nodeId, stepId: "create-run", ts: startedAt, data: { summary: NODE_RUN_OUTER_STEP_COPY["create-run"].summary } }],
     artifacts: [],
     detail: {
       side_effects: { writes_workspace: true, git_write: true, telegram: true, external_api: true, llm: false, executed: false },
@@ -1159,10 +1290,10 @@ function NodeRunStepDetailPanel({
       </div>
       {step.summary ? <p>{step.summary}</p> : null}
       <div className="node-run-step-meta-grid">
-        <span><b>Status</b>{step.status || "waiting"}</span>
-        <span><b>Elapsed</b>{typeof step.elapsedMs === "number" ? formatElapsed(step.elapsedMs) : "-"}</span>
-        <span><b>Started</b>{step.startedAt || "-"}</span>
-        <span><b>Finished</b>{step.finishedAt || "-"}</span>
+        <span><b>状态</b>{step.status || "waiting"}</span>
+        <span><b>耗时</b>{typeof step.elapsedMs === "number" ? formatElapsed(step.elapsedMs) : "-"}</span>
+        <span><b>开始时间</b>{formatBeijingTime(step.startedAt)}</span>
+        <span><b>结束时间</b>{formatBeijingTime(step.finishedAt)}</span>
       </div>
       {scalarRows.length ? (
         <div className="node-run-step-kv-grid">
@@ -1173,7 +1304,7 @@ function NodeRunStepDetailPanel({
       ) : null}
       {showFixes && suggestions.length ? (
         <div className="node-run-step-fixes">
-          <div className="section-title"><span>Fix</span><span>{suggestions.length}</span></div>
+          <div className="section-title"><span>修复建议</span><span>{suggestions.length}</span></div>
           {suggestions.slice(0, 3).map((item, index) => (
             <article key={`${String(item.target || "fix")}-${index}`}>
               <span className="status-pill waiting">{String(item.target || "fix")}</span>
@@ -1186,13 +1317,13 @@ function NodeRunStepDetailPanel({
       ) : null}
       {stepEvents.length ? (
         <div className="node-run-step-events">
-          <div className="section-title"><span>Events</span><span>{stepEvents.length}</span></div>
+          <div className="section-title"><span>事件</span><span>{stepEvents.length}</span></div>
           {stepEvents.slice(-6).map((event, index) => (
             <article key={`${event.event}-${event.ts || index}`}>
               <span>{event.sequence || index + 1}</span>
               <div>
                 <strong>{event.event}</strong>
-                <small>{event.ts || ""}</small>
+                <small>{formatBeijingTime(event.ts, "")}</small>
                 {event.data?.summary ? <small>{String(event.data.summary)}</small> : null}
               </div>
             </article>
@@ -1201,13 +1332,13 @@ function NodeRunStepDetailPanel({
       ) : null}
       {innerFlowIsRelevant && (result?.innerSteps || []).length ? (
         <div className="node-run-step-inner-flow">
-          <div className="section-title"><span>Node Inner Flow</span><span>{result?.innerSteps?.length || 0}</span></div>
+          <div className="section-title"><span>内部执行步骤</span><span>{result?.innerSteps?.length || 0}</span></div>
           <NodeRunInnerFlow result={result} />
         </div>
       ) : null}
       {step.detail && Object.keys(step.detail).length ? (
         <details className="node-run-step-raw">
-          <summary><span>Step Raw Detail</span><ChevronDown size={14} /></summary>
+          <summary><span>阶段原始详情</span><ChevronDown size={14} /></summary>
           <code>{formatValue(step.detail)}</code>
         </details>
       ) : null}
@@ -1226,8 +1357,8 @@ function NodeRunFlow({
   selectedStepId?: string;
   onSelectStep?: (stepId: string) => void;
 }) {
-  const steps = result?.steps || [];
-  const current = currentNodeRunStep(result);
+  const steps = (result?.steps || []).map((step) => localizedNodeRunStep(step, result?.nodeId));
+  const current = currentNodeRunStep({ ...result, steps });
   const resolvedSelectedStepId = selectedStepId || current?.id || steps[0]?.id || "";
   const selectedStep = steps.find((step) => step.id === resolvedSelectedStepId) || current || steps[0];
   const compactFlow = typeof window !== "undefined" && window.innerWidth < 700;
@@ -1260,9 +1391,9 @@ function NodeRunFlow({
       className: `node-run-edge ${nodeRunTone(status)}`,
     };
   }), [steps]);
-  if (!steps.length) return <div className="node-run-empty">创建一次 Node Run 后展示节点级 flow。</div>;
+  if (!steps.length) return <div className="node-run-empty">创建一次 Node Run 后展示节点级执行流程。</div>;
   return (
-    <div className="node-run-dag-layout" aria-label="Node run execution DAG">
+    <div className="node-run-dag-layout" aria-label="Node run execution flow">
       <div className="node-run-dag-canvas">
         <ReactFlow
           nodes={flowNodes}
@@ -1289,7 +1420,7 @@ function NodeRunFlow({
 
 function NodeRunInnerFlow({ result }: { result: NodeRunResult | undefined }) {
   const detail = detailRecord(result?.detail);
-  const innerSteps = result?.innerSteps?.length
+  const innerSteps = (result?.innerSteps?.length
     ? result.innerSteps
     : detailList(detail.inner_steps).map((item) => ({
       id: String(item.id || item.step_id || ""),
@@ -1300,9 +1431,9 @@ function NodeRunInnerFlow({ result }: { result: NodeRunResult | undefined }) {
       finishedAt: item.finished_at ? String(item.finished_at) : undefined,
       elapsedMs: typeof item.elapsed_ms === "number" ? item.elapsed_ms : undefined,
       detail: detailRecord(item.detail),
-    }));
+    }))).map((step) => localizedNodeRunStep(step, result?.nodeId));
   if (!innerSteps.length) {
-    return <div className="node-run-empty">该 Node 暂未提供 execute-or-dry-run 内部小流程。</div>;
+    return <div className="node-run-empty">该 Node 暂未提供内部执行步骤。</div>;
   }
   return (
     <div className="node-run-inner-flow" aria-label="Node inner flow">
@@ -1411,23 +1542,23 @@ function NodeRunDetail({
       {showBanner ? <div className={`node-run-result-banner ${nodeRunTone(result.status)}`}>
         <div>
           <strong>{result.nodeRunId}</strong>
-          <span>{result.mode || "preflight"} · {result.inputSource || "generated-fixture"} · {result.status || "unknown"}</span>
+          <span>{nodeRunModeLabel(result.mode || "preflight")} · {nodeRunInputSourceLabel(result.inputSource || "generated-fixture")} · {result.status || "unknown"}</span>
         </div>
         <div className="node-run-banner-actions">
           {live ? <span className="status-pill running"><Loader2 size={12} className="spin" />live</span> : null}
-          <span>{result.startedAt || "no start"}{result.finishedAt ? ` -> ${result.finishedAt}` : ""}</span>
+          <span>{formatBeijingTime(result.startedAt, "未开始")}{result.finishedAt ? ` -> ${formatBeijingTime(result.finishedAt)}` : ""}</span>
           {typeof result.elapsedMs === "number" ? <span>{formatElapsed(result.elapsedMs)}</span> : null}
           {result.retryOf ? <span>retry of {shortId(result.retryOf)}</span> : null}
-          <button type="button" className="btn subtle node-run-retry-btn" onClick={() => onRetry(result.nodeRunId)}><RefreshCw size={13} />Retry Node Run</button>
+          <button type="button" className="btn subtle node-run-retry-btn" onClick={() => onRetry(result.nodeRunId)}><RefreshCw size={13} />重试 Node Run</button>
         </div>
         {result.reason ? <p>{result.reason}</p> : null}
       </div> : null}
       {showFlow ? <NodeRunFlow result={result} /> : null}
-      {showFlow ? <DetailBlock title="Execute Inner Flow">
+      {showFlow ? <DetailBlock title="内部执行步骤">
         <NodeRunInnerFlow result={result} />
       </DetailBlock> : null}
       <div className="node-run-detail-grid">
-        <DetailBlock title="Resolved Inputs">
+        <DetailBlock title="已解析输入">
           {resolvedInputs.length ? (
             <div className="node-test-detail">
               {resolvedInputs.map((item) => (
@@ -1443,20 +1574,20 @@ function NodeRunDetail({
             </div>
           ) : null}
         </DetailBlock>
-        <DetailBlock title="Events">
+        <DetailBlock title="事件">
           <div className="node-run-events">
             {(events.length ? events : result.events || []).slice(-18).map((event, index) => (
               <div key={`${event.event}-${event.stepId || index}`} className="node-test-event">
                 <span>{event.sequence || index + 1}</span>
                 <strong>{event.event}</strong>
-                <small>{event.stepId || ""}{event.ts ? ` · ${event.ts}` : ""}</small>
+                <small>{event.stepId || ""}{event.ts ? ` · ${formatBeijingTime(event.ts)}` : ""}</small>
                 {event.data?.summary ? <small>{String(event.data.summary)}</small> : null}
               </div>
             ))}
             {!(events.length || result.events?.length) ? <Empty text="没有事件记录" /> : null}
           </div>
         </DetailBlock>
-        <DetailBlock title="Artifacts">
+        <DetailBlock title="产物">
           <div className="node-test-artifacts">
             {(result.artifacts || []).map((artifact) => <code key={artifact.id || artifact.path}>{artifact.path || artifact.title}</code>)}
             {!result.artifacts?.length ? <Empty text="没有产物记录" /> : null}
@@ -1597,7 +1728,7 @@ function useNodeRunController({
 function NodeRunStartPanel({
   controller,
   compact = false,
-  title = "Run Node",
+  title = "运行节点",
 }: {
   controller: ReturnType<typeof useNodeRunController>;
   compact?: boolean;
@@ -1630,24 +1761,24 @@ function NodeRunStartPanel({
           <span>{runtime.id} · {instance.instanceId} · {node.nodeId}</span>
         </div>
         <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => startNodeRun()}>
-          {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} Run Node
+          {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} 运行节点
         </button>
       </div>
       <div className="node-run-controls">
-        <label>Mode
+        <label>模式
           <select value={runMode} onChange={(event) => setRunMode(event.target.value as NodeRunMode)}>
-            <option value="preflight">Preflight</option>
-            <option value="probe">Probe capabilities</option>
-            <option value="dry-run">Dry run</option>
-            <option value="real-node">Real node</option>
+            <option value="preflight">节点检查</option>
+            <option value="probe">能力探测</option>
+            <option value="dry-run">试运行计划</option>
+            <option value="real-node">真实执行</option>
           </select>
         </label>
-        <label>Input Source
+        <label>输入来源
           <select value={inputSource || "generated-fixture"} onChange={(event) => setInputSource(event.target.value as NodeRunCreateInput["inputSource"])}>
-            <option value="generated-fixture">Generated fixture</option>
-            <option value="existing-run">Existing Workflow Run</option>
-            <option value="manual">Manual input</option>
-            <option value="deepseek-mock">DeepSeek mock</option>
+            <option value="generated-fixture">系统测试输入</option>
+            <option value="existing-run">历史 Workflow Run</option>
+            <option value="manual">手动输入</option>
+            <option value="deepseek-mock">DeepSeek 模拟输入</option>
           </select>
         </label>
         {inputSource === "existing-run" ? (
@@ -1670,7 +1801,7 @@ function NodeRunStartPanel({
           </label>
         )) : null}
       </div>
-      {runMode === "real-node" ? <div className="node-run-warning"><AlertTriangle size={14} />Real node 目前只会生成 blocked 诊断，不会静默触发真实外部副作用。</div> : null}
+      {runMode === "real-node" ? <div className="node-run-warning"><AlertTriangle size={14} />真实执行会调用节点实际逻辑，并可能写入 Git、调用外部 API 或发送 TG 通知。</div> : null}
       {error ? <div className="node-test-result err">{error}</div> : null}
     </section>
   );
@@ -1693,8 +1824,8 @@ function NodeRunHistoryRows({
         <button key={item.nodeRunId} type="button" className={controller.activeNodeRunId === item.nodeRunId ? "active" : ""} onClick={() => onOpenNodeRun(controller.nodeId, item.nodeRunId)}>
           <span className={`status-pill ${nodeRunTone(item.status)}`}>{item.status || "unknown"}</span>
           <strong>{shortId(item.nodeRunId)}</strong>
-          <small>{item.mode || "preflight"} · {item.inputSource || "generated-fixture"}</small>
-          <small>{item.startedAt || item.finishedAt || ""}</small>
+          <small>{nodeRunModeLabel(item.mode || "preflight")} · {nodeRunInputSourceLabel(item.inputSource || "generated-fixture")}</small>
+          <small>{formatBeijingTime(item.startedAt || item.finishedAt, "")}</small>
         </button>
       ))}
       {controller.historyQuery.isLoading ? <div className="node-run-empty">加载 Node Run 历史...</div> : null}
@@ -1750,10 +1881,10 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
   return (
     <section className="node-run-results-panel">
       <div className="node-run-results-tabs" role="tablist" aria-label="Node run result sections">
-        <button type="button" className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Events</button>
-        <button type="button" className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}>Inputs</button>
-        <button type="button" className={tab === "artifacts" ? "active" : ""} onClick={() => setTab("artifacts")}>Artifacts</button>
-        <button type="button" className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")}>Raw</button>
+        <button type="button" className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>事件</button>
+        <button type="button" className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}>输入</button>
+        <button type="button" className={tab === "artifacts" ? "active" : ""} onClick={() => setTab("artifacts")}>产物</button>
+        <button type="button" className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")}>原始数据</button>
       </div>
       {tab === "events" ? (
         <div className="node-run-events node-run-results-body">
@@ -1761,7 +1892,7 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
             <div key={`${event.event}-${event.stepId || index}`} className="node-test-event">
               <span>{event.sequence || index + 1}</span>
               <strong>{event.event}</strong>
-              <small>{event.stepId || ""}{event.ts ? ` · ${event.ts}` : ""}</small>
+              <small>{event.stepId || ""}{event.ts ? ` · ${formatBeijingTime(event.ts)}` : ""}</small>
               {event.data?.summary ? <small>{String(event.data.summary)}</small> : null}
             </div>
           ))}
@@ -1786,8 +1917,8 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
           <div className="node-run-artifact-summary">
             <div>
               <span className={`status-pill ${nodeRunTone(String(validation.status || result.status || ""))}`}>{String(validation.status || result.status || "unknown")}</span>
-              <strong>{businessArtifacts.length} business artifacts</strong>
-              <small>{Object.keys(actualOutputs).length ? Object.keys(actualOutputs).join(", ") : "no declared outputs recorded"}</small>
+              <strong>{businessArtifacts.length} 个业务产物</strong>
+              <small>{Object.keys(actualOutputs).length ? Object.keys(actualOutputs).join(", ") : "暂无声明输出记录"}</small>
             </div>
           </div>
           {Object.keys(actualOutputs).length ? (
@@ -1797,11 +1928,11 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
               ))}
             </div>
           ) : null}
-          <DetailBlock title={`Business Artifacts · ${businessArtifacts.length}`}>
+          <DetailBlock title={`业务产物 · ${businessArtifacts.length}`}>
             <ArtifactList artifacts={businessArtifacts} />
           </DetailBlock>
           {diagnosticArtifacts.length ? (
-            <DetailBlock title={`Diagnostic Artifacts · ${diagnosticArtifacts.length}`}>
+            <DetailBlock title={`诊断产物 · ${diagnosticArtifacts.length}`}>
               <ArtifactList artifacts={diagnosticArtifacts} />
             </DetailBlock>
           ) : null}
@@ -1818,8 +1949,8 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
 }
 
 function NodeRunActiveStepCard({ result }: { result: NodeRunResult | undefined }) {
-  const steps = result?.steps || [];
-  const current = currentNodeRunStep(result);
+  const steps = (result?.steps || []).map((step) => localizedNodeRunStep(step, result?.nodeId));
+  const current = currentNodeRunStep({ ...result, steps });
   const done = steps.filter((step) => ["done", "ok"].includes(step.status)).length;
   const failed = steps.filter((step) => ["failed", "blocked", "needs_input"].includes(step.status)).length;
   const progress = steps.length ? Math.round(((done + failed) / steps.length) * 100) : 0;
@@ -1827,12 +1958,12 @@ function NodeRunActiveStepCard({ result }: { result: NodeRunResult | undefined }
     <section className={`node-run-current-step ${nodeRunCardTone(current?.status || result?.status || "")}`}>
       <div>
         <span className={`status-pill ${nodeRunTone(result?.status)}`}>{result?.status || "loading"}</span>
-        <strong>{current?.title || "Waiting for node run"}</strong>
-        <p>{current?.summary || result?.reason || "Node Run workspace is loading."}</p>
+        <strong>{current?.title || "等待 Node Run"}</strong>
+        <p>{current?.summary || result?.reason || "Node Run 工作台正在加载。"}</p>
       </div>
       <div className="node-run-progress-meter" aria-label="Node run progress">
         <span><b style={{ width: `${Math.max(4, progress)}%` }} /></span>
-        <small>{done}/{steps.length || 0} done{failed ? ` · ${failed} failed` : ""}</small>
+        <small>{done}/{steps.length || 0} 完成{failed ? ` · ${failed} 失败` : ""}</small>
       </div>
       {current ? <code>{current.id} · {current.status}{nodeRunStepTiming(current) ? ` · ${nodeRunStepTiming(current)}` : ""}</code> : null}
     </section>
@@ -1845,15 +1976,15 @@ function NodeRunCapabilitySummary({ result }: { result: NodeRunResult | undefine
   const artifacts = nodeRunBusinessArtifacts(result);
   return (
     <section className="node-run-capability-summary">
-      <div className="section-title"><span>Execution Results</span><span>{rows.length} capabilities</span></div>
+      <div className="section-title"><span>执行结果</span><span>{rows.length} 个能力</span></div>
       <div className="node-run-result-mini-grid">
         <div>
-          <span>Outputs</span>
+          <span>输出产物</span>
           <strong>{artifacts.length}</strong>
           <small>{String(validation.status || result?.status || "unknown")}</small>
         </div>
         <div>
-          <span>Business Node</span>
+          <span>业务节点</span>
           <strong>{result?.status || "-"}</strong>
           <small>{result?.elapsedMs ? formatElapsed(result.elapsedMs) : "-"}</small>
         </div>
@@ -1868,7 +1999,7 @@ function NodeRunCapabilitySummary({ result }: { result: NodeRunResult | undefine
             {row.reason ? <p>{row.reason}</p> : <p>No issue reported.</p>}
             {row.action ? <small>{row.action}</small> : null}
             <details>
-              <summary><span>Capability Detail</span><ChevronDown size={14} /></summary>
+              <summary><span>能力详情</span><ChevronDown size={14} /></summary>
               <code>{formatValue(row.detail)}</code>
             </details>
           </article>
@@ -1882,13 +2013,17 @@ function NodeRunCapabilitySummary({ result }: { result: NodeRunResult | undefine
 function NodeDetailOverviewPanel({
   node,
   modules,
+  selectedModuleId,
   loading,
   onSelectModule,
+  onOpenRuns,
 }: {
   node: NodeRegistryItem | undefined;
   modules: NodeModule[];
+  selectedModuleId?: string;
   loading: boolean;
   onSelectModule: (moduleId: string) => void;
+  onOpenRuns?: () => void;
 }) {
   if (loading) return <Skeleton />;
   if (!node) return <Empty text="没有选中的 Node" />;
@@ -1922,9 +2057,10 @@ function NodeDetailOverviewPanel({
         </article>
       </div>
       <div className="node-detail-module-strip">
-        <span>Modules</span>
-        {modules.slice(0, 5).map((module) => (
-          <button key={module.id} type="button" className="btn" onClick={() => onSelectModule(module.id)}>{module.title || module.id}</button>
+        <span>节点详情</span>
+        {onOpenRuns ? <button type="button" className="btn primary" onClick={onOpenRuns}>Open Runs</button> : null}
+        {modules.map((module) => (
+          <button key={module.id} type="button" className={`btn ${selectedModuleId === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>{module.title || module.id}</button>
         ))}
         {!modules.length ? <small>no modules</small> : null}
       </div>
@@ -1932,39 +2068,43 @@ function NodeDetailOverviewPanel({
   );
 }
 
-function NodeDetailRunSummary({
-  provider,
-  runtime,
-  instance,
-  workflowId,
+function NodeModuleInlinePanel({
   node,
-  runs,
-  mode,
-  onOpenNodeRuns,
-  onOpenNodeRun,
+  module,
+  detail,
+  loading,
 }: {
-  provider: SopDataProvider;
-  runtime: Runtime | undefined;
-  instance: Instance | undefined;
-  workflowId: string;
   node: NodeRegistryItem | undefined;
-  runs: Run[];
-  mode: DataMode;
-  onOpenNodeRuns: (nodeId: string) => void;
-  onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+  module: NodeModule | undefined;
+  detail: NodeModuleDetail | undefined;
+  loading: boolean;
 }) {
-  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId: "", onOpenNodeRun });
-  const recent = controller.historyQuery.data || [];
+  if (loading) return <section className="module-detail-panel inline-module-detail"><Skeleton /></section>;
+  if (!node || !module) return <section className="module-detail-panel inline-module-detail"><Empty text="选择模块查看详情" /></section>;
+  const payload = detail?.detail || {};
   return (
-    <section className="node-run-summary-panel">
+    <section className="module-detail-panel inline-module-detail">
       <div className="panel-head compact">
-        <div><strong>Run Node</strong><span>创建一次独立 Node Run，并进入运行工作台。</span></div>
-        <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>Open Runs</button>
+        <div><strong>{module.title || module.id}</strong><span>{module.description || "节点模块详情"}</span></div>
+        <span className={`status-pill ${module.status}`}>{module.status}</span>
       </div>
-      <NodeRunStartPanel controller={controller} compact title="Start Workspace" />
-      <div className="node-run-summary-history">
-        <div className="section-title"><span>Recent Node Runs</span><span>{recent.length}</span></div>
-        <NodeRunHistoryRows controller={controller} onOpenNodeRun={onOpenNodeRun} limit={3} />
+      <div className="module-detail-body">
+        {(module.lane || module.contractVersion || module.schema?.length || module.metrics) && (
+          <div className="module-contract-strip">
+            {module.lane && <span>{module.lane}</span>}
+            {module.contractVersion && <span>{module.contractVersion}</span>}
+            {module.schema?.slice(0, 6).map((item) => <code key={item}>{item}</code>)}
+            {module.metrics && Object.entries(module.metrics).slice(0, 4).map(([key, value]) => (
+              <span key={key}>{key}: {String(value)}</span>
+            ))}
+          </div>
+        )}
+        <DetailBlock title="模块详情">
+          <KeyValues data={payload} />
+        </DetailBlock>
+        {module.id === "skill" && <DetailBlock title="Skill README"><pre className="log-box compact-log">{String((payload.skill_readme as string) || node.skillReadme || "No README")}</pre></DetailBlock>}
+        {module.id === "artifacts" && <DetailBlock title="产物"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
+        {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
     </section>
   );
@@ -2009,27 +2149,27 @@ function NodeRunsIndexPage({
     <section className="node-runs-page">
       <div className="node-page-header">
         <div>
-          <span className="status-pill running"><Activity size={13} />Node Runs</span>
-          <h1>{node?.title || node?.nodeId || "Node Runs"}</h1>
+          <span className="status-pill running"><Activity size={13} />节点运行</span>
+          <h1>{node?.title || node?.nodeId || "节点运行"}</h1>
           <p>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</p>
         </div>
         <div className="node-page-actions">
-          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>Open Node</button>
+          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>返回节点</button>
         </div>
       </div>
       <div className="node-runs-index-grid">
         <aside className="node-runs-side-panel">
-          <NodeRunStartPanel controller={controller} title="Start Node Run" />
-          <div className="node-run-start-note">Run Node 会立即打开独立工作台，flow、events 和 artifacts 会在该页面展示。</div>
+          <NodeRunStartPanel controller={controller} title="启动节点运行" />
+          <div className="node-run-start-note">运行节点会立即打开独立工作台，执行流程、事件和产物都在 Node Run Detail 页面展示。</div>
         </aside>
         <section className="node-runs-table-panel">
           <div className="panel-head compact">
-            <div><strong>Run History</strong><span>{items.length}/{controller.historyQuery.data?.length || 0} records · page {currentPage}/{pageCount}</span></div>
+            <div><strong>运行历史</strong><span>{items.length}/{controller.historyQuery.data?.length || 0} 条记录 · 第 {currentPage}/{pageCount} 页</span></div>
             <span className="status-pill done">{mode}</span>
           </div>
           <div className="node-runs-tools">
-            <label className="search-box"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search node run" /></label>
-            <label className="filter-box"><SlidersHorizontal size={14} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All status</option><option value="done">Done</option><option value="running">Running</option><option value="failed">Failed</option><option value="waiting">Waiting</option></select></label>
+            <label className="search-box"><Search size={14} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 Node Run" /></label>
+            <label className="filter-box"><SlidersHorizontal size={14} /><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">全部状态</option><option value="done">完成</option><option value="running">运行中</option><option value="failed">失败</option><option value="waiting">等待</option></select></label>
           </div>
           <div className="node-runs-table">
             {pagedItems.map((item) => (
@@ -2037,13 +2177,13 @@ function NodeRunsIndexPage({
                 <div>
                   <span className={`status-pill ${nodeRunTone(item.status)}`}>{item.status || "unknown"}</span>
                   <strong>{item.nodeRunId}</strong>
-                  <small>{item.mode || "preflight"} · {item.inputSource || "generated-fixture"}</small>
+                  <small>{nodeRunModeLabel(item.mode || "preflight")} · {nodeRunInputSourceLabel(item.inputSource || "generated-fixture")}</small>
                 </div>
                 <div>
-                  <span>{item.startedAt || "no start"}</span>
-                  <span>{typeof item.elapsedMs === "number" ? formatElapsed(item.elapsedMs) : item.finishedAt || "-"}</span>
+                  <span>{formatBeijingTime(item.startedAt, "未开始")}</span>
+                  <span>{typeof item.elapsedMs === "number" ? formatElapsed(item.elapsedMs) : formatBeijingTime(item.finishedAt)}</span>
                 </div>
-                <button type="button" className="btn primary" onClick={() => onOpenNodeRun(controller.nodeId, item.nodeRunId)}>Open Run</button>
+                <button type="button" className="btn primary" onClick={() => onOpenNodeRun(controller.nodeId, item.nodeRunId)}>打开运行</button>
               </article>
             ))}
             {controller.historyQuery.isLoading ? <Skeleton /> : null}
@@ -2051,9 +2191,9 @@ function NodeRunsIndexPage({
           </div>
           {items.length > pageSize ? (
             <div className="node-runs-pagination">
-              <button type="button" className="btn" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button>
+              <button type="button" className="btn" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</button>
               <span>{(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, items.length)} / {items.length}</span>
-              <button type="button" className="btn" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</button>
+              <button type="button" className="btn" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>下一页</button>
             </div>
           ) : null}
         </section>
@@ -2090,9 +2230,13 @@ function NodeRunDetailPage({
   const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId, onOpenNodeRun });
   const result = controller.current;
   const live = nodeRunIsLive(result);
-  const current = currentNodeRunStep(result);
+  const localizedSteps = (result?.steps || []).map((step) => localizedNodeRunStep(step, result?.nodeId));
+  const current = currentNodeRunStep({ ...result, steps: localizedSteps });
   const [selectedStepId, setSelectedStepId] = useState(() => readSearchParam("step"));
   const stepKey = (result?.steps || []).map((step) => step.id).join("|");
+  useEffect(() => {
+    removeSearchParams(["test_source", "test_run"], "replace");
+  }, [selectedNodeRunId]);
   useEffect(() => {
     const onPopState = () => setSelectedStepId(readSearchParam("step"));
     window.addEventListener("popstate", onPopState);
@@ -2137,10 +2281,10 @@ function NodeRunDetailPage({
         <div className="node-run-detail-actions">
           {live ? <span className="status-pill running"><Loader2 size={12} className="spin" />live</span> : null}
           <span className={`status-pill ${nodeRunTone(result?.status)}`}>{result?.status || "loading"}</span>
-          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>Back to Node</button>
-          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>All Runs</button>
-          <button type="button" className="btn" onClick={copyLink}><Copy size={13} />Copy Link</button>
-          {result ? <button type="button" className="btn primary" onClick={() => controller.startNodeRun(result.nodeRunId)}><RefreshCw size={13} />Retry</button> : null}
+          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>返回节点</button>
+          <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>运行列表</button>
+          <button type="button" className="btn" onClick={copyLink}><Copy size={13} />复制链接</button>
+          {result ? <button type="button" className="btn primary" onClick={() => controller.startNodeRun(result.nodeRunId)}><RefreshCw size={13} />重试</button> : null}
         </div>
       </div>
       {!selectedNodeRunId ? (
@@ -2150,15 +2294,15 @@ function NodeRunDetailPage({
           <div className="node-run-workspace-hero">
             <NodeRunActiveStepCard result={result} />
             <section className="node-run-workspace-summary">
-              <strong>{live ? "Running Node Run" : "Node Run Snapshot"}</strong>
+              <strong>{live ? "Node Run 运行中" : "Node Run 快照"}</strong>
               <span>{current?.id || "no active step"}</span>
-              <p>{result?.reason || current?.summary || "Use the flow and diagnostics below to inspect this node run."}</p>
+              <p>{result?.reason || current?.summary || "通过执行流程、事件和产物检查这次节点运行。"}</p>
             </section>
           </div>
           <div className="node-run-detail-grid-page">
             <section className="node-run-workspace-main">
               <section className="node-run-flow-panel">
-                <div className="panel-head compact"><div><strong>Execution Flow</strong><span>{result?.status || "loading"}</span></div></div>
+                <div className="panel-head compact"><div><strong>执行流程</strong><span>{result?.status || "loading"}</span></div></div>
                 {controller.detailQuery.isLoading && !result ? <Skeleton /> : (
                   <NodeRunFlow
                     result={result}
@@ -2169,7 +2313,7 @@ function NodeRunDetailPage({
                 )}
               </section>
               <details className="node-run-inner-details">
-                <summary><span>Inner Flow</span><ChevronDown size={15} /></summary>
+                <summary><span>内部执行步骤</span><ChevronDown size={15} /></summary>
                 <NodeRunInnerFlow result={result} />
               </details>
               <NodeRunResultTabs result={result} events={controller.events} />
@@ -2178,7 +2322,7 @@ function NodeRunDetailPage({
               <NodeRunCapabilitySummary result={result} />
               <NodeRunConfigPanel result={result} />
               <details className="node-run-context-details">
-                <summary><span>Run Context</span><ChevronDown size={15} /></summary>
+                <summary><span>运行上下文</span><ChevronDown size={15} /></summary>
                 <NodeRunContextPanel controller={controller} showRaw />
               </details>
             </aside>
@@ -2203,7 +2347,7 @@ const EVENT_META: Record<string, { icon: string; label: string }> = {
 
 function EventRow({ event }: { event: NodeEvent }) {
   const meta = EVENT_META[event.event] || { icon: "•", label: event.event };
-  const time = event.ts ? event.ts.slice(11, 19) : "";
+  const time = formatBeijingTime(event.ts, "");
   const isTg = event.event.startsWith("tg_notify");
   const ok = event.ok !== false;
   let detail = "";
@@ -3521,7 +3665,7 @@ export default function App() {
     const baseInstance = routeInstanceId(instance, instanceId);
     const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
     const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs`;
-    const nextUrl = `${nextPath}${window.location.search}`;
+    const nextUrl = `${nextPath}${searchForNodeRunsPage()}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
     setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunId: "", nodeRunList: true });
   }
@@ -3533,7 +3677,7 @@ export default function App() {
     const baseInstance = routeInstanceId(instance, instanceId);
     const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
     const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs/${encodeURIComponent(nodeRunId)}`;
-    const nextUrl = `${nextPath}${window.location.search}`;
+    const nextUrl = `${nextPath}${searchForNodeRunDetailPage()}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
     setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunId, nodeRunList: true });
   }
@@ -3737,7 +3881,7 @@ export default function App() {
           {visibleExecutions.map((run) => (
             <button key={run.pipelineId} type="button" className={`run-card ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`} onClick={() => { setSelectedRunId(run.pipelineId); navigateTo("workflow", run.pipelineId, selectedStage?.id || ""); }}>
               <div className="row"><strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong><span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span></div>
-              <span>{run.updatedAt || run.startedAt}</span><span>{run.sourceUrl || run.repo}</span>
+              <span>{formatBeijingTime(run.updatedAt || run.startedAt)}</span><span>{run.sourceUrl || run.repo}</span>
             </button>
           ))}
           {!visibleExecutions.length && <LoadingOrEmpty loading={runsQuery.isLoading} text={runs.length ? "没有匹配的 Workflow Run" : "当前 Workspace 还没有 Workflow Run"} />}
@@ -4800,7 +4944,7 @@ function RuntimeOverview({
                 >
                   <span>
                     <strong>{shortId(relationshipRun.pipelineId)}</strong>
-                    <small>{relationshipRun.updatedAt || relationshipRun.startedAt || "no timestamp"} · {runProgressFromNodes(relationshipRun).percent}%</small>
+                    <small>{formatBeijingTime(relationshipRun.updatedAt || relationshipRun.startedAt, "无时间")} · {runProgressFromNodes(relationshipRun).percent}%</small>
                   </span>
                   <span className={`status-pill ${relationshipRun.status}`}>{statusLabel(relationshipRun.status)}</span>
                 </button>
@@ -5100,7 +5244,7 @@ function RuntimeOverview({
                   <strong>{item.instanceId}</strong>
                   <span>{item.latestExecution?.pipelineId || item.workflowBinding?.workflowName || item.sopType || "no latest run"}</span>
                 </div>
-                <small>{item.latestExecution?.updatedAt || item.updatedAt || "-"}</small>
+                <small>{formatBeijingTime(item.latestExecution?.updatedAt || item.updatedAt)}</small>
               </div>
             ))}
             {probeResults.map((item) => (
@@ -5183,7 +5327,7 @@ function RuntimeHostDetailGroups({
     display_name: runtime?.displayName || runtime?.name || "-",
     status: runtime?.localStatus || runtime?.status || "unknown",
     supported_sop_types: supportedTypes,
-    updated_at: runtime?.updatedAt || "-",
+    updated_at: formatBeijingTime(runtime?.updatedAt),
   };
   const network = {
     client_ip: runtime?.clientIp || runtime?.machine || "-",
@@ -6341,7 +6485,7 @@ function WorkflowWorkspace({
         <article className="workflow-definition-card">
           <span className={`status-pill ${selectedRun?.status || "waiting"}`}><ListChecks size={14} />Selected Workflow Run</span>
           <strong>{selectedRun?.pipelineId ? shortId(selectedRun.pipelineId) : "No run selected"}</strong>
-          <small>{selectedRun?.updatedAt || selectedRun?.startedAt || "select a workflow run from the list"}</small>
+          <small>{formatBeijingTime(selectedRun?.updatedAt || selectedRun?.startedAt, "select a workflow run from the list")}</small>
           <KeyValues data={{
             scope: "stateful workflow run",
             status: selectedRun ? statusLabel(selectedRun.status) : "-",
@@ -6405,13 +6549,13 @@ function WorkflowWorkspace({
                 <button
                   key={run.pipelineId}
                   type="button"
-                  title={`${run.pipelineId}\n${statusLabel(run.status)} · ${runProgressFromNodes(run, dag).percent}%\n${run.sourceUrl || run.repo}\n${run.updatedAt || run.startedAt}`}
+                  title={`${run.pipelineId}\n${statusLabel(run.status)} · ${runProgressFromNodes(run, dag).percent}%\n${run.sourceUrl || run.repo}\n${formatBeijingTime(run.updatedAt || run.startedAt)}`}
                   className={`workflow-run-row ${run.status} ${selectedRun?.pipelineId === run.pipelineId ? "active" : ""}`}
                   onClick={() => onSelectRun(run.pipelineId)}
                 >
                   <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
                   <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
-                  <small>{runProgressFromNodes(run, dag).percent}% · {run.updatedAt || run.startedAt}</small>
+                  <small>{runProgressFromNodes(run, dag).percent}% · {formatBeijingTime(run.updatedAt || run.startedAt)}</small>
                   <small>{run.sourceUrl || run.repo}</small>
                 </button>
               ))}
@@ -6503,7 +6647,7 @@ function WorkflowWorkspace({
                       {nodeDetail?.definition?.executor || nodeDetail?.executor ? <KeyValues data={Object.fromEntries(Object.entries(nodeDetail.definition?.executor || nodeDetail.executor).filter(([, value]) => value))} /> : <Empty text="选择节点后加载" />}
                     </DetailBlock>
                     <DetailBlock title="Action Steps">
-                      <StepList items={nodeDetail?.actions || []} status={selectedStatus} />
+                      <StepList items={nodeActionSteps(selectedStage.id, nodeDetail?.actions || [])} status={selectedStatus} />
                     </DetailBlock>
                     <DetailBlock title="Input Contract">
                       <KeyValues data={nodeDetail?.declaredInputs || selectedStage.inputs} />
@@ -6541,8 +6685,8 @@ function WorkflowWorkspace({
                       <KeyValues data={{
                         workflow_run: selectedRun.pipelineId,
                         run_id: nodeDetail?.runId || "-",
-                        started: nodeDetail?.startedAt || "-",
-                        finished: nodeDetail?.finishedAt || "-",
+                        started: formatBeijingTime(nodeDetail?.startedAt),
+                        finished: formatBeijingTime(nodeDetail?.finishedAt),
                         instance: instance.instanceId,
                         repo: instance.repo,
                         status: selectedStatus,
@@ -6801,7 +6945,7 @@ function RunTable({ runs, selectedRunId, onSelect }: { runs: Run[]; selectedRunI
         <button key={run.pipelineId} type="button" className={`run-table-row ${selectedRunId === run.pipelineId ? "active" : ""}`} onClick={() => onSelect(run.pipelineId)}>
           <strong title={run.pipelineId}>{shortId(run.pipelineId)}</strong>
           <span className={`status-pill ${run.status}`}>{statusLabel(run.status)}</span>
-          <span>{run.updatedAt || run.startedAt}</span>
+          <span>{formatBeijingTime(run.updatedAt || run.startedAt)}</span>
           <span>{runProgressFromNodes(run).percent}%</span>
           <span>{run.status === "failed" ? "Retry" : "Open"}</span>
         </button>
@@ -7110,7 +7254,7 @@ function SettingsPage({
           <span className="status-pill waiting"><Settings size={14} />Global Settings</span>
           <div>
             <h1>Control Plane Settings</h1>
-            <p>{managementConfig?.updatedAt ? `updated ${managementConfig.updatedAt}` : "server-side config"} · {editedCount} edited</p>
+            <p>{managementConfig?.updatedAt ? `updated ${formatBeijingTime(managementConfig.updatedAt)}` : "server-side config"} · {editedCount} edited</p>
           </div>
         </div>
         <div className="ops-header-chips">
@@ -7468,7 +7612,7 @@ function MachinesPage({
                       <span>{machine.role || "target"}</span>
                       <span>{machine.authType === "password" ? "password" : "private key"}</span>
                       <span>{secretSaved ? "secret saved" : "secret missing"}</span>
-                      <span>{machine.lastCheckAt ? `checked ${shortId(machine.lastCheckAt)}` : "not checked"}</span>
+                      <span>{machine.lastCheckAt ? `checked ${formatBeijingTime(machine.lastCheckAt)}` : "not checked"}</span>
                     </span>
                   </div>
                 </button>
@@ -7571,8 +7715,8 @@ function MachinesPage({
                 auth_type: selectedMachine.authType,
                 private_key: selectedMachine.privateKeyPresent ? "saved" : "missing",
                 password: selectedMachine.passwordPresent ? "saved" : "missing",
-                last_check: selectedMachine.lastCheckAt || "-",
-                updated_at: selectedMachine.updatedAt || "-",
+                last_check: formatBeijingTime(selectedMachine.lastCheckAt),
+                updated_at: formatBeijingTime(selectedMachine.updatedAt),
               }} />
               <button type="button" className="primary compact" onClick={() => setEditingMachine(true)}><Edit3 size={14} />Edit Machine</button>
             </div>
@@ -7751,9 +7895,12 @@ function NodesWorkspace({
   const workflowBinding = instance?.workflowBinding;
   const workflowId = workflowBinding?.workflowId || workflowBinding?.workflowName || instance?.sopType || "workflow";
   const isRouteNode = Boolean(routeNodeId && selectedNode);
-  const isModuleRoute = Boolean(isRouteNode && routeModuleId);
   const isNodeRunDetailRoute = Boolean(isRouteNode && selectedNodeRunId);
   const isNodeRunsRoute = Boolean(isRouteNode && nodeRunList && !selectedNodeRunId);
+
+  useEffect(() => {
+    if (isRouteNode && !isNodeRunDetailRoute) removeSearchParams(["step"], "replace");
+  }, [isRouteNode, isNodeRunDetailRoute, routeNodeId]);
 
   const nodeListPanel = (
     <aside className="node-list-panel">
@@ -7910,12 +8057,6 @@ function NodesWorkspace({
             </div>
           </section>
         </section>
-      ) : isModuleRoute ? (
-        <section className="node-module-workbench node-catalog-workbench node-module-route-workbench">
-          {nodeListPanel}
-          {definitionViews}
-          <ModuleDetailPanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} onOpenNode={selectedNode ? () => onSelectNode(selectedNode.nodeId) : undefined} />
-        </section>
       ) : isNodeRunDetailRoute ? (
         <NodeRunDetailPage
           provider={provider}
@@ -7952,25 +8093,18 @@ function NodesWorkspace({
                 <span>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</span>
               </div>
               <div className="node-detail-module-links">
-                {selectedNode ? <button type="button" className="btn" onClick={() => onOpenNodeRuns(selectedNode.nodeId)}>Run History</button> : null}
+                {selectedNode ? <button type="button" className="btn primary" onClick={() => onOpenNodeRuns(selectedNode.nodeId)}>Open Runs</button> : null}
               </div>
             </div>
-            <NodeDetailOverviewPanel node={selectedNode} modules={modules} loading={loading} onSelectModule={onSelectModule} />
-            {selectedNode && instance ? (
-              <section className="node-run-route-panel">
-                <NodeDetailRunSummary
-                  provider={provider}
-                  runtime={runtime}
-                  instance={instance}
-                  workflowId={workflowId}
-                  node={selectedNode}
-                  runs={runs}
-                  mode={mode}
-                  onOpenNodeRuns={onOpenNodeRuns}
-                  onOpenNodeRun={onOpenNodeRun}
-                />
-              </section>
-            ) : null}
+            <NodeDetailOverviewPanel
+              node={selectedNode}
+              modules={modules}
+              selectedModuleId={selectedModule?.id || routeModuleId}
+              loading={loading}
+              onSelectModule={onSelectModule}
+              onOpenRuns={selectedNode ? () => onOpenNodeRuns(selectedNode.nodeId) : undefined}
+            />
+            <NodeModuleInlinePanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} />
             <details className="node-definition-details">
               <summary><span>Developer Definition Details</span><ChevronDown size={15} /></summary>
               <NodeDetailPanel node={selectedNode} loading={loading} />
@@ -8085,6 +8219,9 @@ function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined
             <CapabilityRow label="Telegram Notify" enabled={capabilityEnabled((node.capabilities || {}).telegram ?? (node.infra?.tgNotify !== false))} />
             <CapabilityRow label="SSE Events" enabled={capabilityEnabled((node.capabilities || {}).sse ?? true)} />
           </div>
+        </DetailBlock>
+        <DetailBlock title="Action Steps">
+          <StepList items={nodeActionSteps(node.nodeId)} status={(node.missingFields || []).length ? "waiting" : "done"} />
         </DetailBlock>
         <DetailBlock title="Actions">
           <ActionList actions={(node.actions as Record<string, unknown>) || {}} />
@@ -8530,7 +8667,7 @@ function RuntimeManagementStartDrawer({
                     machine_id: selectedCreateMachine.id,
                     auth: selectedCreateMachine.authType,
                     secret: selectedCreateMachine.privateKeyPresent || selectedCreateMachine.passwordPresent ? "saved" : "missing",
-                    last_check: selectedCreateMachine.lastCheckAt || "-",
+                    last_check: formatBeijingTime(selectedCreateMachine.lastCheckAt),
                   }} />
                 </section>
               ) : (
@@ -8651,7 +8788,7 @@ function RuntimeManagementStartDrawer({
                     inferred_runtime_id: inferredDeleteRuntimeId || "-",
                     auth: selectedDeleteMachine.authType,
                     secret: selectedDeleteMachine.privateKeyPresent || selectedDeleteMachine.passwordPresent ? "saved" : "missing",
-                    last_check: selectedDeleteMachine.lastCheckAt || "-",
+                    last_check: formatBeijingTime(selectedDeleteMachine.lastCheckAt),
                   }} />
                 </section>
               ) : (

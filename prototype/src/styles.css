@@ -1876,6 +1876,12 @@ pre {
   background: #fbfcfe;
 }
 
+.node-detail-module-strip .btn.active {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
 .node-detail-module-strip > span {
   color: var(--muted);
   font-size: 12px;
@@ -7779,7 +7785,7 @@ pre {
 
 .node-runs-index-grid {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -7808,6 +7814,17 @@ pre {
   gap: 10px;
   align-content: start;
   padding: 12px;
+}
+
+.node-runs-side-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.inline-module-detail {
+  box-shadow: none;
 }
 
 .node-run-output-panel .node-run-detail-grid {
