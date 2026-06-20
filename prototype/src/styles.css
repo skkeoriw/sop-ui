@@ -7356,6 +7356,47 @@ pre {
   gap: 10px;
 }
 
+.inherited-settings-layers {
+  display: grid;
+  gap: 16px;
+}
+
+.inherited-settings-layer,
+.instance-override-editor {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 12px;
+}
+
+.inherited-settings-layer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inherited-settings-layer-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.inherited-settings-layer-head strong {
+  font-size: 13px;
+}
+
+.inherited-settings-layer-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inherited-settings-layer .inherited-settings-groups {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
 .inherited-settings-group {
   min-width: 0;
   overflow: hidden;
@@ -7419,6 +7460,50 @@ pre {
 
 .inherited-settings-row.missing {
   background: rgba(227, 194, 95, .05);
+}
+
+.instance-override-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.instance-override-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+.instance-override-field.present {
+  border-color: rgba(13, 122, 69, .28);
+}
+
+.instance-override-field.edited {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px rgba(63, 107, 246, .12);
+}
+
+.instance-override-field > span {
+  display: grid;
+  gap: 3px;
+}
+
+.instance-override-field small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.instance-override-field input {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
 }
 
 .instance-config-panel {

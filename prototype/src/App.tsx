@@ -1261,6 +1261,10 @@ const SETTING_GROUP_WORKFLOW_TAGS: Record<string, string[]> = {
   "telegram-defaults": ["youtube-research-wiki"],
   "runtime-defaults": ["runtime-management"],
   "instance-defaults": ["runtime-management", "youtube-research-wiki"],
+  notebooklm: ["youtube-research-wiki"],
+  "youtube-workers": ["youtube-research-wiki"],
+  "llm-vertex": ["youtube-research-wiki"],
+  "settings-backend": ["runtime-management"],
   "core-repos": ["runtime-management"],
   "infra-repos": ["runtime-management"],
   "machine-defaults": ["runtime-management"],
@@ -1324,8 +1328,55 @@ const SETTING_CONFIG_GROUPS = [
     subtitle: "create-instance 默认仓库、模型和业务配置",
     keys: [
       { key: "WIKI_GITHUB_REPO", label: "Default Wiki Repo", placeholder: "skkeoriw/runtime-management" },
+    ],
+  },
+  {
+    id: "notebooklm",
+    title: "NotebookLM",
+    subtitle: "NotebookLM Bridge 研究节点配置",
+    keys: [
+      { key: "NOTEBOOKLM_BRIDGE_URL", label: "Bridge URL", placeholder: "https://notebooklm-bridge..." },
+      { key: "NOTEBOOKLM_BRIDGE_TOKEN", label: "Bridge Token", placeholder: "NotebookLM Bridge token" },
+      { key: "NOTEBOOKLM_CLIENT_ID", label: "Client ID", placeholder: "NotebookLM client id" },
+    ],
+  },
+  {
+    id: "youtube-workers",
+    title: "YouTube Workers",
+    subtitle: "YouTube 内容解析与深度研究 Worker 配置",
+    keys: [
+      { key: "YOUTUBE_CONTENT_API_URL", label: "Content API URL", placeholder: "https://youtube-content-parse..." },
+      { key: "YOUTUBE_CONTENT_API_TOKEN", label: "Content API Token", placeholder: "Content API token" },
+      { key: "YOUTUBE_RESEARCH_WORKFLOW_URL", label: "Research Worker URL", placeholder: "https://youtube-research-workflow..." },
+      { key: "YOUTUBE_RESEARCH_WORKFLOW_TOKEN", label: "Research Worker Token", placeholder: "Research Worker token" },
+    ],
+  },
+  {
+    id: "llm-vertex",
+    title: "LLM / Vertex",
+    subtitle: "Wiki 构建和模型调用相关配置",
+    keys: [
       { key: "WIKI_LLM_PROVIDER", label: "Wiki LLM Provider", placeholder: "vertex" },
+      { key: "GOOGLE_CLOUD_API_KEY", label: "Google Cloud API Key", placeholder: "Google/Gemini API key" },
+      { key: "GEMINI_API_KEY", label: "Gemini API Key", placeholder: "Gemini API key" },
+      { key: "WIKI_GEMINI_MODEL", label: "Gemini Model", placeholder: "gemini-..." },
+      { key: "GOOGLE_PROJECT_ID", label: "Google Project ID", placeholder: "project id" },
+      { key: "VERTEX_LOCATION", label: "Vertex Location", placeholder: "us-central1" },
       { key: "WIKI_VERTEX_MODEL", label: "Vertex Model", placeholder: "gemini-1.5-pro" },
+    ],
+  },
+  {
+    id: "settings-backend",
+    title: "Settings Backend",
+    subtitle: "Control Plane / D1 配置存储连接",
+    keys: [
+      { key: "RUNTIME_SETTINGS_BACKEND", label: "Backend", placeholder: "d1" },
+      { key: "RUNTIME_SETTINGS_CLOUDFLARE_EMAIL", label: "Cloudflare Email", placeholder: "settings backend email" },
+      { key: "RUNTIME_SETTINGS_CLOUDFLARE_API_KEY", label: "Cloudflare API Key", placeholder: "settings backend global key" },
+      { key: "RUNTIME_SETTINGS_CLOUDFLARE_API_TOKEN", label: "Cloudflare API Token", placeholder: "settings backend token" },
+      { key: "RUNTIME_SETTINGS_CLOUDFLARE_ACCOUNT_ID", label: "Cloudflare Account ID", placeholder: "account id" },
+      { key: "RUNTIME_SETTINGS_D1_DATABASE_ID", label: "D1 Database ID", placeholder: "database id" },
+      { key: "RUNTIME_SETTINGS_D1_DATABASE_NAME", label: "D1 Database Name", placeholder: "runtime-settings-db" },
     ],
   },
   {
@@ -1353,7 +1404,6 @@ const SETTING_CONFIG_GROUPS = [
     subtitle: "SOP UI 和当前控制面状态",
     keys: [
       { key: "SOP_UI_URL", label: "SOP UI URL", placeholder: "" },
-      { key: "BRIDGE_PORT", label: "Bridge Port", placeholder: "18121" },
     ],
   },
 ];
@@ -1365,6 +1415,10 @@ function settingGroupIcon(id: string) {
   if (id === "telegram-defaults") return <Send size={18} />;
   if (id === "runtime-defaults") return <Server size={18} />;
   if (id === "instance-defaults") return <LayoutDashboard size={18} />;
+  if (id === "notebooklm") return <Network size={18} />;
+  if (id === "youtube-workers") return <Workflow size={18} />;
+  if (id === "llm-vertex") return <Bot size={18} />;
+  if (id === "settings-backend") return <Settings size={18} />;
   if (id === "core-repos") return <GitBranch size={18} />;
   if (id === "infra-repos") return <PackageSearch size={18} />;
   if (id === "machine-defaults") return <ShieldCheck size={18} />;
@@ -1379,6 +1433,16 @@ function capabilityConfigQueryKey(mode: DataMode, runtime: Runtime | undefined, 
   return ["capability-config", mode, runtime?.id || runtime?.endpoint || "", instanceId, nodeId];
 }
 
+const INSTANCE_OVERRIDE_CONFIG_KEYS = [
+  { key: "GITHUB_TOKEN", label: "GitHub Token", group: "GitHub" },
+  { key: "YOUTUBE_WIKI_TG_TOKEN", label: "Telegram Bot Token", group: "Telegram" },
+  { key: "YOUTUBE_WIKI_TG_CHAT_ID", label: "Telegram Chat ID", group: "Telegram" },
+];
+
+function compactNonEmptyValues(values: Record<string, string>) {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim()));
+}
+
 function InheritedSettingsPanel({
   provider,
   runtime,
@@ -1388,6 +1452,8 @@ function InheritedSettingsPanel({
   title = "Inherited Settings",
   description = "当前上下文只读取 Settings 默认值和下游覆盖结果；这里不修改 Settings。",
   compact = false,
+  layered = false,
+  allowInstanceOverrides = false,
   onOpenSettings,
   onOpenInstance,
 }: {
@@ -1399,9 +1465,13 @@ function InheritedSettingsPanel({
   title?: string;
   description?: string;
   compact?: boolean;
+  layered?: boolean;
+  allowInstanceOverrides?: boolean;
   onOpenSettings?: () => void;
   onOpenInstance?: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const [instanceOverrideEdits, setInstanceOverrideEdits] = useState<Record<string, string>>({});
   const instanceId = instance?.instanceId || "";
   const query = useQuery({
     queryKey: ["inherited-settings", ...capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || "")],
@@ -1416,6 +1486,18 @@ function InheritedSettingsPanel({
     retry: 1,
   });
   const config = query.data;
+  const saveInstanceOverridesMutation = useMutation({
+    mutationFn: () => provider.saveCapabilityConfig(runtime!, instanceId, {
+      scope: "instance",
+      values: compactNonEmptyValues(instanceOverrideEdits),
+    }),
+    onSuccess: (saved) => {
+      setInstanceOverrideEdits({});
+      queryClient.setQueryData(capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || ""), saved);
+      queryClient.invalidateQueries({ queryKey: capabilityConfigQueryKey(mode, runtime, instanceId, nodeId || "") });
+      queryClient.invalidateQueries({ queryKey: ["inherited-settings"] });
+    },
+  });
   const byKey = useMemo(() => {
     const items = new Map<string, CapabilityConfigPreview["items"][number]>();
     (config?.items || []).forEach((item) => {
@@ -1449,6 +1531,134 @@ function InheritedSettingsPanel({
   const groups = extraItems.length
     ? [...SETTING_CONFIG_GROUPS, { id: "other", title: "Other Settings", subtitle: "当前上下文解析到但未归入固定分组的配置", keys: extraItems.map((item) => ({ key: item.key, label: item.label || item.key, placeholder: "" })) }]
     : SETTING_CONFIG_GROUPS;
+  const defaultItemForKey = (key: string) => {
+    const item = settingsDefaultsByKey.get(key);
+    return {
+      label: item?.key?.replace(/_/g, " ") || key.replace(/_/g, " "),
+      present: Boolean(item?.present),
+      required: Boolean(item?.required),
+      maskedValue: item?.maskedValue || "",
+      sourceKind: item?.present ? "global-settings" : "missing",
+    };
+  };
+  const effectiveItemForKey = (key: string) => {
+    const item = byKey.get(key);
+    return {
+      label: item?.label || key.replace(/_/g, " "),
+      present: Boolean(item?.present),
+      required: Boolean(item?.required),
+      maskedValue: item?.maskedValue || "",
+      sourceKind: item?.sourceKind || "missing",
+      source: item?.source || "",
+    };
+  };
+  const overrideDetailsForKey = (key: string) => {
+    const item = byKey.get(key);
+    const values = item?.valuesByScope || {};
+    return ["instance", "runtime", "runtime_env_file", "bridge_env"]
+      .map((scope) => ({ scope, value: values[scope] }))
+      .filter((entry) => entry.value?.present);
+  };
+  const renderLayerGroups = (layer: "defaults" | "overrides" | "effective") => {
+    const rendered = groups.map((group) => {
+      const rows = group.keys.flatMap((field) => {
+        if (layer === "defaults") {
+          const item = defaultItemForKey(field.key);
+          return [{ key: field.key, label: field.label, value: item.maskedValue, present: item.present, required: item.required, sourceKind: item.sourceKind }];
+        }
+        if (layer === "effective") {
+          if (!byKey.has(field.key)) return [];
+          const item = effectiveItemForKey(field.key);
+          return [{ key: field.key, label: field.label, value: item.maskedValue, present: item.present, required: item.required, sourceKind: item.sourceKind }];
+        }
+        const details = overrideDetailsForKey(field.key).filter((entry) => entry.scope !== "instance");
+        if (!details.length) return [];
+        return [{
+          key: field.key,
+          label: field.label,
+          value: details.map((entry) => `${configSourceLabel(entry.scope)}: ${entry.value?.maskedValue || "已配置"}`).join(" · "),
+          present: true,
+          required: false,
+          sourceKind: details.map((entry) => configSourceLabel(entry.scope)).join(" / "),
+        }];
+      });
+      if (layer !== "defaults" && !rows.length) return null;
+      const presentCount = rows.filter((row) => row.present).length;
+      return (
+        <article key={`${layer}-${group.id}`} className="inherited-settings-group">
+          <div className="inherited-settings-group-head">
+            <span>{settingGroupIcon(group.id)}</span>
+            <div>
+              <strong>{group.title}</strong>
+              <small>{group.subtitle}</small>
+            </div>
+            <em>{presentCount}/{rows.length}</em>
+          </div>
+          <div className="settings-group-tags">
+            {settingWorkflowTags(group.id).map((tag) => <span key={tag}>{tag}</span>)}
+          </div>
+          <div className="inherited-settings-rows">
+            {rows.map((row) => (
+              <div key={row.key} className={`inherited-settings-row ${row.present ? "present" : "missing"}`}>
+                <div>
+                  <strong>{row.label}</strong>
+                  <code>{row.key}</code>
+                </div>
+                <code title={row.value || ""}>{row.present ? row.value || "已配置" : "未配置"}</code>
+                <span className={`status-pill ${row.present ? "done" : row.required ? "failed" : "waiting"}`}>{configSourceLabel(row.sourceKind)}</span>
+              </div>
+            ))}
+          </div>
+        </article>
+      );
+    }).filter(Boolean);
+    return rendered.length ? rendered : <Empty text={layer === "overrides" ? "当前没有 Runtime / env 覆盖项" : "当前没有可展示配置"} />;
+  };
+  const instanceOverrideEditedCount = Object.keys(compactNonEmptyValues(instanceOverrideEdits)).length;
+  const renderInstanceOverrideEditor = () => (
+    <section className="instance-override-editor">
+      <div className="inherited-settings-layer-head">
+        <div>
+          <strong>Instance Overrides: GitHub / Telegram</strong>
+          <span>只保存当前 Instance 的 GitHub / Telegram 覆盖值，不修改 Settings 默认值，也不修改 Runtime/env。</span>
+        </div>
+        <button
+          type="button"
+          className="btn primary"
+          disabled={!instanceOverrideEditedCount || saveInstanceOverridesMutation.isPending || !runtime || !instance}
+          onClick={() => saveInstanceOverridesMutation.mutate()}
+        >
+          {saveInstanceOverridesMutation.isPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
+          保存 Instance 覆盖{instanceOverrideEditedCount ? ` (${instanceOverrideEditedCount})` : ""}
+        </button>
+      </div>
+      {saveInstanceOverridesMutation.error ? <div className="inline-error">{String(saveInstanceOverridesMutation.error instanceof Error ? saveInstanceOverridesMutation.error.message : saveInstanceOverridesMutation.error)}</div> : null}
+      <div className="instance-override-grid">
+        {INSTANCE_OVERRIDE_CONFIG_KEYS.map((field) => {
+          const effective = effectiveItemForKey(field.key);
+          const instanceScope = byKey.get(field.key)?.valuesByScope?.instance;
+          const secret = /TOKEN|KEY|SECRET|PRIVATE/.test(field.key);
+          return (
+            <label key={field.key} className={`instance-override-field ${instanceScope?.present ? "present" : ""} ${instanceOverrideEdits[field.key]?.trim() ? "edited" : ""}`}>
+              <span>
+                <strong>{field.label}</strong>
+                <code>{field.key}</code>
+              </span>
+              <small>{field.group} · 当前 Instance 覆盖：{instanceScope?.present ? instanceScope.maskedValue || "已配置" : "未配置"}</small>
+              <small>最终生效：{effective.present ? `${effective.maskedValue || "已配置"} · ${configSourceLabel(effective.sourceKind)}` : "未配置"}</small>
+              <input
+                type={secret ? "password" : "text"}
+                value={instanceOverrideEdits[field.key] || ""}
+                onChange={(event) => setInstanceOverrideEdits((current) => ({ ...current, [field.key]: event.target.value }))}
+                placeholder={instanceScope?.present ? "填写新值覆盖当前 Instance；留空不变" : "填写当前 Instance 覆盖值"}
+                autoComplete="off"
+              />
+            </label>
+          );
+        })}
+      </div>
+    </section>
+  );
   return (
     <section className={`inherited-settings-panel ${compact ? "compact" : ""}`}>
       <div className="inherited-settings-head">
@@ -1471,41 +1681,65 @@ function InheritedSettingsPanel({
             <span>{nodeId || "instance context"}</span>
             <span>{(config?.precedence || ["global-settings"]).map(configSourceLabel).join(" > ")}</span>
           </div>
-          <div className="inherited-settings-groups">
-            {groups.map((group) => {
-              const presentCount = group.keys.filter((field) => displayItemForKey(field.key).present).length;
-              return (
-                <article key={group.id} className="inherited-settings-group">
-                  <div className="inherited-settings-group-head">
-                    <span>{settingGroupIcon(group.id)}</span>
-                    <div>
-                      <strong>{group.title}</strong>
-                      <small>{group.subtitle}</small>
+          {layered ? (
+            <div className="inherited-settings-layers">
+              <section className="inherited-settings-layer">
+                <div className="inherited-settings-layer-head">
+                  <div><strong>Settings Defaults</strong><span>全局默认值，只读；来源是 Control Plane Settings。</span></div>
+                </div>
+                <div className="inherited-settings-groups">{renderLayerGroups("defaults")}</div>
+              </section>
+              <section className="inherited-settings-layer">
+                <div className="inherited-settings-layer-head">
+                  <div><strong>Runtime / Env Overrides</strong><span>Runtime、环境文件和进程环境覆盖项，只读展示。</span></div>
+                </div>
+                <div className="inherited-settings-groups">{renderLayerGroups("overrides")}</div>
+              </section>
+              {allowInstanceOverrides ? renderInstanceOverrideEditor() : null}
+              <section className="inherited-settings-layer">
+                <div className="inherited-settings-layer-head">
+                  <div><strong>Effective Runtime Config</strong><span>当前 Instance / Workflow 最终会解析到的运行值。</span></div>
+                </div>
+                <div className="inherited-settings-groups">{renderLayerGroups("effective")}</div>
+              </section>
+            </div>
+          ) : (
+            <div className="inherited-settings-groups">
+              {groups.map((group) => {
+                const presentCount = group.keys.filter((field) => displayItemForKey(field.key).present).length;
+                return (
+                  <article key={group.id} className="inherited-settings-group">
+                    <div className="inherited-settings-group-head">
+                      <span>{settingGroupIcon(group.id)}</span>
+                      <div>
+                        <strong>{group.title}</strong>
+                        <small>{group.subtitle}</small>
+                      </div>
+                      <em>{presentCount}/{group.keys.length}</em>
                     </div>
-                    <em>{presentCount}/{group.keys.length}</em>
-                  </div>
-                  <div className="settings-group-tags">
-                    {settingWorkflowTags(group.id).map((tag) => <span key={tag}>{tag}</span>)}
-                  </div>
-                  <div className="inherited-settings-rows">
-                    {group.keys.map((field) => {
-                      const item = displayItemForKey(field.key);
-                      return (
-                        <div key={field.key} className={`inherited-settings-row ${item.present ? "present" : "missing"}`}>
-                          <div>
-                            <strong>{item.label || field.label}</strong>
-                            <code>{field.key}</code>
+                    <div className="settings-group-tags">
+                      {settingWorkflowTags(group.id).map((tag) => <span key={tag}>{tag}</span>)}
+                    </div>
+                    <div className="inherited-settings-rows">
+                      {group.keys.map((field) => {
+                        const item = displayItemForKey(field.key);
+                        return (
+                          <div key={field.key} className={`inherited-settings-row ${item.present ? "present" : "missing"}`}>
+                            <div>
+                              <strong>{item.label || field.label}</strong>
+                              <code>{field.key}</code>
+                            </div>
+                            <code title={item.maskedValue || ""}>{item.present ? item.maskedValue || "已配置" : "未配置"}</code>
+                            <span className={`status-pill ${item.present ? "done" : item.required ? "failed" : "waiting"}`}>{configSourceLabel(item.sourceKind)}</span>
                           </div>
-                          <code title={item.maskedValue || ""}>{item.present ? item.maskedValue || "已配置" : "未配置"}</code>
-                          <span className={`status-pill ${item.present ? "done" : item.required ? "failed" : "waiting"}`}>{configSourceLabel(item.sourceKind)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
+                        );
+                      })}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </>
       ) : null}
     </section>
@@ -6529,7 +6763,9 @@ function InstanceOverview({
             instance={instance}
             mode={mode}
             title="Settings 继承"
-            description="Instance 默认继承 Settings 配置。这里按 Settings 分组只读展示解析结果；Instance 自己只负责 repo、branch、workspace 等工作区身份。"
+            description="Instance 默认继承 Settings。GitHub / Telegram 可以在当前 Instance 单独覆盖；其他默认值和 Runtime/env 覆盖只读展示。"
+            layered
+            allowInstanceOverrides
             onOpenSettings={onOpenSettings}
           />
         </div>
@@ -7609,105 +7845,18 @@ function SettingsPage({
     setManagementConfigValues({ ...managementConfigValues, [key]: value });
   };
   const editedCount = Object.values(managementConfigValues).filter((value) => value.trim()).length;
-  const configCards = [
-    {
-      id: "cloudflare",
-      title: "Cloudflare",
-      subtitle: "全局 DNS / tunnel 路由认证",
-      icon: <Cloud size={18} />,
-      keys: [
-        { key: "CLOUDFLARE_EMAIL", label: "Cloudflare Email", placeholder: "name@example.com" },
-        { key: "CLOUDFLARE_API_KEY", label: "Global API Key", placeholder: "已保存时会显示 masked；填写则覆盖" },
-        { key: "TUNNEL_API", label: "Tunnel API", placeholder: globalTunnelApiUrl },
-      ],
-    },
-    {
-      id: "github",
-      title: "GitHub",
-      subtitle: "全局代码访问凭据和 owner 级 token",
-      icon: <Github size={18} />,
-      keys: [
-        { key: "GITHUB_TOKEN", label: "Default GitHub Token", placeholder: "默认 GitHub token" },
-        { key: "GITHUB_CHANGFENGHU_TOKEN", label: "ChangfengHU Token", placeholder: "用于 ChangfengHU 下的基础设施仓库" },
-        { key: "GITHUB_SKKEORIW_TOKEN", label: "skkeoriw Token", placeholder: "用于 skkeoriw 下的 runtime brain 仓库" },
-      ],
-    },
-    {
-      id: "hermes-auth",
-      title: "Hermes Auth",
-      subtitle: "Hermes CLI / gateway 默认 OpenAI-compatible 模型配置",
-      icon: <Bot size={18} />,
-      keys: [
-        { key: "HERMES_MODEL_PROVIDER", label: "Provider", placeholder: "openai" },
-        { key: "HERMES_MODEL", label: "Default Model", placeholder: "deepseek-v4-flash 或 deepseek-v4-pro" },
-        { key: "HERMES_MODEL_BASE_URL", label: "Base URL", placeholder: "https://api-proxy.chxyka.ccwu.cc/v1" },
-        { key: "HERMES_OPENAI_API_KEY", label: "OpenAI-compatible API Key", placeholder: "Bearer token，不要带 Bearer 前缀" },
-      ],
-    },
-    {
-      id: "telegram-defaults",
-      title: "Telegram Defaults",
-      subtitle: "作为 create-instance 的默认 TG 通知配置，可被 Instance 覆盖",
-      icon: <Send size={18} />,
-      keys: [
-        { key: "YOUTUBE_WIKI_TG_TOKEN", label: "Default TG Bot Token", placeholder: "create-instance 默认 Telegram bot token" },
-        { key: "YOUTUBE_WIKI_TG_CHAT_ID", label: "Default TG Chat ID", placeholder: "create-instance 默认 Telegram chat id" },
-      ],
-    },
-    {
-      id: "runtime-defaults",
-      title: "Runtime Defaults",
-      subtitle: "create-runtime / runtime-management 初始化默认值",
-      icon: <Server size={18} />,
-      keys: [
-        { key: "BRIDGE_PORT", label: "Bridge Port", placeholder: "18121" },
-        { key: "HERMES_WEBHOOK_PORT", label: "Hermes Webhook Port", placeholder: "8644" },
-        { key: "WEBHOOK_PUBLIC_HOST", label: "Webhook Public Host", placeholder: "runtime 初始化后写入" },
-      ],
-    },
-    {
-      id: "instance-defaults",
-      title: "Instance Defaults",
-      subtitle: "create-instance 默认仓库、模型和业务配置",
-      icon: <LayoutDashboard size={18} />,
-      keys: [
-        { key: "WIKI_GITHUB_REPO", label: "Default Wiki Repo", placeholder: "skkeoriw/runtime-management" },
-        { key: "WIKI_LLM_PROVIDER", label: "Wiki LLM Provider", placeholder: "vertex" },
-        { key: "WIKI_VERTEX_MODEL", label: "Vertex Model", placeholder: "gemini-1.5-pro" },
-      ],
-    },
-    {
-      id: "core-repos",
-      title: "Core Repositories",
-      subtitle: "创建 runtime 时需要继承的核心源码地址",
-      icon: <GitBranch size={18} />,
-      keys: [
-        { key: "AGENT_REPO", label: "Brain Repo", placeholder: "https://github.com/skkeoriw/agent-brain-plugins" },
-        { key: "SKILL_REPO", label: "Runtime Skill Repo", placeholder: "https://github.com/skkeoriw/auto-youtube-wiki-skill" },
-      ],
-    },
-    {
-      id: "infra-repos",
-      title: "Tunnel / Skill Infrastructure",
-      subtitle: "非核心但必须可追踪的发布与隧道基础设施",
-      icon: <PackageSearch size={18} />,
-      keys: [
-        { key: "AUTO_DOMAIN_REPO", label: "Auto Domain CLI", placeholder: "https://github.com/ChangfengHU/auto-domain-cli" },
-        { key: "AUTO_DOMAIN_TUNNEL_REPO", label: "Auto Domain Tunnel", placeholder: "https://github.com/ChangfengHU/cloudflare-youtube-pipeline/tree/main/auto-domain-tunnel" },
-        { key: "SKILL_PUBLISHER_REPO", label: "Skill Publisher", placeholder: "https://github.com/ChangfengHU/skill-publisher" },
-      ],
-    },
-    {
-      id: "machine-defaults",
-      title: "Machine Defaults",
-      subtitle: "SOP UI 和当前控制面状态",
-      icon: <ShieldCheck size={18} />,
-      keys: [
-        { key: "SOP_UI_URL", label: "SOP UI URL", placeholder: window.location.origin },
-        { key: "BRIDGE_PORT", label: "Bridge Port", placeholder: "18121" },
-      ],
-    },
-  ];
+  const configCards = SETTING_CONFIG_GROUPS.map((group) => ({
+    ...group,
+    icon: settingGroupIcon(group.id),
+    keys: group.keys.map((field) => ({
+      ...field,
+      placeholder: field.key === "TUNNEL_API"
+        ? globalTunnelApiUrl
+        : field.key === "SOP_UI_URL"
+          ? window.location.origin
+          : field.placeholder,
+    })),
+  }));
   const renderedConfigKeys = new Set<string>();
   configCards.forEach((card) => {
     card.keys.forEach((field) => {
