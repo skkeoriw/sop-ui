@@ -6730,6 +6730,96 @@ pre {
   padding: 14px;
 }
 
+.workspace-identity-body {
+  display: grid;
+  gap: 12px;
+}
+
+.workspace-config-editor {
+  display: grid;
+  gap: 12px;
+  margin: 0 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 12px;
+}
+
+.workspace-config-head,
+.workspace-config-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-config-head > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workspace-config-head strong {
+  font-size: 13px;
+}
+
+.workspace-config-head span,
+.workspace-config-actions span,
+.workspace-config-field small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workspace-config-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.workspace-config-field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.workspace-config-field.present {
+  border-color: rgba(13, 122, 69, .24);
+}
+
+.workspace-config-field.edited {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 1px rgba(63, 107, 246, .12);
+}
+
+.workspace-config-field > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workspace-config-field code,
+.workspace-config-field small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workspace-config-field input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.workspace-config-actions {
+  align-items: center;
+}
+
 .instance-health-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

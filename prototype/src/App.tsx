@@ -6532,6 +6532,126 @@ function InstanceHealthTestButton({
   );
 }
 
+function WorkspaceIdentityPanel({
+  provider,
+  runtime,
+  instance,
+  mode,
+  latestFailure,
+  onOpenSettings,
+}: {
+  provider: SopDataProvider;
+  runtime?: Runtime;
+  instance?: Instance;
+  mode: DataMode;
+  latestFailure?: Run;
+  onOpenSettings?: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const instanceId = instance?.instanceId || "";
+  const configQueryKey = ["workspace-identity-config", ...capabilityConfigQueryKey(mode, runtime, instanceId, "")];
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const configQuery = useQuery({
+    queryKey: configQueryKey,
+    queryFn: () => provider.getCapabilityConfig(runtime!, instanceId),
+    enabled: Boolean(runtime && instanceId),
+    retry: 1,
+  });
+  const byKey = useMemo(() => {
+    const items = new Map<string, CapabilityConfigPreview["items"][number]>();
+    (configQuery.data?.items || []).forEach((item) => {
+      items.set(item.key, item);
+      (item.aliases || []).forEach((alias) => items.set(alias, item));
+    });
+    return items;
+  }, [configQuery.data]);
+  const saveMutation = useMutation({
+    mutationFn: () => provider.saveCapabilityConfig(runtime!, instanceId, {
+      scope: "instance",
+      values: compactNonEmptyValues(edits),
+    }),
+    onSuccess: (saved) => {
+      setEdits({});
+      queryClient.setQueryData(configQueryKey, saved);
+      queryClient.invalidateQueries({ queryKey: configQueryKey });
+      queryClient.invalidateQueries({ queryKey: capabilityConfigQueryKey(mode, runtime, instanceId, "") });
+      queryClient.invalidateQueries({ queryKey: ["inherited-settings"] });
+    },
+  });
+  const editedCount = Object.keys(compactNonEmptyValues(edits)).length;
+
+  return (
+    <div className="workspace-identity-body">
+      {instance ? (
+        <div className="kv-stack">
+          <KeyValues data={{
+            instance_id: instance.instanceId,
+            status: instance.status || "unknown",
+            repo: instance.repo || "-",
+            repo_branch: instance.repoBranch || "-",
+            wiki_local_path: instance.wikiLocalPath || "-",
+            workspace_status: instance.workspaceStatus || "-",
+            run_index_status: instance.runIndexStatus || "-",
+            latest_failure: latestFailure?.pipelineId || "-",
+          }} />
+        </div>
+      ) : <Empty text="请选择一个 Instance" />}
+
+      {instance ? (
+        <section className="workspace-config-editor">
+          <div className="workspace-config-head">
+            <div>
+              <strong>GitHub / Telegram Overrides</strong>
+              <span>默认继承 Settings；如果 Test GitHub 或 Test Telegram 失败，只在这里覆盖当前 Instance。</span>
+            </div>
+            {onOpenSettings ? <button type="button" className="btn" onClick={onOpenSettings}><Settings size={14} />Settings</button> : null}
+          </div>
+          {configQuery.isLoading ? <Skeleton /> : null}
+          {configQuery.error ? <div className="inline-error">{String(configQuery.error instanceof Error ? configQuery.error.message : configQuery.error)}</div> : null}
+          {saveMutation.error ? <div className="inline-error">{String(saveMutation.error instanceof Error ? saveMutation.error.message : saveMutation.error)}</div> : null}
+          <div className="workspace-config-grid">
+            {INSTANCE_OVERRIDE_CONFIG_KEYS.map((field) => {
+              const item = byKey.get(field.key);
+              const instanceScope = item?.valuesByScope?.instance;
+              const source = item?.sourceKind || (item?.present ? "resolved" : "missing");
+              const secret = /TOKEN|KEY|SECRET|PRIVATE/.test(field.key);
+              return (
+                <label key={field.key} className={`workspace-config-field ${item?.present ? "present" : ""} ${edits[field.key]?.trim() ? "edited" : ""}`}>
+                  <span>
+                    <strong>{field.label}</strong>
+                    <code>{field.key}</code>
+                  </span>
+                  <small>Instance 覆盖：{instanceScope?.present ? instanceScope.maskedValue || "已配置" : "未配置"}</small>
+                  <small>最终生效：{item?.present ? `${item.maskedValue || "已配置"} · ${configSourceLabel(source)}` : "未配置"}</small>
+                  <input
+                    type={secret ? "password" : "text"}
+                    value={edits[field.key] || ""}
+                    onChange={(event) => setEdits((current) => ({ ...current, [field.key]: event.target.value }))}
+                    placeholder={instanceScope?.present ? "填写新值覆盖当前 Instance；留空不变" : "填写当前 Instance 覆盖值"}
+                    autoComplete="off"
+                  />
+                </label>
+              );
+            })}
+          </div>
+          <div className="workspace-config-actions">
+            <span>留空会继续继承 Settings / Runtime / env。保存后再运行 Instance Health 测试。</span>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={!editedCount || saveMutation.isPending || !runtime || !instance}
+              onClick={() => saveMutation.mutate()}
+            >
+              {saveMutation.isPending ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />}
+              保存覆盖{editedCount ? ` (${editedCount})` : ""}
+            </button>
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function InstanceOverview({
   runtime,
   instance,
@@ -6725,20 +6845,14 @@ function InstanceOverview({
       <section className="instance-grid">
         <div className="flow-panel">
           <div className="panel-head"><div><strong>Workspace Identity</strong><span>Instance 是 Runtime/Hermes 上的执行工作区，不是 Workflow</span></div></div>
-          {instance ? (
-            <div className="kv-stack">
-              <KeyValues data={{
-                instance_id: instance.instanceId,
-                status: instance.status || "unknown",
-                repo: instance.repo || "-",
-                repo_branch: instance.repoBranch || "-",
-                wiki_local_path: instance.wikiLocalPath || "-",
-                workspace_status: instance.workspaceStatus || "-",
-                run_index_status: instance.runIndexStatus || "-",
-                latest_failure: latestFailure?.pipelineId || "-",
-              }} />
-            </div>
-          ) : <Empty text="请选择一个 Instance" />}
+          <WorkspaceIdentityPanel
+            provider={provider}
+            runtime={runtime}
+            instance={instance}
+            mode={mode}
+            latestFailure={latestFailure}
+            onOpenSettings={onOpenSettings}
+          />
         </div>
 
         <div className="flow-panel">
@@ -6754,20 +6868,6 @@ function InstanceOverview({
             <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="github" />
             <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="telegram" />
           </div>
-        </div>
-
-        <div className="flow-panel instance-config-panel">
-          <InheritedSettingsPanel
-            provider={provider}
-            runtime={runtime}
-            instance={instance}
-            mode={mode}
-            title="Settings 继承"
-            description="Instance 默认继承 Settings。GitHub / Telegram 可以在当前 Instance 单独覆盖；其他默认值和 Runtime/env 覆盖只读展示。"
-            layered
-            allowInstanceOverrides
-            onOpenSettings={onOpenSettings}
-          />
         </div>
 
         <div className="flow-panel">
