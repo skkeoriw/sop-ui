@@ -991,6 +991,12 @@ function nodeRunCardTone(status?: string) {
   return "";
 }
 
+function issueTone(severity?: string) {
+  if (severity === "error") return "failed";
+  if (severity === "warning") return "warning";
+  return severity || "warning";
+}
+
 function formatElapsed(ms?: number) {
   if (typeof ms !== "number" || Number.isNaN(ms)) return "";
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`;
@@ -1194,42 +1200,34 @@ function nodeRunDiagnosticArtifacts(result?: NodeRunResult): Artifact[] {
   return (result?.artifacts || []).filter((artifact) => !businessIds.has(artifact.id || artifact.path));
 }
 
-function nodeRunRealExecutionDetail(result?: NodeRunResult): Record<string, unknown> {
-  const real = detailRecord(detailRecord(result?.detail).real_execution);
-  return detailRecord(real.detail);
-}
-
-function nodeRunExecutionLogText(result?: NodeRunResult) {
-  const realDetail = nodeRunRealExecutionDetail(result);
-  return [realDetail.stdout_tail, realDetail.stderr_tail].filter(Boolean).map(String).join("\n");
-}
-
 function nodeRunCapabilityRows(result?: NodeRunResult): Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> {
+  const issues = result?.issues || [];
+  if (result?.capabilityResults?.length) {
+    return result.capabilityResults.map((item) => {
+      const issue = issues.find((candidate) => candidate.relatedCapability === item.key || candidate.relatedCapability === item.capability);
+      return {
+        key: item.key,
+        label: item.label || item.capability || item.key,
+        status: item.status || "unknown",
+        reason: item.reason || issue?.message || "",
+        action: issue?.action || "",
+        detail: item.detail || {},
+      };
+    });
+  }
   const rows: Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> = [];
   const caps = detailRecord(result?.capabilities);
   Object.entries(caps).forEach(([key, value]) => {
     const item = detailRecord(value);
     rows.push({
       key,
-      label: key === "telegram" ? "Telegram Notification" : key === "git" ? "Git Persistence" : key,
+      label: String(item.label || key),
       status: String(item.status || "unknown"),
       reason: String(item.error || item.reason || item.message || ""),
-      action: key === "telegram" ? "Open the bot and send /start, or update this Instance TG token/chat_id, then retry the Node Run." : "",
+      action: "",
       detail: item,
     });
   });
-  const logText = nodeRunExecutionLogText(result);
-  if (!rows.some((row) => row.key === "telegram") && /bot can't initiate conversation|telegram/i.test(logText)) {
-    const match = logText.match(/Forbidden: bot can't initiate conversation with a user|Telegram API rejected[^\n]*/i);
-    rows.push({
-      key: "telegram",
-      label: "Telegram Notification",
-      status: "failed",
-      reason: match?.[0] || "Telegram notification failed.",
-      action: "Open the bot and send /start, or update this Instance TG token/chat_id, then retry the Node Run.",
-      detail: { source: "executor.log", message: match?.[0] || "Telegram notification failed." },
-    });
-  }
   return rows;
 }
 
@@ -1454,10 +1452,20 @@ function NodeRunInnerFlow({ result }: { result: NodeRunResult | undefined }) {
 function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
   const detail = detailRecord(result?.detail);
   const configs = detailRecord(detail.resolved_config);
-  const suggestions = detailList(detail.fix_suggestions);
   const sideEffects = detailRecord(detail.side_effects);
-  const capabilityProbes = detailRecord(detail.capability_probes);
   const current = currentNodeRunStep(result);
+  const environment = result?.environmentSnapshot || [];
+  const legacySuggestions = detailList(detail.fix_suggestions).map((item, index) => ({
+    id: `${String(item.target || "fix")}-${index}`,
+    target: String(item.target || "fix"),
+    severity: "warning",
+    title: String(item.title || "Suggested fix"),
+    message: String(item.reason || ""),
+    action: String(item.action || ""),
+    source: "legacy-detail",
+    relatedConfigKeys: [] as string[],
+  }));
+  const issues = result?.issues?.length ? result.issues : legacySuggestions;
   return (
     <div className="node-run-diagnosis">
       <div className="node-run-live-inspector">
@@ -1478,43 +1486,48 @@ function NodeRunConfigPanel({ result }: { result: NodeRunResult | undefined }) {
           {!Object.keys(sideEffects).length ? <div className="node-run-empty">还没有 side-effect 快照。</div> : null}
         </div>
       </div>
-      <div className="section-title"><span>Capability Probes</span><span>{Object.keys(capabilityProbes).length}</span></div>
-      {Object.entries(capabilityProbes).map(([key, value]) => {
-        const item = detailRecord(value);
-        return (
-          <article key={key} className={`node-run-config-card ${nodeRunCardTone(String(item.status || ""))}`}>
-            <div>
-              <strong>{String(item.label || key)}</strong>
-              <span className={`status-pill ${nodeRunTone(String(item.status || ""))}`}>{String(item.status || "unknown")}</span>
-            </div>
-            <code>{formatValue(item)}</code>
-          </article>
-        );
-      })}
-      <div className="section-title"><span>Config Sources</span><span>{Object.keys(configs).length}</span></div>
-      {Object.entries(configs).map(([key, value]) => {
-        const item = detailRecord(value);
-        return (
-          <article key={key} className={`node-run-config-card ${nodeRunCardTone(String(item.status || ""))}`}>
-            <div>
-              <strong>{String(item.label || key)}</strong>
-              <span className={`status-pill ${nodeRunTone(String(item.status || ""))}`}>{String(item.status || "unknown")}</span>
-            </div>
-            <code>{formatValue(item)}</code>
-          </article>
-        );
-      })}
-      {!Object.keys(configs).length ? <Empty text="还没有配置解析结果" /> : null}
-      <div className="section-title"><span>Fix Suggestions</span><span>{suggestions.length}</span></div>
-      {suggestions.map((item, index) => (
-        <article key={`${String(item.target || "fix")}-${index}`} className="node-run-fix-card">
-          <span className="status-pill waiting">{String(item.target || "fix")}</span>
-          <strong>{String(item.title || "Suggested fix")}</strong>
-          <p>{String(item.reason || "")}</p>
-          <small>{String(item.action || "")}</small>
+      <div className="section-title"><span>需要处理</span><span>{issues.length}</span></div>
+      {issues.map((item, index) => (
+        <article key={item.id || `${item.target || "issue"}-${index}`} className={`node-run-fix-card ${nodeRunCardTone(issueTone(item.severity))}`}>
+          <div className="node-run-fix-head">
+            <span className={`status-pill ${nodeRunTone(issueTone(item.severity))}`}>{item.severity || "warning"}</span>
+            <small>{item.target || "configuration"}</small>
+          </div>
+          <strong>{item.title || "Suggested fix"}</strong>
+          {item.message ? <p>{item.message}</p> : null}
+          {item.action ? <small>{item.action}</small> : null}
+          {item.relatedConfigKeys?.length ? <code>{item.relatedConfigKeys.join(", ")}</code> : null}
         </article>
       ))}
-      {!suggestions.length ? <div className="node-run-empty">当前诊断没有给出必须修复项。</div> : null}
+      {!issues.length ? <div className="node-run-empty">当前诊断没有给出必须修复项。</div> : null}
+      <div className="section-title"><span>本次加载的运行配置</span><span>{environment.length}</span></div>
+      {environment.map((item) => (
+        <article key={item.id || `${item.capability || "config"}-${item.key}-${item.source || ""}`} className={`node-run-config-card ${item.present === false ? "err" : nodeRunCardTone(item.status || "")}`}>
+          <div>
+            <strong>{item.label || item.key}</strong>
+            <span className={`status-pill ${nodeRunTone(item.present === false ? "failed" : item.status || "done")}`}>{item.present === false ? "missing" : item.sourceKind || "loaded"}</span>
+          </div>
+          <div className="node-run-env-meta">
+            <span>{item.capability || "runtime"}</span>
+            <span>{item.source || "-"}</span>
+            {item.required ? <span>required</span> : null}
+          </div>
+          <code>{item.value || (item.present === false ? "missing" : "-")}</code>
+        </article>
+      ))}
+      {!environment.length ? (
+        Object.keys(configs).length ? (
+          <details className="node-run-raw-config">
+            <summary><span>查看原始配置解析</span><ChevronDown size={14} /></summary>
+            <code>{formatValue(configs)}</code>
+          </details>
+        ) : <Empty text="还没有配置解析结果" />
+      ) : (
+        <details className="node-run-raw-config">
+          <summary><span>原始配置解析</span><ChevronDown size={14} /></summary>
+          <code>{formatValue(configs)}</code>
+        </details>
+      )}
     </div>
   );
 }

@@ -552,6 +552,47 @@ export interface NodeRunEvent {
   data?: Record<string, unknown>;
 }
 
+export interface NodeRunEnvironmentItem {
+  id?: string;
+  capability?: string;
+  key: string;
+  label?: string;
+  source?: string;
+  sourceKind?: string;
+  present?: boolean;
+  required?: boolean;
+  secret?: boolean;
+  value?: string;
+  status?: string;
+  unit?: string;
+  category?: string;
+}
+
+export interface NodeRunCapabilityResult {
+  key: string;
+  capability?: string;
+  label?: string;
+  status?: string;
+  enabled?: boolean;
+  required?: boolean;
+  source?: string;
+  reason?: string;
+  managedBy?: string;
+  detail?: Record<string, unknown>;
+}
+
+export interface NodeRunIssue {
+  id?: string;
+  target?: string;
+  severity?: string;
+  title?: string;
+  message?: string;
+  action?: string;
+  source?: string;
+  relatedCapability?: string;
+  relatedConfigKeys?: string[];
+}
+
 export interface NodeRunResult {
   nodeRunId: string;
   pipelineId?: string;
@@ -579,6 +620,9 @@ export interface NodeRunResult {
   actualOutputs?: Record<string, unknown>;
   validation?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  environmentSnapshot?: NodeRunEnvironmentItem[];
+  capabilityResults?: NodeRunCapabilityResult[];
+  issues?: NodeRunIssue[];
 }
 
 export interface NodeModule {

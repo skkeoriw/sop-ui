@@ -661,6 +661,53 @@ function mapNodeRunEvent(raw: Record<string, unknown>): NodeRunEvent {
   };
 }
 
+function mapNodeRunEnvironmentItem(raw: Record<string, unknown>) {
+  return {
+    id: raw.id ? String(raw.id) : undefined,
+    capability: raw.capability ? String(raw.capability) : undefined,
+    key: String(raw.key || ""),
+    label: raw.label ? String(raw.label) : undefined,
+    source: raw.source ? String(raw.source) : undefined,
+    sourceKind: raw.source_kind ? String(raw.source_kind) : undefined,
+    present: typeof raw.present === "boolean" ? raw.present : undefined,
+    required: typeof raw.required === "boolean" ? raw.required : undefined,
+    secret: typeof raw.secret === "boolean" ? raw.secret : undefined,
+    value: raw.value === undefined || raw.value === null ? undefined : String(raw.value),
+    status: raw.status ? String(raw.status) : undefined,
+    unit: raw.unit ? String(raw.unit) : undefined,
+    category: raw.category ? String(raw.category) : undefined,
+  };
+}
+
+function mapNodeRunCapabilityResult(raw: Record<string, unknown>) {
+  return {
+    key: String(raw.key || raw.capability || ""),
+    capability: raw.capability ? String(raw.capability) : undefined,
+    label: raw.label ? String(raw.label) : undefined,
+    status: raw.status ? String(raw.status) : undefined,
+    enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
+    required: typeof raw.required === "boolean" ? raw.required : undefined,
+    source: raw.source ? String(raw.source) : undefined,
+    reason: raw.reason ? String(raw.reason) : undefined,
+    managedBy: raw.managed_by ? String(raw.managed_by) : undefined,
+    detail: (raw.detail as Record<string, unknown>) || {},
+  };
+}
+
+function mapNodeRunIssue(raw: Record<string, unknown>) {
+  return {
+    id: raw.id ? String(raw.id) : undefined,
+    target: raw.target ? String(raw.target) : undefined,
+    severity: raw.severity ? String(raw.severity) : undefined,
+    title: raw.title ? String(raw.title) : undefined,
+    message: raw.message ? String(raw.message) : undefined,
+    action: raw.action ? String(raw.action) : undefined,
+    source: raw.source ? String(raw.source) : undefined,
+    relatedCapability: raw.related_capability ? String(raw.related_capability) : undefined,
+    relatedConfigKeys: Array.isArray(raw.related_config_keys) ? raw.related_config_keys.map(String) : [],
+  };
+}
+
 function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallbackId = ""): NodeRunResult {
   return {
     nodeRunId: String(raw.node_run_id || raw.nodeRunId || raw.pipeline_id || fallbackId || ""),
@@ -689,6 +736,9 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
+    environmentSnapshot: ((raw.environment_snapshot as Array<Record<string, unknown>>) || []).map(mapNodeRunEnvironmentItem),
+    capabilityResults: ((raw.capability_results as Array<Record<string, unknown>>) || []).map(mapNodeRunCapabilityResult),
+    issues: ((raw.issues as Array<Record<string, unknown>>) || []).map(mapNodeRunIssue),
   };
 }
 

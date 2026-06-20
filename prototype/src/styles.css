@@ -7550,6 +7550,30 @@ pre {
   gap: 8px;
 }
 
+.node-run-fix-head,
+.node-run-env-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.node-run-env-meta {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.node-run-env-meta span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .node-run-config-card code {
   max-height: 130px;
   overflow: auto;
@@ -7574,6 +7598,39 @@ pre {
 .node-run-config-card.waiting { border-color: #ffd9a8; }
 .node-run-config-card.failed { border-color: #ffc3c3; }
 .node-run-config-card.done { border-color: #bfe7cd; }
+
+.node-run-raw-config {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px;
+  background: var(--surface);
+}
+
+.node-run-raw-config summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.node-run-raw-config code {
+  display: block;
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 8px;
+  border-radius: 7px;
+  padding: 8px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
 
 .node-run-capability-summary {
   min-width: 0;
