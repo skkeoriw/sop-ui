@@ -494,16 +494,19 @@ function mockCapabilityConfig(runtimeId: string, instanceId: string, nodeId = ""
     runtimeId,
     instanceId,
     nodeId,
+    workflowId: "youtube-research-wiki",
     backend: "mock",
     updatedAt: new Date().toISOString(),
     envFile: "~/.agent-brain-plugins.env",
     precedence: ["node-run-overrides", "instance-settings", "runtime-settings", "global-settings", "runtime-env-file", "bridge-env"],
+    registryTotal: 12,
+    registryFilters: { workflow_id: "youtube-research-wiki", node_id: nodeId },
     groups: { github: true, telegram: false, runtime: true },
     scopes: {
       run: "Only this Node Run",
       instance: "Saved for this Instance",
       runtime: "Saved for this Runtime",
-      global: "Global default",
+      global: "Settings default",
     },
     items: [
       {
@@ -511,6 +514,12 @@ function mockCapabilityConfig(runtimeId: string, instanceId: string, nodeId = ""
         label: "GitHub Token",
         capability: "git",
         category: "github",
+        workflowTags: ["youtube-research-wiki", "runtime-management"],
+        nodeTags: ["youtube-fetch", "youtube-deep-research", "wiki-build", "tg-notify"],
+        capabilityTags: ["git", "github", "repo-access"],
+        operationTags: ["workflow-run", "node-run", "create-instance"],
+        tags: ["github", "git", "youtube-research-wiki", "node-run"],
+        description: "GitHub 凭据由 Settings/Runtime/Instance/Run 覆盖链解析。",
         present: true,
         secret: true,
         required: false,
@@ -525,6 +534,12 @@ function mockCapabilityConfig(runtimeId: string, instanceId: string, nodeId = ""
         label: "Telegram Bot Token",
         capability: "telegram",
         category: "telegram",
+        workflowTags: ["youtube-research-wiki"],
+        nodeTags: ["youtube-deep-research", "tg-notify"],
+        capabilityTags: ["telegram", "notification", "progress-notification"],
+        operationTags: ["workflow-run", "node-run", "create-instance"],
+        tags: ["telegram", "notification", "youtube-research-wiki", "node-run"],
+        description: "Telegram 通知配置由当前 Instance 提供，Node Run 可临时覆盖。",
         present: false,
         secret: true,
         required: false,
@@ -539,6 +554,12 @@ function mockCapabilityConfig(runtimeId: string, instanceId: string, nodeId = ""
         label: "Telegram Chat ID",
         capability: "telegram",
         category: "telegram",
+        workflowTags: ["youtube-research-wiki"],
+        nodeTags: ["youtube-deep-research", "tg-notify"],
+        capabilityTags: ["telegram", "notification", "progress-notification"],
+        operationTags: ["workflow-run", "node-run", "create-instance"],
+        tags: ["telegram", "notification", "youtube-research-wiki", "node-run"],
+        description: "Telegram chat id 用于发送进度通知。",
         present: true,
         secret: false,
         required: false,
@@ -1010,6 +1031,11 @@ export const mockProvider: SopDataProvider = {
       ),
     };
     return mockRuntimeManagementConfig;
+  },
+
+  async getSettingRegistry(target): Promise<CapabilityConfigPreview> {
+    await delay();
+    return mockCapabilityConfig(target?.id || "mock-runtime", "settings-registry", "");
   },
 
   async getCapabilityConfig(target, instanceId, nodeId): Promise<CapabilityConfigPreview> {

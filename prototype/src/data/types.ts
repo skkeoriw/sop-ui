@@ -143,6 +143,12 @@ export interface CapabilityConfigItem {
   label?: string;
   capability?: string;
   category?: string;
+  workflowTags?: string[];
+  nodeTags?: string[];
+  capabilityTags?: string[];
+  operationTags?: string[];
+  tags?: string[];
+  description?: string;
   required?: boolean;
   secret?: boolean;
   editableScopes?: string[];
@@ -162,6 +168,9 @@ export interface CapabilityConfigPreview {
   updatedAt?: string;
   envFile?: string;
   precedence?: string[];
+  workflowId?: string;
+  registryTotal?: number;
+  registryFilters?: Record<string, string>;
   items: CapabilityConfigItem[];
   groups?: Record<string, boolean>;
   scopes?: Record<string, string>;
@@ -816,6 +825,7 @@ export interface SopDataProvider {
   getRuntimeManagementConfig(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   saveRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview>;
   initializeRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: { overwrite?: boolean }): Promise<RuntimeInheritancePreview>;
+  getSettingRegistry?(runtime?: Runtime): Promise<CapabilityConfigPreview>;
   getCapabilityConfig(runtime: Runtime, instanceId: string, nodeId?: string): Promise<CapabilityConfigPreview>;
   saveCapabilityConfig(runtime: Runtime, instanceId: string, input: CapabilityConfigSaveInput): Promise<CapabilityConfigPreview>;
   triggerRun(runtime: Runtime, instanceId: string, input: TriggerInput): Promise<TriggerResult>;

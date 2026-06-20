@@ -73,6 +73,7 @@ import type {
   RuntimeInheritanceItem,
   RuntimeInheritancePreview,
   Runtime,
+  CapabilityConfigPreview,
   SopDataProvider,
   StageStatus,
   WorkflowDefinition
@@ -1237,6 +1238,50 @@ function compactEdits(values: Record<string, string>) {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value.trim()));
 }
 
+const CONFIG_SCOPE_LABELS: Record<string, string> = {
+  run: "仅本次 Node Run",
+  instance: "保存到当前 Instance",
+  runtime: "保存到当前 Runtime",
+  global: "保存到 Settings 默认值",
+};
+
+const CONFIG_SOURCE_LABELS: Record<string, string> = {
+  "node-run-overrides": "本次运行",
+  "instance-settings": "Instance",
+  "runtime-settings": "Runtime",
+  "global-settings": "Settings",
+  "runtime-env-file": "环境文件",
+  "bridge-env": "进程环境",
+  "definition-default": "定义默认值",
+  missing: "未配置",
+  instance: "Instance",
+  runtime: "Runtime",
+  global: "Settings",
+  runtime_env_file: "环境文件",
+  bridge_env: "进程环境",
+};
+
+function configScopeLabel(scope: string) {
+  return CONFIG_SCOPE_LABELS[scope] || scope;
+}
+
+function configSourceLabel(source: string) {
+  return CONFIG_SOURCE_LABELS[source] || source.replace(/_/g, " ");
+}
+
+function compactConfigTags(values: Array<string | undefined>, limit = 5) {
+  const seen = new Set<string>();
+  const tags = values.filter((item): item is string => Boolean(item?.trim())).filter((item) => {
+    if (seen.has(item)) return false;
+    seen.add(item);
+    return true;
+  });
+  return {
+    visible: tags.slice(0, limit),
+    hiddenCount: Math.max(0, tags.length - limit),
+  };
+}
+
 function capabilityConfigQueryKey(mode: DataMode, runtime: Runtime | undefined, instanceId: string, nodeId = "") {
   return ["capability-config", mode, runtime?.id || runtime?.endpoint || "", instanceId, nodeId];
 }
@@ -1248,7 +1293,7 @@ function CapabilityConfigEditor({
   mode,
   nodeId,
   title = "Capability Config",
-  description = "查看当前解析到的配置来源；填写新值后可以仅用于本次运行，或保存到 Instance / Runtime / Global。",
+  description = "查看当前解析到的配置来源；填写新值后可以仅用于本次运行，或保存到 Instance、Runtime 或 Settings 默认值。",
   defaultScope = "instance",
   allowRunScope = false,
   compact = false,
@@ -1313,7 +1358,7 @@ function CapabilityConfigEditor({
             <select value={scope} onChange={(event) => setScope(event.target.value as "run" | "instance" | "runtime" | "global")}>
               {scopes.map((item) => (
                 <option key={item} value={item}>
-                  {item === "run" ? "仅本次运行" : item === "instance" ? "保存到 Instance" : item === "runtime" ? "提升到 Runtime" : "提升到 Global Settings"}
+                  {configScopeLabel(item)}
                 </option>
               ))}
             </select>
@@ -1336,12 +1381,22 @@ function CapabilityConfigEditor({
           <div className="capability-config-meta">
             <span>{config.backend || "settings"}</span>
             <span>{config.updatedAt ? formatBeijingTime(config.updatedAt) : "not saved"}</span>
-            <span>{config.precedence?.join(" > ") || "resolved precedence"}</span>
+            <span>{config.workflowId || config.registryFilters?.workflow_id || "workflow context"}</span>
+            <span>{config.registryTotal ? `${fields.length}/${config.registryTotal} registry items` : `${fields.length} items`}</span>
+            <span>{(config.precedence || []).map(configSourceLabel).join(" > ") || "resolved precedence"}</span>
           </div>
           <div className="capability-config-grid">
             {fields.map((field) => {
               const scopeInfo = field.valuesByScope || {};
               const secret = Boolean(field.secret || /TOKEN|KEY|SECRET|PRIVATE/.test(field.key));
+              const sourceKind = field.sourceKind || "missing";
+              const tagBundle = compactConfigTags([
+                field.category,
+                ...(field.workflowTags || []),
+                ...(field.nodeTags || []),
+                ...(field.capabilityTags || []),
+                ...(field.operationTags || []),
+              ]);
               return (
                 <article key={field.key} className={`capability-config-field ${field.present ? "present" : "missing"} ${edits[field.key]?.trim() ? "edited" : ""}`}>
                   <div className="capability-config-field-head">
@@ -1349,7 +1404,11 @@ function CapabilityConfigEditor({
                       <strong>{field.label || field.key}</strong>
                       <code>{field.key}</code>
                     </div>
-                    <span className={`status-pill ${field.present ? "done" : field.required ? "failed" : "waiting"}`}>{field.present ? field.sourceKind || "resolved" : "missing"}</span>
+                    <span className={`status-pill ${field.present ? "done" : field.required ? "failed" : "waiting"}`}>{field.present ? configSourceLabel(sourceKind) : "未配置"}</span>
+                  </div>
+                  <div className="capability-config-tags">
+                    {tagBundle.visible.map((tag) => <span key={tag}>{tag}</span>)}
+                    {tagBundle.hiddenCount ? <span>+{tagBundle.hiddenCount}</span> : null}
                   </div>
                   <div className="capability-config-current">
                     <span>当前值</span>
@@ -1359,7 +1418,7 @@ function CapabilityConfigEditor({
                   <div className="capability-config-scope-row">
                     {["instance", "runtime", "global", "runtime_env_file"].map((scopeName) => (
                       <span key={scopeName} className={scopeInfo[scopeName]?.present ? "on" : ""}>
-                        {scopeName.replace("_", " ")}
+                        {configSourceLabel(scopeName)}
                       </span>
                     ))}
                   </div>
@@ -2112,7 +2171,7 @@ function NodeRunStartPanel({
         mode={controller.mode}
         nodeId={node.nodeId}
         title="运行配置"
-        description="这些是当前 Node Run 会解析的环境配置。可以只覆盖本次运行，也可以保存到 Instance / Runtime / Global。"
+        description="这些是当前 Node Run 会解析的环境配置。可以只覆盖本次运行，也可以保存到当前 Instance、当前 Runtime 或 Settings 默认值。"
         defaultScope="run"
         allowRunScope
         compact
@@ -2935,6 +2994,7 @@ export default function App() {
     viewMode === "instance" ||
     viewMode === "workflow" ||
     viewMode === "nodes" ||
+    viewMode === "settings" ||
     triggerOpen ||
     runtimeManagementOpen;
   const shouldLoadInstances = Boolean(runtime && !routeRuntimePending && shouldLoadRuntimeScopedData);
@@ -3091,6 +3151,12 @@ export default function App() {
     queryKey: ["control-plane-settings", mode],
     queryFn: () => controlPlaneProvider.getSettings(),
     enabled: viewMode === "settings" || runtimeManagementOpen,
+    retry: 1,
+  });
+  const settingsRegistryQuery = useQuery({
+    queryKey: ["settings-registry", mode, runtime?.id || ""],
+    queryFn: () => provider.getSettingRegistry ? provider.getSettingRegistry(runtime) : Promise.resolve({ items: [] }),
+    enabled: Boolean(runtime && viewMode === "settings"),
     retry: 1,
   });
   const machineQueryOptions = viewMode === "machines"
@@ -4454,6 +4520,9 @@ export default function App() {
             managementConfig={runtimeManagementConfigQuery.data}
             managementConfigLoading={runtimeManagementConfigQuery.isLoading}
             managementConfigError={runtimeManagementConfigQuery.error ? String(runtimeManagementConfigQuery.error.message) : ""}
+            settingRegistry={settingsRegistryQuery.data}
+            settingRegistryLoading={settingsRegistryQuery.isLoading}
+            settingRegistryError={settingsRegistryQuery.error ? String(settingsRegistryQuery.error.message) : ""}
             machines={machinesQuery.data?.machines || []}
             machinesError={machinesQuery.error ? String(machinesQuery.error.message) : ""}
             onOpenMachines={() => navigateTo("machines")}
@@ -7404,6 +7473,9 @@ function SettingsPage({
   managementConfig,
   managementConfigLoading,
   managementConfigError,
+  settingRegistry,
+  settingRegistryLoading,
+  settingRegistryError,
   machines,
   machinesError,
   onOpenMachines,
@@ -7420,6 +7492,9 @@ function SettingsPage({
   managementConfig: RuntimeManagementConfigPreview | undefined;
   managementConfigLoading: boolean;
   managementConfigError: string;
+  settingRegistry?: CapabilityConfigPreview;
+  settingRegistryLoading: boolean;
+  settingRegistryError: string;
   machines: MachineConfig[];
   machinesError: string;
   onOpenMachines: () => void;
@@ -7441,6 +7516,14 @@ function SettingsPage({
     });
     return items;
   }, [managementConfig]);
+  const registryByKey = useMemo(() => {
+    const items = new Map<string, CapabilityConfigPreview["items"][number]>();
+    (settingRegistry?.items || []).forEach((item) => {
+      items.set(item.key, item);
+      (item.aliases || []).forEach((alias) => items.set(alias, item));
+    });
+    return items;
+  }, [settingRegistry]);
   const updateConfigValue = (key: string, value: string) => {
     setManagementConfigValues({ ...managementConfigValues, [key]: value });
   };
@@ -7580,6 +7663,14 @@ function SettingsPage({
   const activeConfigCard = configCards.find((card) => card.id === selectedSettingsSection);
   const renderConfigField = (field: { key: string; label: string; placeholder: string }) => {
     const item = itemByKey.get(field.key);
+    const registryItem = registryByKey.get(field.key);
+    const tagBundle = compactConfigTags([
+      registryItem?.category,
+      ...(registryItem?.workflowTags || []),
+      ...(registryItem?.nodeTags || []),
+      ...(registryItem?.capabilityTags || []),
+      ...(registryItem?.operationTags || []),
+    ], 6);
     const edited = Boolean(managementConfigValues[field.key]?.trim());
     const present = Boolean(item?.present);
     const currentValue = item?.present
@@ -7599,6 +7690,12 @@ function SettingsPage({
           <code title={item?.maskedValue || field.placeholder}>{currentValue}</code>
         </div>
         <small>{currentHint}</small>
+        {registryItem ? (
+          <div className="global-config-tags">
+            {tagBundle.visible.map((tag) => <span key={tag}>{tag}</span>)}
+            {tagBundle.hiddenCount ? <span>+{tagBundle.hiddenCount}</span> : null}
+          </div>
+        ) : null}
         <input
           type={item?.secret || /TOKEN|KEY|SECRET|PRIVATE/.test(field.key) ? "password" : "text"}
           value={managementConfigValues[field.key] || ""}
@@ -7614,14 +7711,14 @@ function SettingsPage({
     <>
       <section className="ops-page-header settings-compact-header">
         <div className="ops-page-title">
-          <span className="status-pill waiting"><Settings size={14} />Global Settings</span>
+          <span className="status-pill waiting"><Settings size={14} />Settings 默认值</span>
           <div>
             <h1>Control Plane Settings</h1>
-            <p>{managementConfig?.updatedAt ? `updated ${formatBeijingTime(managementConfig.updatedAt)}` : "server-side config"} · {editedCount} edited</p>
+            <p>{managementConfig?.updatedAt ? `updated ${formatBeijingTime(managementConfig.updatedAt)}` : "server-side config"} · {editedCount} edited · {settingRegistry?.registryTotal || settingRegistry?.items.length || 0} registry keys</p>
           </div>
         </div>
         <div className="ops-header-chips">
-          <span>{mode} · global</span>
+          <span>{mode} · settings</span>
           <span>{managementConfig?.backend || "d1"}</span>
           <span>{machines.length} machines</span>
           <button type="button" className="ghost-btn compact" onClick={onRefreshManagementConfig} disabled={managementConfigLoading}>
@@ -7642,8 +7739,8 @@ function SettingsPage({
           </button>
         </div>
       </section>
-      {(managementConfigError || saveManagementConfigError || machinesError) && (
-        <div className="inline-error">{managementConfigError || saveManagementConfigError || machinesError}</div>
+      {(managementConfigError || saveManagementConfigError || machinesError || settingRegistryError) && (
+        <div className="inline-error">{managementConfigError || saveManagementConfigError || machinesError || settingRegistryError}</div>
       )}
       <form id="global-settings-form" className="global-settings-layout settings-section-layout" onSubmit={onSaveManagementConfig}>
         <aside className="global-settings-summary settings-section-nav">
@@ -7674,8 +7771,9 @@ function SettingsPage({
                 <em>{activeConfigCard.keys.filter((field) => itemByKey.get(field.key)?.present).length}/{activeConfigCard.keys.length}</em>
               </div>
               <div className="settings-scope-note">
-                {activeConfigCard.id === "telegram-defaults" ? "Used by create-instance as default notification config; each Instance can override it." : "Global default stored in Control Plane D1; leave secret fields blank to keep saved values."}
+                {activeConfigCard.id === "telegram-defaults" ? "作为 create-instance 默认通知配置；每个 Instance 可以覆盖。" : "保存到 Settings 默认值；Runtime 和 Instance 可以分别覆盖。"}
               </div>
+              {settingRegistryLoading ? <Skeleton /> : null}
               <div className="global-config-fields">
                 {activeConfigCard.keys.map(renderConfigField)}
               </div>

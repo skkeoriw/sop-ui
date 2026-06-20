@@ -626,11 +626,14 @@ function mapCapabilityConfigPreview(raw: Record<string, unknown>): CapabilityCon
   return {
     runtimeId: raw.runtime_id ? String(raw.runtime_id) : raw.runtimeId ? String(raw.runtimeId) : undefined,
     instanceId: raw.instance_id ? String(raw.instance_id) : raw.instanceId ? String(raw.instanceId) : undefined,
+    workflowId: raw.workflow_id ? String(raw.workflow_id) : raw.workflowId ? String(raw.workflowId) : undefined,
     nodeId: raw.node_id ? String(raw.node_id) : raw.nodeId ? String(raw.nodeId) : undefined,
     backend: raw.backend ? String(raw.backend) : undefined,
     updatedAt: raw.updated_at ? String(raw.updated_at) : raw.updatedAt ? String(raw.updatedAt) : undefined,
     envFile: raw.env_file ? String(raw.env_file) : raw.envFile ? String(raw.envFile) : undefined,
     precedence: Array.isArray(raw.precedence) ? raw.precedence.map(String) : [],
+    registryTotal: typeof raw.registry_total === "number" ? raw.registry_total : typeof raw.registryTotal === "number" ? raw.registryTotal : undefined,
+    registryFilters: ((raw.registry_filters || raw.registryFilters || {}) as Record<string, string>) || {},
     groups: (raw.groups as Record<string, boolean>) || {},
     scopes: (raw.scopes as Record<string, string>) || {},
     note: raw.note ? String(raw.note) : undefined,
@@ -648,6 +651,12 @@ function mapCapabilityConfigPreview(raw: Record<string, unknown>): CapabilityCon
         label: item.label ? String(item.label) : undefined,
         capability: item.capability ? String(item.capability) : undefined,
         category: item.category ? String(item.category) : undefined,
+        workflowTags: Array.isArray(item.workflow_tags) ? item.workflow_tags.map(String) : Array.isArray(item.workflowTags) ? item.workflowTags.map(String) : [],
+        nodeTags: Array.isArray(item.node_tags) ? item.node_tags.map(String) : Array.isArray(item.nodeTags) ? item.nodeTags.map(String) : [],
+        capabilityTags: Array.isArray(item.capability_tags) ? item.capability_tags.map(String) : Array.isArray(item.capabilityTags) ? item.capabilityTags.map(String) : [],
+        operationTags: Array.isArray(item.operation_tags) ? item.operation_tags.map(String) : Array.isArray(item.operationTags) ? item.operationTags.map(String) : [],
+        tags: Array.isArray(item.tags) ? item.tags.map(String) : [],
+        description: item.description ? String(item.description) : undefined,
         required: typeof item.required === "boolean" ? item.required : undefined,
         secret: typeof item.secret === "boolean" ? item.secret : undefined,
         editableScopes: Array.isArray(item.editable_scopes) ? item.editable_scopes.map(String) : Array.isArray(item.editableScopes) ? item.editableScopes.map(String) : [],
@@ -1500,10 +1509,19 @@ export const sopProvider: SopDataProvider = {
     return mapRuntimeInheritancePreview((raw.config as Record<string, unknown>) || raw);
   },
 
+  async getSettingRegistry(runtime) {
+    const endpoint = runtime?.endpoint || "";
+    if (!endpoint) return { items: [] };
+    const raw = await requestJson<Record<string, unknown>>(
+      `${endpoint}/api/sop/settings/registry`
+    );
+    return mapCapabilityConfigPreview(raw);
+  },
+
   async getCapabilityConfig(runtime, instanceId, nodeId) {
     const suffix = nodeId
-      ? `/nodes/${encodeURIComponent(nodeId)}/config/capabilities`
-      : "/config/capabilities";
+      ? `/nodes/${encodeURIComponent(nodeId)}/config/resolved`
+      : "/config/resolved";
     const raw = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}${suffix}`
     );
@@ -1512,8 +1530,8 @@ export const sopProvider: SopDataProvider = {
 
   async saveCapabilityConfig(runtime, instanceId, input: CapabilityConfigSaveInput) {
     const suffix = input.nodeId
-      ? `/nodes/${encodeURIComponent(input.nodeId)}/config/capabilities`
-      : "/config/capabilities";
+      ? `/nodes/${encodeURIComponent(input.nodeId)}/config/values`
+      : "/config/values";
     const raw = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}${suffix}`,
       {
