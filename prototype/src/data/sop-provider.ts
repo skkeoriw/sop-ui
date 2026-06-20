@@ -1401,7 +1401,7 @@ export const sopProvider: SopDataProvider = {
     const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/runs`;
     const raw = await postJsonResult<Record<string, unknown>>(url, {
       node_run_id: input.nodeRunId || "",
-      mode: input.mode || "preflight",
+      mode: input.mode || "real-node",
       input_source: input.inputSource || "generated-fixture",
       pipeline_id: input.pipelineId || "",
       manual_inputs: input.manualInputs || {},

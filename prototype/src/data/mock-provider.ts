@@ -928,12 +928,12 @@ export const mockProvider: SopDataProvider = {
     const id = input.nodeRunId || `node-run-${nodeId}-${Date.now()}`;
     const key = nodeRunKey(instanceId, workflowId, nodeId);
     nodeRunCreatedAt.set(id, Date.now());
-    nodeRunModeById.set(id, input.mode || "preflight");
+    nodeRunModeById.set(id, input.mode || "real-node");
     nodeRunInputSourceById.set(id, input.inputSource || "generated-fixture");
     if (input.retryOf) nodeRunRetryOf.set(id, input.retryOf);
     const current = nodeRunIdsByNode.get(key) || [];
     nodeRunIdsByNode.set(key, [id, ...current.filter((item) => item !== id)].slice(0, 10));
-    return mockNodeRun(instanceId, workflowId, nodeId, id, input.mode || "preflight", input.inputSource || "generated-fixture", input.retryOf || "");
+    return mockNodeRun(instanceId, workflowId, nodeId, id, input.mode || "real-node", input.inputSource || "generated-fixture", input.retryOf || "");
   },
 
   async getNodeRun(_target, instanceId, workflowId, nodeId, nodeRunId): Promise<NodeRunResult> {

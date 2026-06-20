@@ -1034,8 +1034,12 @@ const NODE_RUN_MODE_LABELS: Record<string, string> = {
   "real-node": "真实执行",
 };
 
+const DEFAULT_NODE_RUN_MODE: NodeRunMode = "real-node";
+const DEFAULT_NODE_RUN_INPUT_SOURCE: NonNullable<NodeRunCreateInput["inputSource"]> = "generated-fixture";
+const DEFAULT_NODE_RUN_SOURCE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+
 const NODE_RUN_INPUT_SOURCE_LABELS: Record<string, string> = {
-  "generated-fixture": "系统测试输入",
+  "generated-fixture": "默认示例输入",
   "existing-run": "历史 Workflow Run",
   manual: "手动输入",
   "deepseek-mock": "DeepSeek 模拟输入",
@@ -1085,6 +1089,83 @@ function nodeRunModeLabel(value?: string) {
 
 function nodeRunInputSourceLabel(value?: string) {
   return value ? NODE_RUN_INPUT_SOURCE_LABELS[value] || value : "-";
+}
+
+function nodeInputSourceExpression(spec: unknown) {
+  if (spec && typeof spec === "object" && "from" in spec) return String((spec as Record<string, unknown>).from || "");
+  return String(spec || "");
+}
+
+function generatedNodeRunFixtureValue(inputName: string, sourceExpression = "") {
+  const name = inputName.toLowerCase();
+  const source = sourceExpression.toLowerCase();
+  if (name === "source_url" || name === "url" || source.endsWith(".source_url")) return DEFAULT_NODE_RUN_SOURCE_URL;
+  if (name === "metadata_file" || source.endsWith(".metadata_file")) return "raw/youtube-metadata/node-test-fixture.json";
+  if (name === "reports" || source.endsWith(".reports")) return "raw/notebooklm-analysis/node-test-fixture.md";
+  if (name === "deep_research" || name === "analysis_file" || source.endsWith(".analysis_file")) return "raw/youtube-deep-research/node-test-fixture/analysis.md";
+  if (name === "index" || source.endsWith(".index")) return "index.md";
+  return "";
+}
+
+function nodeRunInputSourceHelp(inputSource?: string) {
+  if (inputSource === "existing-run") return "从选中的历史 Workflow Run 读取 context 和上游节点 outputs。";
+  if (inputSource === "manual") return "使用下方手动填写的字段，适合复现单个节点的问题。";
+  if (inputSource === "deepseek-mock") return "请求运行时生成模拟输入；当前没有模型模拟时会回退到默认示例。";
+  return "按节点输入契约生成固定示例值，适合快速真实执行单个节点。";
+}
+
+function nodeRunInputPreviewRows(
+  node: NodeRegistryItem | undefined,
+  inputSource: NodeRunCreateInput["inputSource"] | undefined,
+  seedRunId: string,
+  manualInputs: Record<string, string>,
+) {
+  const inputs = Object.entries(node?.inputs || {});
+  if (!inputs.length) {
+    return [{
+      key: "no-inputs",
+      name: "declared_inputs",
+      value: "该节点没有声明必需输入",
+      source: "-",
+      logic: "运行时只解析 Runtime / Instance / Workflow 上下文。",
+      missing: false,
+    }];
+  }
+  return inputs.map(([name, spec]) => {
+    const source = nodeInputSourceExpression(spec);
+    if (inputSource === "existing-run") {
+      return {
+        key: name,
+        name,
+        value: seedRunId || "未选择 Workflow Run",
+        source,
+        logic: seedRunId ? `从 ${seedRunId} 的 ${source || "上下文"} 解析。` : "需要先选择一个历史 Workflow Run。",
+        missing: !seedRunId,
+      };
+    }
+    if (inputSource === "manual") {
+      const value = manualInputs[name] || "";
+      return {
+        key: name,
+        name,
+        value: value ? (isSecretField(name) ? "已填写，已隐藏" : value) : "未填写",
+        source,
+        logic: "使用本次页面手动输入值，不修改 Instance 或 Settings。",
+        missing: !value,
+      };
+    }
+    const fixture = generatedNodeRunFixtureValue(name, source);
+    return {
+      key: name,
+      name,
+      value: fixture || "运行时按契约生成",
+      source,
+      logic: inputSource === "deepseek-mock"
+        ? "优先使用模拟输入；未启用模型生成时使用固定示例值。"
+        : `匹配 ${name}${source ? ` / ${source}` : ""} 的固定示例规则。`,
+      missing: false,
+    };
+  });
 }
 
 function nodeActionSteps(nodeId?: string, actions?: string[]) {
@@ -2208,8 +2289,8 @@ function useNodeRunController({
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
 }) {
   const queryClient = useQueryClient();
-  const [runMode, setRunMode] = useState<NodeRunMode>("preflight");
-  const [inputSource, setInputSource] = useState<NodeRunCreateInput["inputSource"]>("generated-fixture");
+  const [runMode, setRunMode] = useState<NodeRunMode>(DEFAULT_NODE_RUN_MODE);
+  const [inputSource, setInputSource] = useState<NodeRunCreateInput["inputSource"]>(DEFAULT_NODE_RUN_INPUT_SOURCE);
   const [seedRunId, setSeedRunId] = useState("");
   const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
   const [runtimeOverrides, setRuntimeOverrides] = useState<Record<string, string>>({});
@@ -2351,6 +2432,31 @@ function useNodeRunController({
   };
 }
 
+function NodeRunInputPreview({ controller }: { controller: ReturnType<typeof useNodeRunController> }) {
+  const rows = nodeRunInputPreviewRows(controller.node, controller.inputSource, controller.seedRunId, controller.manualInputs);
+  return (
+    <section className="node-run-input-preview">
+      <div>
+        <span className="status-pill waiting"><Info size={12} />输入预览</span>
+        <strong>{nodeRunInputSourceLabel(controller.inputSource || DEFAULT_NODE_RUN_INPUT_SOURCE)}</strong>
+        <small>{nodeRunInputSourceHelp(controller.inputSource)}</small>
+      </div>
+      <div className="node-run-input-preview-rows">
+        {rows.map((row) => (
+          <article key={row.key} className={row.missing ? "missing" : "ready"}>
+            <div>
+              <strong>{row.name}</strong>
+              <code>{row.source || "-"}</code>
+            </div>
+            <code title={row.value}>{row.value}</code>
+            <small>{row.logic}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function NodeRunStartPanel({
   controller,
   compact = false,
@@ -2388,6 +2494,7 @@ function NodeRunStartPanel({
     inputFields,
     error,
   } = controller;
+  const [showInheritedConfig, setShowInheritedConfig] = useState(false);
   if (!node || !instance || !runtime) return <div className="node-run-empty">选择 Runtime、Instance 和 Node 后才能创建 Node Run。</div>;
   return (
     <section className={`node-run-start-panel ${compact ? "compact" : ""}`}>
@@ -2435,15 +2542,15 @@ function NodeRunStartPanel({
       <div className="node-run-controls">
         <label>模式
           <select value={runMode} onChange={(event) => setRunMode(event.target.value as NodeRunMode)}>
+            <option value="real-node">真实执行</option>
             <option value="preflight">节点检查</option>
             <option value="probe">能力探测</option>
             <option value="dry-run">试运行计划</option>
-            <option value="real-node">真实执行</option>
           </select>
         </label>
         <label>输入来源
           <select value={inputSource || "generated-fixture"} onChange={(event) => setInputSource(event.target.value as NodeRunCreateInput["inputSource"])}>
-            <option value="generated-fixture">系统测试输入</option>
+            <option value="generated-fixture">默认示例输入</option>
             <option value="existing-run">历史 Workflow Run</option>
             <option value="manual">手动输入</option>
             <option value="deepseek-mock">DeepSeek 模拟输入</option>
@@ -2469,16 +2576,25 @@ function NodeRunStartPanel({
           </label>
         )) : null}
       </div>
-      <InheritedSettingsPanel
-        provider={controller.provider}
-        runtime={runtime}
-        instance={instance}
-        mode={controller.mode}
-        nodeId={node.nodeId}
-        title="运行配置继承"
-        description="Node Run 只读取当前 Runtime、Instance 和 Settings 的解析结果；需要改默认值请回到 Settings，需要改工作区身份请回到 Instance。"
-        compact
-      />
+      <NodeRunInputPreview controller={controller} />
+      <div className="node-run-config-disclosure">
+        <button type="button" className="btn" onClick={() => setShowInheritedConfig((value) => !value)}>
+          <Settings size={14} />{showInheritedConfig ? "隐藏运行配置" : "查看运行配置"}
+        </button>
+        <span>默认继承当前 Instance 的 GitHub / Telegram / Worker 等配置。</span>
+      </div>
+      {showInheritedConfig ? (
+        <InheritedSettingsPanel
+          provider={controller.provider}
+          runtime={runtime}
+          instance={instance}
+          mode={controller.mode}
+          nodeId={node.nodeId}
+          title="运行配置继承"
+          description="Node Run 只读取当前 Runtime、Instance 和 Settings 的解析结果；需要改默认值请回到 Settings，需要改工作区身份请回到 Instance。"
+          compact
+        />
+      ) : null}
       <section className="node-run-capability-editor">
         <div className="section-title"><span>挂载能力</span><span>Runtime Harness</span></div>
         <article className={`node-run-capability-edit-card ${gitEnabled ? "enabled" : ""}`}>
