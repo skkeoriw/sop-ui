@@ -8352,6 +8352,112 @@ pre {
   font-size: 11px;
 }
 
+.capability-detail-panel {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--line-2);
+  padding-top: 8px;
+}
+
+.capability-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.capability-metric-grid span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px;
+  background: var(--surface);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.capability-metric-grid b {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.capability-file-list {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+.capability-file-list > div,
+.telegram-send-list article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.capability-file-list > div span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.capability-file-list ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capability-file-list li {
+  min-width: 0;
+}
+
+.capability-file-list li code {
+  max-height: none;
+  margin: 0;
+  padding: 5px 6px;
+  background: var(--surface-2);
+}
+
+.capability-file-list details,
+.capability-managed-scope {
+  border-top: 1px solid var(--line-2);
+  padding-top: 6px;
+}
+
+.telegram-send-list {
+  display: grid;
+  gap: 7px;
+}
+
+.telegram-send-list article {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+.telegram-send-list article.done,
+.telegram-send-list article.ok {
+  border-color: rgba(88, 166, 110, .45);
+}
+
+.telegram-send-list article.failed,
+.telegram-send-list article.err {
+  border-color: rgba(227, 111, 111, .62);
+}
+
+.telegram-send-list p {
+  white-space: pre-wrap;
+}
+
 .node-run-fix-card p,
 .node-run-fix-card small {
   margin: 0;

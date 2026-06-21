@@ -1811,21 +1811,22 @@ function InheritedSettingsPanel({
 
 function nodeRunCapabilityRows(result?: NodeRunResult): Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> {
   const issues = result?.issues || [];
+  const caps = detailRecord(result?.capabilities);
   if (result?.capabilityResults?.length) {
     return result.capabilityResults.map((item) => {
       const issue = issues.find((candidate) => candidate.relatedCapability === item.key || candidate.relatedCapability === item.capability);
+      const runtimeDetail = detailRecord(caps[item.key] || caps[item.capability || ""]);
       return {
         key: item.key,
         label: item.label || item.capability || item.key,
         status: item.status || "unknown",
         reason: item.reason || issue?.message || "",
         action: issue?.action || "",
-        detail: item.detail || {},
+        detail: { ...(item.detail || {}), ...runtimeDetail },
       };
     });
   }
   const rows: Array<{ key: string; label: string; status: string; reason: string; action: string; detail: Record<string, unknown> }> = [];
-  const caps = detailRecord(result?.capabilities);
   Object.entries(caps).forEach(([key, value]) => {
     const item = detailRecord(value);
     rows.push({
@@ -1838,6 +1839,102 @@ function nodeRunCapabilityRows(result?: NodeRunResult): Array<{ key: string; lab
     });
   });
   return rows;
+}
+
+function nodeRunActualOutputPaths(result?: NodeRunResult) {
+  const paths: string[] = [];
+  Object.values(result?.actualOutputs || {}).forEach((value) => {
+    if (Array.isArray(value)) paths.push(...value.map(String).filter(Boolean));
+    else if (value) paths.push(String(value));
+  });
+  return Array.from(new Set(paths));
+}
+
+function CapabilityFileList({ title, files, max = 7 }: { title: string; files: string[]; max?: number }) {
+  const visible = files.slice(0, max);
+  const hidden = files.slice(max);
+  return (
+    <div className="capability-file-list">
+      <div><strong>{title}</strong><span>{files.length} files</span></div>
+      {visible.length ? (
+        <ul>
+          {visible.map((file) => <li key={file}><code>{file}</code></li>)}
+        </ul>
+      ) : <small>没有记录文件。</small>}
+      {hidden.length ? (
+        <details>
+          <summary><span>查看剩余 {hidden.length} 个文件</span><ChevronDown size={13} /></summary>
+          <ul>{hidden.map((file) => <li key={file}><code>{file}</code></li>)}</ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function GitCapabilitySummary({ detail, result }: { detail: Record<string, unknown>; result?: NodeRunResult }) {
+  const changedFiles = nodeRunStringArray(detail.changed_files);
+  const eventFiles = nodeRunStringArray(detail.event_changed_files);
+  const managedPaths = nodeRunStringArray(detail.managed_paths);
+  const outputPaths = nodeRunActualOutputPaths(result);
+  const pushedOutputs = outputPaths.filter((path) => changedFiles.includes(path) || managedPaths.includes(path));
+  const repo = String(detail.repository || "");
+  const commit = String(detail.commit || "");
+  const eventCommit = String(detail.event_commit || "");
+  return (
+    <div className="capability-detail-panel">
+      <div className="capability-metric-grid">
+        <span><b>Repository</b>{repo || "-"}</span>
+        <span><b>Main commit</b>{commit ? `${commit}${detail.pushed ? " · pushed" : ""}` : "-"}</span>
+        <span><b>Changed files</b>{changedFiles.length}</span>
+        <span><b>Event commit</b>{eventCommit ? `${eventCommit}${detail.event_pushed ? " · pushed" : ""}` : "-"}</span>
+      </div>
+      {pushedOutputs.length ? <CapabilityFileList title="声明输出已推送" files={pushedOutputs} max={4} /> : null}
+      <CapabilityFileList title="主提交文件" files={changedFiles} />
+      {eventFiles.length ? <CapabilityFileList title="事件 / capability 状态文件" files={eventFiles} max={5} /> : null}
+      {managedPaths.length ? (
+        <details className="capability-managed-scope">
+          <summary><span>管理范围 {managedPaths.length} 项</span><ChevronDown size={13} /></summary>
+          <CapabilityFileList title="Managed paths" files={managedPaths} max={10} />
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function TelegramCapabilitySummary({ detail }: { detail: Record<string, unknown> }) {
+  const history = detailList(detail.history);
+  const rows = history.length ? history : [{
+    trigger: detail.trigger,
+    status: detail.status,
+    sent_at: detail.sent_at,
+    api_ok: detail.api_ok,
+    message_preview: detail.message_preview,
+    error: detail.error,
+  }];
+  return (
+    <div className="capability-detail-panel">
+      <div className="capability-metric-grid">
+        <span><b>发送记录</b>{rows.length}</span>
+        <span><b>触发器</b>{nodeRunStringArray(detail.triggers).join(", ") || "-"}</span>
+      </div>
+      <div className="telegram-send-list">
+        {rows.map((row, index) => {
+          const status = String(row.status || (row.api_ok ? "done" : "failed"));
+          return (
+            <article key={`${String(row.trigger || "notify")}-${String(row.sent_at || index)}`} className={nodeRunCardTone(status)}>
+              <div>
+                <strong>{String(row.trigger || "notify")}</strong>
+                <span className={`status-pill ${nodeRunTone(status)}`}>{status}</span>
+              </div>
+              <small>{formatBeijingTime(String(row.sent_at || row.recorded_at || ""), "")}</small>
+              {row.message_preview ? <p>{String(row.message_preview)}</p> : null}
+              {row.error ? <small>{String(row.error)}</small> : null}
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function nodeRunStepScalarRows(detail: Record<string, unknown>) {
@@ -2891,6 +2988,8 @@ function NodeRunCapabilitySummary({ result }: { result: NodeRunResult | undefine
             </div>
             {row.reason ? <p>{row.reason}</p> : <p>No issue reported.</p>}
             {row.action ? <small>{row.action}</small> : null}
+            {row.key === "git" ? <GitCapabilitySummary detail={row.detail} result={result} /> : null}
+            {row.key === "telegram" ? <TelegramCapabilitySummary detail={row.detail} /> : null}
             <details>
               <summary><span>能力详情</span><ChevronDown size={14} /></summary>
               <code>{formatValue(row.detail)}</code>
