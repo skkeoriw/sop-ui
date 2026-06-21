@@ -1854,6 +1854,45 @@ function nodeRunActualOutputPaths(result?: NodeRunResult) {
   return Array.from(new Set(paths));
 }
 
+function nodeRunCapabilityRow(result: NodeRunResult | undefined, aliases: string[]) {
+  const normalized = new Set(aliases.map((item) => item.toLowerCase()));
+  return nodeRunCapabilityRows(result).find((row) => normalized.has(String(row.key || "").toLowerCase()) || normalized.has(String(row.label || "").toLowerCase()));
+}
+
+function nodeRunUniqueFiles(files: string[]) {
+  return Array.from(new Set(files.map(String).filter(Boolean)));
+}
+
+function nodeRunGitFileGroups(detail: Record<string, unknown>, result?: NodeRunResult) {
+  const changedFiles = nodeRunStringArray(detail.changed_files);
+  const eventFiles = nodeRunStringArray(detail.event_changed_files);
+  const managedPaths = nodeRunStringArray(detail.managed_paths);
+  const outputPaths = nodeRunActualOutputPaths(result);
+  const pushedOutputs = outputPaths.filter((path) => changedFiles.includes(path) || managedPaths.includes(path));
+  const allGitFiles = nodeRunUniqueFiles([...changedFiles, ...eventFiles]);
+  const eventSet = new Set(nodeRunUniqueFiles([
+    ...eventFiles,
+    ...allGitFiles.filter((path) => path.includes("logs/stage-events/") || path.endsWith("/events.jsonl") || path.endsWith("/capabilities.json")),
+  ]));
+  const runRecordSet = new Set(allGitFiles.filter((path) => path.includes("raw/pipeline-runs/") || path.includes("raw/node-runs/") || path === "raw/pipeline-context.json"));
+  const businessSet = new Set(nodeRunUniqueFiles([
+    ...pushedOutputs,
+    ...allGitFiles.filter((path) => !eventSet.has(path) && !runRecordSet.has(path)),
+  ]));
+  businessSet.forEach((path) => {
+    if (eventSet.has(path) || runRecordSet.has(path)) businessSet.delete(path);
+  });
+  const other = allGitFiles.filter((path) => !businessSet.has(path) && !eventSet.has(path) && !runRecordSet.has(path));
+  return {
+    business: Array.from(businessSet),
+    runRecords: Array.from(runRecordSet),
+    events: Array.from(eventSet),
+    other,
+    managedPaths,
+    changedFiles,
+  };
+}
+
 function CapabilityFileList({ title, files, max = 7 }: { title: string; files: string[]; max?: number }) {
   const visible = files.slice(0, max);
   const hidden = files.slice(max);
@@ -1876,29 +1915,33 @@ function CapabilityFileList({ title, files, max = 7 }: { title: string; files: s
 }
 
 function GitCapabilitySummary({ detail, result }: { detail: Record<string, unknown>; result?: NodeRunResult }) {
-  const changedFiles = nodeRunStringArray(detail.changed_files);
-  const eventFiles = nodeRunStringArray(detail.event_changed_files);
-  const managedPaths = nodeRunStringArray(detail.managed_paths);
-  const outputPaths = nodeRunActualOutputPaths(result);
-  const pushedOutputs = outputPaths.filter((path) => changedFiles.includes(path) || managedPaths.includes(path));
+  const groups = nodeRunGitFileGroups(detail, result);
   const repo = String(detail.repository || "");
   const commit = String(detail.commit || "");
   const eventCommit = String(detail.event_commit || "");
   return (
     <div className="capability-detail-panel">
+      <div className="capability-panel-title">
+        <Github size={15} />
+        <div>
+          <strong>GitHub workspace persistence</strong>
+          <small>只展示本阶段推送摘要；完整 payload 放在原始详情里。</small>
+        </div>
+      </div>
       <div className="capability-metric-grid">
         <span><b>Repository</b>{repo || "-"}</span>
         <span><b>Main commit</b>{commit ? `${commit}${detail.pushed ? " · pushed" : ""}` : "-"}</span>
-        <span><b>Changed files</b>{changedFiles.length}</span>
+        <span><b>Changed files</b>{groups.changedFiles.length}</span>
         <span><b>Event commit</b>{eventCommit ? `${eventCommit}${detail.event_pushed ? " · pushed" : ""}` : "-"}</span>
       </div>
-      {pushedOutputs.length ? <CapabilityFileList title="声明输出已推送" files={pushedOutputs} max={4} /> : null}
-      <CapabilityFileList title="主提交文件" files={changedFiles} />
-      {eventFiles.length ? <CapabilityFileList title="事件 / capability 状态文件" files={eventFiles} max={5} /> : null}
-      {managedPaths.length ? (
+      {groups.business.length ? <CapabilityFileList title="业务产物" files={groups.business} max={5} /> : null}
+      {groups.runRecords.length ? <CapabilityFileList title="运行记录" files={groups.runRecords} max={5} /> : null}
+      {groups.events.length ? <CapabilityFileList title="事件 / capability 状态文件" files={groups.events} max={5} /> : null}
+      {groups.other.length ? <CapabilityFileList title="其他变更文件" files={groups.other} max={5} /> : null}
+      {groups.managedPaths.length ? (
         <details className="capability-managed-scope">
-          <summary><span>管理范围 {managedPaths.length} 项</span><ChevronDown size={13} /></summary>
-          <CapabilityFileList title="Managed paths" files={managedPaths} max={10} />
+          <summary><span>管理范围 {groups.managedPaths.length} 项</span><ChevronDown size={13} /></summary>
+          <CapabilityFileList title="Managed paths" files={groups.managedPaths} max={10} />
         </details>
       ) : null}
     </div>
@@ -1917,6 +1960,13 @@ function TelegramCapabilitySummary({ detail }: { detail: Record<string, unknown>
   }];
   return (
     <div className="capability-detail-panel">
+      <div className="capability-panel-title">
+        <Send size={15} />
+        <div>
+          <strong>Telegram notification</strong>
+          <small>按触发点展示实际发送记录，不在主页面展开完整 payload。</small>
+        </div>
+      </div>
       <div className="capability-metric-grid">
         <span><b>发送记录</b>{rows.length}</span>
         <span><b>触发器</b>{nodeRunStringArray(detail.triggers).join(", ") || "-"}</span>
@@ -2061,6 +2111,8 @@ function NodeRunStepDetailPanel({
   const stepEvents = (events?.length ? events : result?.events || []).filter((event) => event.stepId === step?.id);
   const scalarRows = nodeRunStepScalarRows(stepDetail);
   const innerFlowIsRelevant = step?.id === "execute-or-dry-run";
+  const gitCapability = step?.id === "persist-to-github" ? nodeRunCapabilityRow(result, ["git", "github"]) : undefined;
+  const telegramCapability = step?.id === "send-telegram-notification" ? nodeRunCapabilityRow(result, ["telegram", "tg"]) : undefined;
   if (!step) return <aside id="node-run-step-detail" className="node-run-step-detail-panel"><Empty text="选择一个阶段查看详情" /></aside>;
   const showFixes = ["failed", "blocked", "needs_input"].includes(step.status);
   return (
@@ -2121,6 +2173,8 @@ function NodeRunStepDetailPanel({
           <NodeRunInnerFlow result={result} />
         </div>
       ) : null}
+      {gitCapability ? <GitCapabilitySummary detail={gitCapability.detail} result={result} /> : null}
+      {telegramCapability ? <TelegramCapabilitySummary detail={telegramCapability.detail} /> : null}
       {step.id === "validate-outputs" ? <NodeRunOutputValidationSummary result={result} step={step} /> : null}
       {step.detail && Object.keys(step.detail).length ? (
         <details className="node-run-step-raw">
@@ -2990,14 +3044,23 @@ function NodeRunCapabilitySummary({ result }: { result: NodeRunResult | undefine
               <span className={`status-pill ${nodeRunTone(row.status)}`}>{row.status}</span>
               <strong>{row.label}</strong>
             </div>
+            {row.key === "git" || row.key === "github" ? (
+              <div className="node-run-capability-facts">
+                <span>{nodeRunGitFileGroups(row.detail, result).changedFiles.length} files</span>
+                <span>{String(row.detail.commit || "-")}</span>
+                <span>{row.detail.pushed ? "pushed" : "not pushed"}</span>
+              </div>
+            ) : null}
+            {row.key === "telegram" || row.key === "tg" ? (
+              <div className="node-run-capability-facts">
+                <span>{detailList(row.detail.history).length || 1} sends</span>
+                <span>{nodeRunStringArray(row.detail.triggers).join(", ") || String(row.detail.trigger || "-")}</span>
+              </div>
+            ) : null}
             {row.reason ? <p>{row.reason}</p> : <p>No issue reported.</p>}
             {row.action ? <small>{row.action}</small> : null}
-            {row.key === "git" ? <GitCapabilitySummary detail={row.detail} result={result} /> : null}
-            {row.key === "telegram" ? <TelegramCapabilitySummary detail={row.detail} /> : null}
-            <details>
-              <summary><span>能力详情</span><ChevronDown size={14} /></summary>
-              <code>{formatValue(row.detail)}</code>
-            </details>
+            {(row.key === "git" || row.key === "github") ? <small>点击执行流程里的 Persist to GitHub 查看推送文件和 commit。</small> : null}
+            {(row.key === "telegram" || row.key === "tg") ? <small>点击执行流程里的 Send Telegram notification 查看发送记录。</small> : null}
           </article>
         ))}
         {!rows.length ? <Empty text="本次 Node Run 没有记录 capability 结果" /> : null}

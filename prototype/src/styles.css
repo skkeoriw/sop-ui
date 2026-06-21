@@ -8323,6 +8323,27 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.node-run-capability-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.node-run-capability-facts span {
+  min-width: 0;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: var(--surface);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .node-run-capability-card details {
   border-top: 1px solid var(--line-2);
   padding-top: 6px;
@@ -8357,6 +8378,36 @@ pre {
   gap: 8px;
   border-top: 1px solid var(--line-2);
   padding-top: 8px;
+}
+
+.capability-panel-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.capability-panel-title svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
+.capability-panel-title > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.capability-panel-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capability-panel-title small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .capability-metric-grid {
