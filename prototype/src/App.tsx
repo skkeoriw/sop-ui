@@ -1862,23 +1862,37 @@ function nodeRunGitFileGroups(detail: Record<string, unknown>, result?: NodeRunR
   const eventFiles = nodeRunStringArray(detail.event_changed_files);
   const managedPaths = nodeRunStringArray(detail.managed_paths);
   const outputPaths = nodeRunActualOutputPaths(result);
-  const pushedOutputs = outputPaths.filter((path) => changedFiles.includes(path) || managedPaths.includes(path));
+  const declaredOutputSet = new Set(outputPaths.filter((path) => changedFiles.includes(path) || managedPaths.includes(path)));
   const allGitFiles = nodeRunUniqueFiles([...changedFiles, ...eventFiles]);
   const eventSet = new Set(nodeRunUniqueFiles([
     ...eventFiles,
     ...allGitFiles.filter((path) => path.includes("logs/stage-events/") || path.endsWith("/events.jsonl") || path.endsWith("/capabilities.json")),
   ]));
-  const runRecordSet = new Set(allGitFiles.filter((path) => path.includes("raw/pipeline-runs/") || path.includes("raw/node-runs/") || path === "raw/pipeline-context.json"));
-  const businessSet = new Set(nodeRunUniqueFiles([
-    ...pushedOutputs,
-    ...allGitFiles.filter((path) => !eventSet.has(path) && !runRecordSet.has(path)),
-  ]));
-  businessSet.forEach((path) => {
-    if (eventSet.has(path) || runRecordSet.has(path)) businessSet.delete(path);
-  });
-  const other = allGitFiles.filter((path) => !businessSet.has(path) && !eventSet.has(path) && !runRecordSet.has(path));
+  const workflowContextSet = new Set(allGitFiles.filter((path) => path === "raw/pipeline-context.json"));
+  const runRecordSet = new Set(allGitFiles.filter((path) => (path.includes("raw/pipeline-runs/") || path.includes("raw/node-runs/")) && !eventSet.has(path)));
+  const compatibilitySet = new Set(allGitFiles.filter((path) => path.includes("raw/notebooklm-analysis/") && path.includes("youtube-deep-research")));
+  const rawWorkerSet = new Set(allGitFiles.filter((path) => /raw\/youtube-deep-research\/[^/]+\/raw\//.test(path)));
+  const workspaceSet = new Set(allGitFiles.filter((path) => (
+    path.includes("raw/youtube-deep-research/")
+    && !declaredOutputSet.has(path)
+    && !rawWorkerSet.has(path)
+  )));
+  const grouped = new Set([
+    ...declaredOutputSet,
+    ...rawWorkerSet,
+    ...workspaceSet,
+    ...compatibilitySet,
+    ...workflowContextSet,
+    ...runRecordSet,
+    ...eventSet,
+  ]);
+  const other = allGitFiles.filter((path) => !grouped.has(path));
   return {
-    business: Array.from(businessSet),
+    declaredOutputs: Array.from(declaredOutputSet),
+    rawWorkerFiles: Array.from(rawWorkerSet),
+    workspaceFiles: Array.from(workspaceSet),
+    compatibilityExports: Array.from(compatibilitySet),
+    workflowContext: Array.from(workflowContextSet),
     runRecords: Array.from(runRecordSet),
     events: Array.from(eventSet),
     other,
@@ -1928,7 +1942,11 @@ function GitCapabilitySummary({ detail, result }: { detail: Record<string, unkno
         <span><b>Changed files</b>{groups.changedFiles.length}</span>
         <span><b>Event commit</b>{eventCommit ? `${eventCommit}${detail.event_pushed ? " · pushed" : ""}` : "-"}</span>
       </div>
-      {groups.business.length ? <CapabilityFileList title="业务产物" files={groups.business} max={5} /> : null}
+      {groups.declaredOutputs.length ? <CapabilityFileList title="核心输出" files={groups.declaredOutputs} max={5} /> : null}
+      {groups.rawWorkerFiles.length ? <CapabilityFileList title="节点原始文件" files={groups.rawWorkerFiles} max={5} /> : null}
+      {groups.workspaceFiles.length ? <CapabilityFileList title="节点工作区其他文件" files={groups.workspaceFiles} max={5} /> : null}
+      {groups.compatibilityExports.length ? <CapabilityFileList title="下游兼容输出" files={groups.compatibilityExports} max={5} /> : null}
+      {groups.workflowContext.length ? <CapabilityFileList title="Workflow 上下文" files={groups.workflowContext} max={5} /> : null}
       {groups.runRecords.length ? <CapabilityFileList title="运行记录" files={groups.runRecords} max={5} /> : null}
       {groups.events.length ? <CapabilityFileList title="事件 / capability 状态文件" files={groups.events} max={5} /> : null}
       {groups.other.length ? <CapabilityFileList title="其他变更文件" files={groups.other} max={5} /> : null}
@@ -2959,7 +2977,7 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
           <div className="node-run-artifact-summary">
             <div>
               <span className={`status-pill ${nodeRunTone(String(validation.status || result.status || ""))}`}>{String(validation.status || result.status || "unknown")}</span>
-              <strong>{businessArtifacts.length} 个业务产物</strong>
+              <strong>{businessArtifacts.length} 个核心输出</strong>
               <small>{Object.keys(actualOutputs).length ? Object.keys(actualOutputs).join(", ") : "暂无声明输出记录"}</small>
             </div>
           </div>
@@ -2970,7 +2988,7 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
               ))}
             </div>
           ) : null}
-          <DetailBlock title={`业务产物 · ${businessArtifacts.length}`}>
+          <DetailBlock title={`核心输出 · ${businessArtifacts.length}`}>
             <ArtifactList artifacts={businessArtifacts} />
           </DetailBlock>
           {diagnosticArtifacts.length ? (
