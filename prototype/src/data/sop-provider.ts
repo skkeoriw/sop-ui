@@ -621,6 +621,10 @@ function mapNodeTestStep(raw: Record<string, unknown>) {
   };
 }
 
+function isVisibleNodeRunStep(step: { id?: string }) {
+  return step.id !== "persist-artifacts";
+}
+
 function mapCapabilityConfigPreview(raw: Record<string, unknown>): CapabilityConfigPreview {
   const rawItems = Array.isArray(raw.items) ? raw.items as Array<Record<string, unknown>> : [];
   return {
@@ -761,6 +765,10 @@ function mapNodeRunIssue(raw: Record<string, unknown>) {
 }
 
 function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallbackId = ""): NodeRunResult {
+  const steps = ((raw.steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep).filter(isVisibleNodeRunStep);
+  const events = ((raw.events as Array<Record<string, unknown>>) || [])
+    .map(mapNodeRunEvent)
+    .filter((event) => event.stepId !== "persist-artifacts");
   return {
     nodeRunId: String(raw.node_run_id || raw.nodeRunId || raw.pipeline_id || fallbackId || ""),
     pipelineId: raw.pipeline_id ? String(raw.pipeline_id) : undefined,
@@ -780,9 +788,9 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     createdFrom: raw.created_from ? String(raw.created_from) : undefined,
     retryOf: raw.retry_of ? String(raw.retry_of) : undefined,
     detail: (raw.detail as Record<string, unknown>) || {},
-    steps: ((raw.steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
+    steps,
     innerSteps: ((raw.inner_steps as Array<Record<string, unknown>>) || ((raw.detail as Record<string, unknown>)?.inner_steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
-    events: ((raw.events as Array<Record<string, unknown>>) || []).map(mapNodeRunEvent),
+    events,
     artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     businessArtifacts: ((raw.business_artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},

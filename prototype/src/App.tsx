@@ -1056,7 +1056,6 @@ const NODE_RUN_OUTER_STEP_COPY: Record<string, { title: string; summary?: string
   "build-execution-plan": { title: "生成执行计划", summary: "根据模式和输入生成节点级执行计划。" },
   "execute-or-dry-run": { title: "执行节点逻辑", summary: "真实执行节点，或生成试运行计划。" },
   "validate-outputs": { title: "校验节点输出", summary: "检查声明输出和实际产物是否匹配。" },
-  "persist-artifacts": { title: "写入运行工作台快照", summary: "先写入 Node Run 工作台快照；业务产物、GitHub 和 Telegram 进度看对应阶段。" },
 };
 
 const NODE_RUN_LIFECYCLE_STEP_COPY: Record<string, { title: string; summary?: string }> = {
@@ -1160,14 +1159,10 @@ function localizedNodeRunStep(step: NodeTestStep, nodeId?: string): NodeTestStep
   void nodeId;
   const copy = NODE_RUN_LIFECYCLE_STEP_COPY[step.id] || NODE_RUN_OUTER_STEP_COPY[step.id];
   if (!copy) return step;
-  const useCopySummary = step.id === "persist-artifacts" && (
-    !step.summary
-    || /diagnostic record|real node artifacts|Node Run artifacts|业务产物索引/.test(step.summary)
-  );
   return {
     ...step,
     title: copy.title,
-    summary: useCopySummary ? copy.summary : step.summary && step.summary !== step.title ? step.summary : copy.summary,
+    summary: step.summary && step.summary !== step.title ? step.summary : copy.summary,
   };
 }
 
@@ -1236,7 +1231,6 @@ function makeOptimisticNodeRun(params: {
       { id: "build-execution-plan", title: NODE_RUN_OUTER_STEP_COPY["build-execution-plan"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["build-execution-plan"].summary },
       { id: "execute-or-dry-run", title: NODE_RUN_OUTER_STEP_COPY["execute-or-dry-run"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["execute-or-dry-run"].summary },
       { id: "validate-outputs", title: NODE_RUN_OUTER_STEP_COPY["validate-outputs"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["validate-outputs"].summary },
-      { id: "persist-artifacts", title: NODE_RUN_OUTER_STEP_COPY["persist-artifacts"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["persist-artifacts"].summary },
     ],
     events: [{ sequence: 1, event: "node_run.step.running", nodeRunId: params.nodeRunId, nodeId: params.nodeId, stepId: "create-run", ts: startedAt, data: { summary: NODE_RUN_OUTER_STEP_COPY["create-run"].summary } }],
     artifacts: [],
