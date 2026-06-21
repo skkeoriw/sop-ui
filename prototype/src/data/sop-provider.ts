@@ -794,6 +794,7 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     businessArtifacts: ((raw.business_artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
+    outputCategories: (raw.output_categories as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
     runtimeContext: (raw.runtime_context as Record<string, unknown>) || {},

@@ -672,6 +672,7 @@ export interface NodeRunResult {
   artifacts?: Artifact[];
   businessArtifacts?: Artifact[];
   actualOutputs?: Record<string, unknown>;
+  outputCategories?: Record<string, unknown>;
   validation?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   runtimeContext?: Record<string, unknown>;

@@ -1848,6 +1848,35 @@ function nodeRunActualOutputPaths(result?: NodeRunResult) {
   return Array.from(new Set(paths));
 }
 
+function nodeRunOutputCategories(result?: NodeRunResult) {
+  const detail = detailRecord(result?.detail);
+  const rawCategories = detailRecord(
+    result?.outputCategories && Object.keys(result.outputCategories).length
+      ? result.outputCategories
+      : detail.output_categories,
+  );
+  const fallbackCore = nodeRunActualOutputPaths(result);
+  const order = [
+    ["core_outputs", "核心输出", "节点声明 outputs 对应的业务结果。"],
+    ["raw_files", "节点原始文件", "节点 Skill/Worker 产生的原始响应、字幕和中间文件。"],
+    ["run_records", "运行记录", "Node Run 工作台、事件、状态和 capability 记录。"],
+  ];
+  return order.map(([key, fallbackTitle, fallbackDescription]) => {
+    const record = detailRecord(rawCategories[key]);
+    const files = nodeRunStringArray(record.files);
+    return {
+      key,
+      title: String(record.title || fallbackTitle),
+      description: String(record.description || fallbackDescription),
+      files: key === "core_outputs" && !files.length ? fallbackCore : files,
+    };
+  });
+}
+
+function nodeRunOutputCategoryFiles(result: NodeRunResult | undefined, key: string) {
+  return nodeRunOutputCategories(result).find((category) => category.key === key)?.files || [];
+}
+
 function nodeRunCapabilityRow(result: NodeRunResult | undefined, aliases: string[]) {
   const normalized = new Set(aliases.map((item) => item.toLowerCase()));
   return nodeRunCapabilityRows(result).find((row) => normalized.has(String(row.key || "").toLowerCase()) || normalized.has(String(row.label || "").toLowerCase()));
@@ -1858,43 +1887,32 @@ function nodeRunUniqueFiles(files: string[]) {
 }
 
 function nodeRunGitFileGroups(detail: Record<string, unknown>, result?: NodeRunResult) {
-  const changedFiles = nodeRunStringArray(detail.changed_files);
-  const eventFiles = nodeRunStringArray(detail.event_changed_files);
-  const managedPaths = nodeRunStringArray(detail.managed_paths);
-  const outputPaths = nodeRunActualOutputPaths(result);
-  const declaredOutputSet = new Set(outputPaths.filter((path) => changedFiles.includes(path) || managedPaths.includes(path)));
+  const visible = (path: string) => path && path !== "raw/pipeline-context.json";
+  const changedFiles = nodeRunStringArray(detail.changed_files).filter(visible);
+  const eventFiles = nodeRunStringArray(detail.event_changed_files).filter(visible);
+  const managedPaths = nodeRunStringArray(detail.managed_paths).filter(visible);
   const allGitFiles = nodeRunUniqueFiles([...changedFiles, ...eventFiles]);
-  const eventSet = new Set(nodeRunUniqueFiles([
-    ...eventFiles,
-    ...allGitFiles.filter((path) => path.includes("logs/stage-events/") || path.endsWith("/events.jsonl") || path.endsWith("/capabilities.json")),
-  ]));
-  const workflowContextSet = new Set(allGitFiles.filter((path) => path === "raw/pipeline-context.json"));
-  const runRecordSet = new Set(allGitFiles.filter((path) => (path.includes("raw/pipeline-runs/") || path.includes("raw/node-runs/")) && !eventSet.has(path)));
-  const compatibilitySet = new Set(allGitFiles.filter((path) => path.includes("raw/notebooklm-analysis/") && path.includes("youtube-deep-research")));
-  const rawWorkerSet = new Set(allGitFiles.filter((path) => /raw\/youtube-deep-research\/[^/]+\/raw\//.test(path)));
-  const workspaceSet = new Set(allGitFiles.filter((path) => (
-    path.includes("raw/youtube-deep-research/")
-    && !declaredOutputSet.has(path)
-    && !rawWorkerSet.has(path)
-  )));
+  const allGitSet = new Set([...allGitFiles, ...managedPaths]);
+  const categorySet = (key: string) => new Set(nodeRunOutputCategoryFiles(result, key).filter((path) => allGitSet.has(path)));
+  const declaredOutputSet = categorySet("core_outputs");
+  const rawWorkerSet = categorySet("raw_files");
+  if (!rawWorkerSet.size) {
+    allGitFiles.filter((path) => /\/raw\//.test(path) && path.includes("raw/youtube-deep-research/")).forEach((path) => rawWorkerSet.add(path));
+  }
+  const runRecordSet = categorySet("run_records");
+  allGitFiles
+    .filter((path) => path.includes("raw/pipeline-runs/") || path.includes("raw/node-runs/") || path.includes("logs/stage-events/"))
+    .forEach((path) => runRecordSet.add(path));
   const grouped = new Set([
     ...declaredOutputSet,
     ...rawWorkerSet,
-    ...workspaceSet,
-    ...compatibilitySet,
-    ...workflowContextSet,
     ...runRecordSet,
-    ...eventSet,
   ]);
   const other = allGitFiles.filter((path) => !grouped.has(path));
   return {
     declaredOutputs: Array.from(declaredOutputSet),
     rawWorkerFiles: Array.from(rawWorkerSet),
-    workspaceFiles: Array.from(workspaceSet),
-    compatibilityExports: Array.from(compatibilitySet),
-    workflowContext: Array.from(workflowContextSet),
     runRecords: Array.from(runRecordSet),
-    events: Array.from(eventSet),
     other,
     managedPaths,
     changedFiles,
@@ -1932,28 +1950,24 @@ function GitCapabilitySummary({ detail, result }: { detail: Record<string, unkno
       <div className="capability-panel-title">
         <Github size={15} />
         <div>
-          <strong>GitHub workspace persistence</strong>
-          <small>只展示本阶段推送摘要；完整 payload 放在原始详情里。</small>
+          <strong>GitHub 同步</strong>
+          <small>只展示本阶段推送摘要；产物定义以“校验节点输出”为准。</small>
         </div>
       </div>
       <div className="capability-metric-grid">
-        <span><b>Repository</b>{repo || "-"}</span>
-        <span><b>Main commit</b>{commit ? `${commit}${detail.pushed ? " · pushed" : ""}` : "-"}</span>
-        <span><b>Changed files</b>{groups.changedFiles.length}</span>
-        <span><b>Event commit</b>{eventCommit ? `${eventCommit}${detail.event_pushed ? " · pushed" : ""}` : "-"}</span>
+        <span><b>仓库</b>{repo || "-"}</span>
+        <span><b>主提交</b>{commit ? `${commit}${detail.pushed ? " · pushed" : ""}` : "-"}</span>
+        <span><b>同步文件</b>{groups.changedFiles.length}</span>
+        <span><b>事件提交</b>{eventCommit ? `${eventCommit}${detail.event_pushed ? " · pushed" : ""}` : "-"}</span>
       </div>
       {groups.declaredOutputs.length ? <CapabilityFileList title="核心输出" files={groups.declaredOutputs} max={5} /> : null}
       {groups.rawWorkerFiles.length ? <CapabilityFileList title="节点原始文件" files={groups.rawWorkerFiles} max={5} /> : null}
-      {groups.workspaceFiles.length ? <CapabilityFileList title="节点工作区其他文件" files={groups.workspaceFiles} max={5} /> : null}
-      {groups.compatibilityExports.length ? <CapabilityFileList title="下游兼容输出" files={groups.compatibilityExports} max={5} /> : null}
-      {groups.workflowContext.length ? <CapabilityFileList title="Workflow 上下文" files={groups.workflowContext} max={5} /> : null}
       {groups.runRecords.length ? <CapabilityFileList title="运行记录" files={groups.runRecords} max={5} /> : null}
-      {groups.events.length ? <CapabilityFileList title="事件 / capability 状态文件" files={groups.events} max={5} /> : null}
-      {groups.other.length ? <CapabilityFileList title="其他变更文件" files={groups.other} max={5} /> : null}
+      {groups.other.length ? <CapabilityFileList title="其他同步文件" files={groups.other} max={5} /> : null}
       {groups.managedPaths.length ? (
         <details className="capability-managed-scope">
           <summary><span>管理范围 {groups.managedPaths.length} 项</span><ChevronDown size={13} /></summary>
-          <CapabilityFileList title="Managed paths" files={groups.managedPaths} max={10} />
+          <CapabilityFileList title="Git 管理范围" files={groups.managedPaths} max={10} />
         </details>
       ) : null}
     </div>
@@ -2074,6 +2088,7 @@ function NodeRunOutputValidationSummary({
   const unexpected = nodeRunStringArray(validation.unexpected_outputs);
   const declaredEntries = Object.entries(declaredOutputs);
   const actualEntries = Object.entries(actualOutputs || {});
+  const outputCategories = nodeRunOutputCategories(result);
   return (
     <div className="node-run-validation-summary">
       <div className="section-title"><span>输出校验摘要</span><span>{String(validation.status || step?.status || "unknown")}</span></div>
@@ -2082,6 +2097,11 @@ function NodeRunOutputValidationSummary({
         <span><b>实际输出</b>{actualEntries.length}</span>
         <span><b>缺失</b>{missing.length}</span>
         <span><b>多余</b>{unexpected.length}</span>
+      </div>
+      <div className="node-run-output-category-list">
+        {outputCategories.map((category) => (
+          <CapabilityFileList key={category.key} title={category.title} files={category.files} max={5} />
+        ))}
       </div>
       <div className="node-run-output-grid">
         {declaredEntries.map(([name, spec]) => {
@@ -2938,6 +2958,7 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
   const diagnosticArtifacts = nodeRunDiagnosticArtifacts(result);
   const actualOutputs = detailRecord(result.actualOutputs);
   const validation = detailRecord(result.validation);
+  const outputCategories = nodeRunOutputCategories(result);
   return (
     <section className="node-run-results-panel">
       <div className="node-run-results-tabs" role="tablist" aria-label="Node run result sections">
@@ -2990,6 +3011,13 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
           ) : null}
           <DetailBlock title={`核心输出 · ${businessArtifacts.length}`}>
             <ArtifactList artifacts={businessArtifacts} />
+          </DetailBlock>
+          <DetailBlock title="输出分类">
+            <div className="node-run-output-category-list">
+              {outputCategories.map((category) => (
+                <CapabilityFileList key={category.key} title={category.title} files={category.files} max={6} />
+              ))}
+            </div>
           </DetailBlock>
           {diagnosticArtifacts.length ? (
             <DetailBlock title={`诊断产物 · ${diagnosticArtifacts.length}`}>

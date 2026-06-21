@@ -8216,6 +8216,11 @@ pre {
   font-size: 11px;
 }
 
+.node-run-output-category-list {
+  display: grid;
+  gap: 8px;
+}
+
 .node-run-output-grid article {
   display: grid;
   gap: 7px;
