@@ -1056,7 +1056,7 @@ const NODE_RUN_OUTER_STEP_COPY: Record<string, { title: string; summary?: string
   "build-execution-plan": { title: "生成执行计划", summary: "根据模式和输入生成节点级执行计划。" },
   "execute-or-dry-run": { title: "执行节点逻辑", summary: "真实执行节点，或生成试运行计划。" },
   "validate-outputs": { title: "校验节点输出", summary: "检查声明输出和实际产物是否匹配。" },
-  "persist-artifacts": { title: "持久化运行产物", summary: "写入 Node Run 诊断结果和业务产物索引。" },
+  "persist-artifacts": { title: "写入运行工作台快照", summary: "先写入 Node Run 工作台快照；业务产物、GitHub 和 Telegram 进度看对应阶段。" },
 };
 
 const NODE_RUN_LIFECYCLE_STEP_COPY: Record<string, { title: string; summary?: string }> = {
@@ -1160,10 +1160,14 @@ function localizedNodeRunStep(step: NodeTestStep, nodeId?: string): NodeTestStep
   void nodeId;
   const copy = NODE_RUN_LIFECYCLE_STEP_COPY[step.id] || NODE_RUN_OUTER_STEP_COPY[step.id];
   if (!copy) return step;
+  const useCopySummary = step.id === "persist-artifacts" && (
+    !step.summary
+    || /diagnostic record|real node artifacts|Node Run artifacts|业务产物索引/.test(step.summary)
+  );
   return {
     ...step,
     title: copy.title,
-    summary: step.summary && step.summary !== step.title ? step.summary : copy.summary,
+    summary: useCopySummary ? copy.summary : step.summary && step.summary !== step.title ? step.summary : copy.summary,
   };
 }
 

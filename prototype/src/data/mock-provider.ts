@@ -335,7 +335,7 @@ const mockNodeRunStepDefs = [
   ["build-execution-plan", "Build node execution plan", "Node execution plan prepared."],
   ["execute-or-dry-run", "Execute or dry-run node", "Node business adapter is simulated in mock mode."],
   ["validate-outputs", "Validate declared outputs", "Declared outputs validated."],
-  ["persist-artifacts", "Persist node run artifacts", "Node Run artifacts recorded."],
+  ["persist-artifacts", "Write node run workspace snapshot", "Initial Node Run workbench snapshot recorded."],
 ] as const;
 
 const nodeLifecycleInnerDefs = [
