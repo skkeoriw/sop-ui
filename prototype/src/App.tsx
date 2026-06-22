@@ -1041,6 +1041,7 @@ const DEFAULT_NODE_RUN_SOURCE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ
 const NODE_RUN_INPUT_SOURCE_LABELS: Record<string, string> = {
   "generated-fixture": "默认示例输入",
   "existing-run": "历史 Workflow Run",
+  "existing-node-run": "上游 Node Run",
   manual: "手动输入",
   "deepseek-mock": "DeepSeek 模拟输入",
   artifact: "指定 Artifact",
@@ -1090,6 +1091,7 @@ function generatedNodeRunFixtureValue(inputName: string, sourceExpression = "") 
 
 function nodeRunInputSourceHelp(inputSource?: string) {
   if (inputSource === "existing-run") return "从选中的历史 Workflow Run 读取 context 和上游节点 outputs。";
+  if (inputSource === "existing-node-run") return "读取上游 Node Run 的 outputs/files/manifest.json，动态生成本次输入目录。";
   if (inputSource === "manual") return "使用下方手动填写的字段，适合复现单个节点的问题。";
   if (inputSource === "deepseek-mock") return "请求运行时生成模拟输入；当前没有模型模拟时会回退到默认示例。";
   return "按节点输入契约生成固定示例值，适合快速真实执行单个节点。";
@@ -1099,6 +1101,7 @@ function nodeRunInputPreviewRows(
   node: NodeRegistryItem | undefined,
   inputSource: NodeRunCreateInput["inputSource"] | undefined,
   seedRunId: string,
+  sourceNodeRunId: string,
   manualInputs: Record<string, string>,
 ) {
   const inputs = Object.entries(node?.inputs || {});
@@ -1122,6 +1125,16 @@ function nodeRunInputPreviewRows(
         source,
         logic: seedRunId ? `从 ${seedRunId} 的 ${source || "上下文"} 解析。` : "需要先选择一个历史 Workflow Run。",
         missing: !seedRunId,
+      };
+    }
+    if (inputSource === "existing-node-run") {
+      return {
+        key: name,
+        name,
+        value: sourceNodeRunId || "未指定上游 Node Run",
+        source,
+        logic: sourceNodeRunId ? `从 ${sourceNodeRunId} 的 outputs/files manifest 动态生成输入目录。` : "需要指定一个已完成的上游 Node Run。",
+        missing: !sourceNodeRunId,
       };
     }
     if (inputSource === "manual") {
@@ -2541,6 +2554,7 @@ function useNodeRunController({
   const [runMode, setRunMode] = useState<NodeRunMode>(DEFAULT_NODE_RUN_MODE);
   const [inputSource, setInputSource] = useState<NodeRunCreateInput["inputSource"]>(DEFAULT_NODE_RUN_INPUT_SOURCE);
   const [seedRunId, setSeedRunId] = useState("");
+  const [sourceNodeRunId, setSourceNodeRunId] = useState("");
   const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
   const [runtimeOverrides, setRuntimeOverrides] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
@@ -2568,6 +2582,10 @@ function useNodeRunController({
     if (params.get("test_source") === "existing-run" && params.get("test_run")) {
       setInputSource("existing-run");
       setSeedRunId(params.get("test_run") || "");
+    }
+    if (params.get("test_source") === "existing-node-run" && params.get("test_run")) {
+      setInputSource("existing-node-run");
+      setSourceNodeRunId(params.get("test_run") || "");
     }
   }, [nodeId]);
 
@@ -2609,6 +2627,7 @@ function useNodeRunController({
       mode: runMode,
       inputSource,
       pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
+      sourceNodeRunId: inputSource === "existing-node-run" ? sourceNodeRunId : undefined,
       manualInputs,
       overrides: runtimeOverrides,
       capabilityOverrides: nodeRunCapabilityOverridePayload({
@@ -2654,6 +2673,8 @@ function useNodeRunController({
     setInputSource,
     seedRunId,
     setSeedRunId,
+    sourceNodeRunId,
+    setSourceNodeRunId,
     manualInputs,
     setManualInputs,
     runtimeOverrides,
@@ -2682,7 +2703,13 @@ function useNodeRunController({
 }
 
 function NodeRunInputPreview({ controller }: { controller: ReturnType<typeof useNodeRunController> }) {
-  const rows = nodeRunInputPreviewRows(controller.node, controller.inputSource, controller.seedRunId, controller.manualInputs);
+  const rows = nodeRunInputPreviewRows(
+    controller.node,
+    controller.inputSource,
+    controller.seedRunId,
+    controller.sourceNodeRunId,
+    controller.manualInputs,
+  );
   return (
     <section className="node-run-input-preview">
       <div>
@@ -2726,6 +2753,8 @@ function NodeRunStartPanel({
     setInputSource,
     seedRunId,
     setSeedRunId,
+    sourceNodeRunId,
+    setSourceNodeRunId,
     manualInputs,
     setManualInputs,
     gitEnabled,
@@ -2752,7 +2781,12 @@ function NodeRunStartPanel({
           <strong>{title}</strong>
           <span>{runtime.id} · {instance.instanceId} · {node.nodeId}</span>
         </div>
-        <button type="button" className="btn primary" disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId)} onClick={() => startNodeRun()}>
+        <button
+          type="button"
+          className="btn primary"
+          disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId) || (inputSource === "existing-node-run" && !sourceNodeRunId)}
+          onClick={() => startNodeRun()}
+        >
           {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} 运行节点
         </button>
       </div>
@@ -2801,6 +2835,7 @@ function NodeRunStartPanel({
           <select value={inputSource || "generated-fixture"} onChange={(event) => setInputSource(event.target.value as NodeRunCreateInput["inputSource"])}>
             <option value="generated-fixture">默认示例输入</option>
             <option value="existing-run">历史 Workflow Run</option>
+            <option value="existing-node-run">上游 Node Run</option>
             <option value="manual">手动输入</option>
             <option value="deepseek-mock">DeepSeek 模拟输入</option>
           </select>
@@ -2811,6 +2846,16 @@ function NodeRunStartPanel({
               <option value="">选择历史 Workflow Run</option>
               {runs.map((run) => <option key={run.pipelineId} value={run.pipelineId}>{run.pipelineId} · {run.status}</option>)}
             </select>
+          </label>
+        ) : null}
+        {inputSource === "existing-node-run" ? (
+          <label>Source Node Run
+            <input
+              value={sourceNodeRunId}
+              onChange={(event) => setSourceNodeRunId(event.target.value)}
+              placeholder="node-run-youtube-deep-research-..."
+              autoComplete="off"
+            />
           </label>
         ) : null}
         {inputSource === "manual" ? inputFields.map(([name, spec]) => (

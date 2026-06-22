@@ -494,7 +494,7 @@ export interface NodeTestInput {
   dryRun?: boolean;
 }
 
-export type NodeTestInputSource = "existing-run" | "generated-fixture" | "manual" | "deepseek-mock";
+export type NodeTestInputSource = "existing-run" | "existing-node-run" | "generated-fixture" | "manual" | "deepseek-mock";
 
 export interface NodeTestPlanInputState {
   name: string;
@@ -590,6 +590,7 @@ export interface NodeRunCreateInput {
   mode?: NodeRunMode;
   inputSource?: NodeRunInputSource;
   pipelineId?: string;
+  sourceNodeRunId?: string;
   manualInputs?: Record<string, unknown>;
   overrides?: Record<string, unknown>;
   capabilityOverrides?: Record<string, unknown>;

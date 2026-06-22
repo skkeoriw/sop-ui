@@ -1413,6 +1413,7 @@ export const sopProvider: SopDataProvider = {
       mode: input.mode || "real-node",
       input_source: input.inputSource || "generated-fixture",
       pipeline_id: input.pipelineId || "",
+      source_node_run_id: input.sourceNodeRunId || "",
       manual_inputs: input.manualInputs || {},
       overrides: input.overrides || {},
       capability_overrides: input.capabilityOverrides || {},
