@@ -1088,18 +1088,33 @@ function nodeInputReferencesNode(spec: unknown, nodeId: string) {
   return source === nodeId || source.startsWith(`${nodeId}.`) || source.includes(`${nodeId}.outputs.`);
 }
 
-function findRelayTargetNode(nodes: NodeRegistryItem[], currentNodeId: string) {
-  if (!currentNodeId) return undefined;
-  const candidates = nodes
+type NodeRelayTarget = {
+  node: NodeRegistryItem;
+  recommended: boolean;
+  reason: string;
+};
+
+function nodeRelayReason(node: NodeRegistryItem, currentNodeId: string) {
+  if ((node.needs || []).includes(currentNodeId)) return "来自 workflow 依赖关系";
+  const inputSpecs = [
+    ...Object.values(node.inputs || {}),
+    ...Object.values(node.optionalInputs || {}),
+  ];
+  if (inputSpecs.some((spec) => nodeInputReferencesNode(spec, currentNodeId))) return "输入引用了当前节点输出";
+  return "";
+}
+
+function buildRelayTargetNodes(nodes: NodeRegistryItem[], currentNodeId: string): NodeRelayTarget[] {
+  if (!currentNodeId) return [];
+  return nodes
     .filter((item) => item.nodeId !== currentNodeId)
-    .sort((left, right) => nodeDefinitionOrder(left) - nodeDefinitionOrder(right));
-  return candidates.find((item) => (item.needs || []).includes(currentNodeId))
-    || candidates.find((item) => {
-      const inputSpecs = [
-        ...Object.values(item.inputs || {}),
-        ...Object.values(item.optionalInputs || {}),
-      ];
-      return inputSpecs.some((spec) => nodeInputReferencesNode(spec, currentNodeId));
+    .map((item) => {
+      const reason = nodeRelayReason(item, currentNodeId);
+      return { node: item, recommended: Boolean(reason), reason: reason || "手动选择接力目标" };
+    })
+    .sort((left, right) => {
+      if (left.recommended !== right.recommended) return left.recommended ? -1 : 1;
+      return nodeDefinitionOrder(left.node) - nodeDefinitionOrder(right.node);
     });
 }
 
@@ -3380,7 +3395,7 @@ function NodeRunDetailPage({
   onOpenNode,
   onOpenNodeRuns,
   onOpenNodeRun,
-  relayNode,
+  relayTargets,
   onRelayNodeRun,
   onOpenSettings,
 }: {
@@ -3395,7 +3410,7 @@ function NodeRunDetailPage({
   onOpenNode: (nodeId: string) => void;
   onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
-  relayNode?: NodeRegistryItem;
+  relayTargets: NodeRelayTarget[];
   onRelayNodeRun: (nodeId: string, sourceNodeRunId: string) => void;
   onOpenSettings: () => void;
 }) {
@@ -3405,7 +3420,23 @@ function NodeRunDetailPage({
   const localizedSteps = (result?.steps || []).map((step) => localizedNodeRunStep(step, result?.nodeId));
   const current = currentNodeRunStep({ ...result, steps: localizedSteps });
   const [selectedStepId, setSelectedStepId] = useState(() => readSearchParam("step"));
+  const [relayOpen, setRelayOpen] = useState(false);
+  const [relaySearch, setRelaySearch] = useState("");
   const stepKey = (result?.steps || []).map((step) => step.id).join("|");
+  const filteredRelayTargets = useMemo(() => {
+    const needle = relaySearch.trim().toLowerCase();
+    if (!needle) return relayTargets;
+    return relayTargets.filter((item) => {
+      const haystack = [
+        item.node.nodeId,
+        item.node.title,
+        item.node.description,
+        item.reason,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [relaySearch, relayTargets]);
+  const recommendedRelayCount = relayTargets.filter((item) => item.recommended).length;
   useEffect(() => {
     removeSearchParams(["test_source", "test_run"], "replace");
   }, [selectedNodeRunId]);
@@ -3456,9 +3487,9 @@ function NodeRunDetailPage({
           <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>返回节点</button>
           <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>运行列表</button>
           <button type="button" className="btn" onClick={copyLink}><Copy size={13} />复制链接</button>
-          {result?.status === "done" && relayNode ? (
-            <button type="button" className="btn primary" onClick={() => onRelayNodeRun(relayNode.nodeId, result.nodeRunId)}>
-              <Play size={13} />接力 {relayNode.title || relayNode.nodeId}
+          {result?.status === "done" && relayTargets.length ? (
+            <button type="button" className="btn primary" onClick={() => setRelayOpen(true)}>
+              <Play size={13} />接力到节点
             </button>
           ) : null}
           {result ? <button type="button" className="btn" onClick={() => controller.startNodeRun(result.nodeRunId)}><RefreshCw size={13} />重试</button> : null}
@@ -3476,6 +3507,49 @@ function NodeRunDetailPage({
               <p>{result?.reason || current?.summary || "通过执行流程、事件和产物检查这次节点运行。"}</p>
             </section>
           </div>
+          {relayOpen && result ? (
+            <div className="modal-backdrop" role="presentation" onClick={() => setRelayOpen(false)}>
+              <section className="trigger-modal node-relay-modal" role="dialog" aria-modal="true" aria-label="Relay node run" onClick={(event) => event.stopPropagation()}>
+                <div className="modal-head">
+                  <div>
+                    <h2>接力到节点</h2>
+                    <span>{result.nodeRunId} 的 outputs/files 会作为目标节点输入</span>
+                  </div>
+                  <button type="button" className="ghost-btn" onClick={() => setRelayOpen(false)}><X size={16} />关闭</button>
+                </div>
+                <label className="node-relay-search">
+                  <span>选择目标 Node</span>
+                  <input value={relaySearch} onChange={(event) => setRelaySearch(event.target.value)} placeholder="搜索节点名称、ID 或说明" />
+                </label>
+                <div className="node-relay-summary">
+                  <span>{recommendedRelayCount} 个推荐节点</span>
+                  <span>{relayTargets.length} 个可选节点</span>
+                </div>
+                <div className="node-relay-list">
+                  {filteredRelayTargets.map((item) => (
+                    <button
+                      key={item.node.nodeId}
+                      type="button"
+                      className={`node-relay-row ${item.recommended ? "recommended" : ""}`}
+                      onClick={() => onRelayNodeRun(item.node.nodeId, result.nodeRunId)}
+                    >
+                      <span className="stage-letter">{item.node.ui?.stageLetter || item.node.nodeId.slice(0, 1).toUpperCase()}</span>
+                      <span>
+                        <strong>{item.node.title || item.node.nodeId}</strong>
+                        <small>{item.node.nodeId}</small>
+                        <small>{item.node.description || contractSummary(item.node)}</small>
+                      </span>
+                      <span>
+                        <em>{item.reason}</em>
+                        <b className={`status-pill ${item.recommended ? "done" : "waiting"}`}>{item.recommended ? "推荐" : "可选"}</b>
+                      </span>
+                    </button>
+                  ))}
+                  {!filteredRelayTargets.length ? <Empty text="没有匹配的节点" /> : null}
+                </div>
+              </section>
+            </div>
+          ) : null}
           <div className="node-run-detail-grid-page">
             <section className="node-run-workspace-main">
               <section className="node-run-flow-panel">
@@ -9197,7 +9271,7 @@ function NodesWorkspace({
   const isRouteNode = Boolean(routeNodeId && selectedNode);
   const isNodeRunDetailRoute = Boolean(isRouteNode && selectedNodeRunId);
   const isNodeRunsRoute = Boolean(isRouteNode && nodeRunList && !selectedNodeRunId);
-  const relayNode = selectedNode ? findRelayTargetNode(nodes, selectedNode.nodeId) : undefined;
+  const relayTargets = selectedNode ? buildRelayTargetNodes(nodes, selectedNode.nodeId) : [];
 
   useEffect(() => {
     if (isRouteNode && !isNodeRunDetailRoute) removeSearchParams(["step"], "replace");
@@ -9371,7 +9445,7 @@ function NodesWorkspace({
           onOpenNode={onSelectNode}
           onOpenNodeRuns={onOpenNodeRuns}
           onOpenNodeRun={onOpenNodeRun}
-          relayNode={relayNode}
+          relayTargets={relayTargets}
           onRelayNodeRun={onRelayNodeRun}
           onOpenSettings={onOpenSettings}
         />

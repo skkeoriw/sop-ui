@@ -4423,6 +4423,95 @@ pre {
   color: var(--amber);
 }
 
+.node-relay-modal {
+  width: min(760px, 100%);
+  max-height: min(82vh, 760px);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.node-relay-search input {
+  min-width: 0;
+  width: 100%;
+}
+
+.node-relay-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-relay-summary span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+}
+
+.node-relay-list {
+  min-height: 0;
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.node-relay-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.node-relay-row:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.node-relay-row.recommended {
+  border-color: rgba(20, 184, 166, .45);
+  background: rgba(20, 184, 166, .06);
+}
+
+.node-relay-row > span:nth-child(2),
+.node-relay-row > span:nth-child(3) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.node-relay-row strong,
+.node-relay-row small,
+.node-relay-row em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-relay-row small,
+.node-relay-row em {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-relay-row em {
+  font-style: normal;
+}
+
+.node-relay-row > span:nth-child(3) {
+  justify-items: end;
+}
+
 .confirm-row input {
   width: 16px;
   min-height: 16px;
@@ -10137,6 +10226,16 @@ pre {
   .node-run-table-row .btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .node-relay-row {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .node-relay-row > span:nth-child(3) {
+    grid-column: 1 / -1;
+    justify-items: start;
   }
 
   .node-page-header h1,
