@@ -632,6 +632,11 @@ function mapNodeTestPlanInput(raw: Record<string, unknown>) {
     value: raw.value,
     provenance: raw.provenance ? String(raw.provenance) : undefined,
     reason: raw.reason ? String(raw.reason) : undefined,
+    resolutionState: raw.resolution_state ? String(raw.resolution_state) : raw.resolutionState ? String(raw.resolutionState) : undefined,
+    sourceNodeRunId: raw.source_node_run_id ? String(raw.source_node_run_id) : raw.sourceNodeRunId ? String(raw.sourceNodeRunId) : undefined,
+    sourceOutput: raw.source_output ? String(raw.source_output) : raw.sourceOutput ? String(raw.sourceOutput) : undefined,
+    sourceNode: raw.source_node ? String(raw.source_node) : raw.sourceNode ? String(raw.sourceNode) : undefined,
+    targetInput: raw.target_input ? String(raw.target_input) : raw.targetInput ? String(raw.targetInput) : undefined,
   };
 }
 
@@ -648,6 +653,7 @@ function mapNodeTestPlan(raw: Record<string, unknown>): NodeTestPlan {
     requiredInputs: ((raw.required_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
     optionalInputs: ((raw.optional_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
     resolvedInputs: ((raw.resolved_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
+    pendingMaterializationInputs: ((raw.pending_materialization_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
     missingInputs: ((raw.missing_inputs as Array<Record<string, unknown>>) || []).map(mapNodeTestPlanInput),
     upstreamNodes: (raw.upstream_nodes as Array<Record<string, unknown>>) || [],
     availableExistingRuns: (raw.available_existing_runs as Array<Record<string, unknown>>) || [],

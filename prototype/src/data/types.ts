@@ -505,6 +505,11 @@ export interface NodeTestPlanInputState {
   value?: unknown;
   provenance?: string;
   reason?: string;
+  resolutionState?: string;
+  sourceNodeRunId?: string;
+  sourceOutput?: string;
+  sourceNode?: string;
+  targetInput?: string;
 }
 
 export interface NodeTestPlan {
@@ -519,6 +524,7 @@ export interface NodeTestPlan {
   requiredInputs?: NodeTestPlanInputState[];
   optionalInputs?: NodeTestPlanInputState[];
   resolvedInputs?: NodeTestPlanInputState[];
+  pendingMaterializationInputs?: NodeTestPlanInputState[];
   missingInputs?: NodeTestPlanInputState[];
   upstreamNodes?: Array<Record<string, unknown>>;
   availableExistingRuns?: Array<Record<string, unknown>>;
@@ -777,6 +783,11 @@ export interface NodeDraftInput {
   description?: string;
   mode?: string;
   needs?: string[] | string;
+  executor?: Record<string, unknown>;
+  skill?: string;
+  entry?: string;
+  agent?: string;
+  webhook_route?: string;
   upstream?: string;
   upstream_output?: string;
   input_name?: string;

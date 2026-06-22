@@ -96,6 +96,11 @@ type NodeDefinitionEditInput = {
   description: string;
   mode: string;
   needs: string;
+  executor: string;
+  skill: string;
+  entry: string;
+  agent: string;
+  webhookRoute: string;
   inputs: string;
   optionalInputs: string;
   outputs: string;
@@ -602,9 +607,9 @@ function fallbackNodeModules(node: NodeRegistryItem | undefined, runScoped: bool
     ["basic", "Basic", "节点身份、分类和发布状态", node.title || node.nodeId],
     ["executor", "Executor", "执行器、Agent、Webhook 和操作入口", String(node.executor?.type || node.case || "node")],
     ["skill", "Skill", "节点背后的 Skill 安装、说明和来源", String(node.skill?.id || node.executor?.skill || "skill")],
-    ["inputs", "Inputs", "输入契约和当前 Run 的 resolved inputs", `${Object.keys(node.inputs || {}).length} inputs`],
-    ["outputs", "Outputs", "输出契约、实际输出和校验结果", `${Object.keys(node.outputs || {}).length} outputs`],
-    ["artifacts", "Artifacts", "当前 Run 的记录产物和候选产物", "run-scoped artifacts"],
+    ["inputs", "Inputs", "节点定义声明的输入契约；运行态解析只在 Node Run Detail 展示", `${Object.keys(node.inputs || {}).length} inputs`],
+    ["outputs", "Outputs", "节点定义声明的输出契约；实际产物只在 Node Run Detail 展示", `${Object.keys(node.outputs || {}).length} outputs`],
+    ["artifacts", "Artifacts", "运行记录和候选产物入口；具体文件在 Node Run Detail 展示", "run-scoped artifacts"],
     ["capabilities", "Capabilities", "Git、TG、SSE 和日志附属能力", "git / telegram / sse"],
     ["runtime", "Runtime State", "节点运行状态、进度、耗时和错误", runScoped ? "current run" : "waiting for run"],
     ["actions", "Actions", "Inspect、Retry、Cancel、Validate 和 Publish", "inspect / retry / cancel"],
@@ -666,6 +671,7 @@ function planFromResult(result: NodeTestRunResult | null): NodeTestPlan | null {
     requiredInputs: (detail.required_inputs as NodeTestPlanInputState[]) || [],
     optionalInputs: (detail.optional_inputs as NodeTestPlanInputState[]) || [],
     resolvedInputs: (detail.resolved_inputs as NodeTestPlanInputState[]) || [],
+    pendingMaterializationInputs: (detail.pending_materialization_inputs as NodeTestPlanInputState[]) || [],
     missingInputs: (detail.missing_inputs as NodeTestPlanInputState[]) || [],
     upstreamNodes: (detail.upstream_nodes as Array<Record<string, unknown>>) || [],
     availableExistingRuns: (detail.available_existing_runs as Array<Record<string, unknown>>) || [],
@@ -679,8 +685,12 @@ function renderInputRows(items: NodeTestPlanInputState[] | undefined, empty: str
   return (
     <div className="node-test-detail">
       {items.map((item) => (
-        <span key={`${item.name}-${item.source || ""}`} className={`kv ${item.resolved ? "good" : "bad"}`}>
-          {item.name}: {item.resolved ? String(item.value ?? "").slice(0, 80) : item.reason || "missing"}
+        <span key={`${item.name}-${item.source || item.sourceNodeRunId || ""}`} className={`kv ${item.resolved ? "good" : item.resolutionState === "pending_materialization" ? "warn" : "bad"}`}>
+          {item.name}: {item.resolved
+            ? String(item.value ?? "").slice(0, 80)
+            : item.resolutionState === "pending_materialization"
+              ? `等待接力物化校验${item.sourceNodeRunId ? ` · ${item.sourceNodeRunId}` : ""}${item.sourceOutput ? ` · ${item.sourceOutput}` : ""}`
+              : item.reason || "missing"}
         </span>
       ))}
     </div>
@@ -688,7 +698,7 @@ function renderInputRows(items: NodeTestPlanInputState[] | undefined, empty: str
 }
 
 function isNodeTestInputSource(value: string): value is NonNullable<NodeTestPlan["inputSource"]> {
-  return ["existing-run", "generated-fixture", "manual", "deepseek-mock"].includes(value);
+  return ["existing-run", "existing-node-run", "generated-fixture", "manual", "deepseek-mock"].includes(value);
 }
 
 function readNodeTestRouteDefaults(runId?: string): { inputSource: NonNullable<NodeTestPlan["inputSource"]>; runId: string } {
@@ -889,6 +899,7 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
   if (!plan) return <div className="node-test-panel muted">该节点暂未暴露验证计划。</div>;
   const missingCount = plan.missingInputs?.length || 0;
   const resolvedCount = plan.resolvedInputs?.length || 0;
+  const pendingCount = plan.pendingMaterializationInputs?.length || 0;
   const availableRuns = plan.availableExistingRuns || [];
   const sideEffects = plan.sideEffects || {};
   const requiredInputs = plan.requiredInputs || [];
@@ -901,6 +912,7 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
           {missingCount ? `${missingCount} missing input` : "preflight ready"}
         </span>
         <span className="pill">resolved {resolvedCount}</span>
+        {pendingCount ? <span className="pill dep-artifact_dependent">pending relay {pendingCount}</span> : null}
         {sideEffects.external_api ? <span className="pill side-mutating">external API</span> : null}
         {sideEffects.telegram ? <span className="pill side-mutating">TG possible</span> : null}
         {sideEffects.real_execution_enabled === false ? <span className="pill side-read_only">dry-run only</span> : null}
@@ -957,6 +969,12 @@ function NodeTestPanel({ provider, runtime, instanceId, mode, nodeId, runs, runI
       {inputSource === "existing-run" && !seedRunId ? <span className="node-test-hint">选择历史 Run 后再验证上游输出。</span> : null}
       <div className="node-test-pre">Required Inputs</div>
       {renderInputRows(plan.requiredInputs, "该节点没有声明必需输入。")}
+      {plan.pendingMaterializationInputs?.length ? (
+        <>
+          <div className="node-test-pre">Relay Candidates</div>
+          {renderInputRows(plan.pendingMaterializationInputs, "没有等待物化的接力候选。")}
+        </>
+      ) : null}
       {plan.optionalInputs?.length ? (
         <>
           <div className="node-test-pre">Optional Inputs</div>
@@ -2475,6 +2493,9 @@ function NodeRunInputArtifactsSummary({
   const resolvedInputs = detailList(stepDetail.resolved_inputs).length
     ? detailList(stepDetail.resolved_inputs)
     : detailList(detailRecord(result?.detail).resolved_inputs);
+  const pendingInputs = detailList(stepDetail.pending_materialization_inputs).length
+    ? detailList(stepDetail.pending_materialization_inputs)
+    : detailList(detailRecord(result?.detail).pending_materialization_inputs);
   const missingInputs = detailList(stepDetail.missing_inputs).length
     ? detailList(stepDetail.missing_inputs)
     : detailList(detailRecord(result?.detail).missing_inputs);
@@ -2505,6 +2526,23 @@ function NodeRunInputArtifactsSummary({
               })}
             </div>
           ) : null}
+        </div>
+      ) : null}
+      {pendingInputs.length ? (
+        <div className="node-run-input-resolved-list">
+          <div className="section-title"><span>接力候选</span><span>{pendingInputs.length} pending materialization</span></div>
+          {pendingInputs.map((item) => (
+            <article key={`${String(item.name)}-${String(item.source_node_run_id || item.provenance || "")}`} className="node-run-input-resolved-card">
+              <div>
+                <strong>{String(item.name || item.target_input || "input")}</strong>
+                <span className="status-pill waiting">pending</span>
+              </div>
+              <code>{String(item.value || item.provenance || "-")}</code>
+              {item.source ? <small>定义来源：{String(item.source)}</small> : null}
+              {item.source_node_run_id ? <small>上游 Node Run：{String(item.source_node_run_id)}</small> : null}
+              {item.reason ? <small>{String(item.reason)}</small> : null}
+            </article>
+          ))}
         </div>
       ) : null}
       {resolvedInputs.length || missingInputs.length ? (
@@ -10064,6 +10102,11 @@ function NodesWorkspace({
     description: "",
     mode: "",
     needs: "",
+    executor: "{}",
+    skill: "",
+    entry: "",
+    agent: "",
+    webhookRoute: "",
     inputs: "{}",
     optionalInputs: "{}",
     outputs: "{}",
@@ -10083,6 +10126,11 @@ function NodesWorkspace({
         description: definitionEditInput.description,
         mode: definitionEditInput.mode,
         needs: definitionEditInput.needs.split(",").map((item) => item.trim()).filter(Boolean),
+        executor: parseEditorObject("Executor", definitionEditInput.executor),
+        skill: definitionEditInput.skill,
+        entry: definitionEditInput.entry,
+        agent: definitionEditInput.agent,
+        webhook_route: definitionEditInput.webhookRoute,
         inputs: parseEditorObject("Inputs", definitionEditInput.inputs),
         optional_inputs: parseEditorObject("Optional Inputs", definitionEditInput.optionalInputs),
         outputs: parseEditorObject("Outputs", definitionEditInput.outputs),
@@ -10113,6 +10161,11 @@ function NodesWorkspace({
       description: node.description || node.purpose || "",
       mode: node.mode || "blocking",
       needs: (node.needs || []).join(", "),
+      executor: formatJsonForEditor(node.executor || {}),
+      skill: String((node.skill || {}).id || node.executor?.skill || ""),
+      entry: String(node.executor?.entry || ""),
+      agent: String(node.executor?.agent || ""),
+      webhookRoute: String(node.executor?.webhook_route || node.executor?.webhookRoute || ""),
       inputs: formatJsonForEditor(node.inputs || {}),
       optionalInputs: formatJsonForEditor(node.optionalInputs || {}),
       outputs: formatJsonForEditor(node.outputs || {}),
@@ -10135,6 +10188,7 @@ function NodesWorkspace({
       parseEditorObject("Optional Inputs", definitionEditInput.optionalInputs);
       parseEditorObject("Outputs", definitionEditInput.outputs);
       parseEditorObject("Capabilities", definitionEditInput.capabilities);
+      parseEditorObject("Executor", definitionEditInput.executor);
     } catch (error) {
       setDefinitionEditError(String((error as Error).message || error));
       return;
@@ -10733,6 +10787,17 @@ function NodeDefinitionEditorDrawer({
               <label>Needs<input value={input.needs} onChange={(event) => setInput({ ...input, needs: event.target.value })} placeholder="youtube-fetch, notebooklm-research" /></label>
             </div>
             <label>Description<textarea value={input.description} onChange={(event) => setInput({ ...input, description: event.target.value })} /></label>
+          </section>
+          <section className="definition-editor-section">
+            <div className="section-title"><span>Executor / Skill Binding</span><span>agent-skill</span></div>
+            <div className="draft-grid">
+              <label>Skill<input value={input.skill} onChange={(event) => setInput({ ...input, skill: event.target.value })} placeholder="sop-wiki-build" /></label>
+              <label>Entry<input value={input.entry} onChange={(event) => setInput({ ...input, entry: event.target.value })} placeholder="scripts/run_wiki_build.sh" /></label>
+              <label>Agent<input value={input.agent} onChange={(event) => setInput({ ...input, agent: event.target.value })} placeholder="hermes" /></label>
+              <label>Webhook Route<input value={input.webhookRoute} onChange={(event) => setInput({ ...input, webhookRoute: event.target.value })} placeholder="sop-wiki-build" /></label>
+            </div>
+            <textarea className="definition-json-editor compact" value={input.executor} onChange={(event) => setInput({ ...input, executor: event.target.value })} spellCheck={false} />
+            <small className="field-hint">这些字段属于节点定义草稿，保存目标是 agent-brain-plugins，不是 Runtime 运行配置。</small>
           </section>
           <section className="definition-editor-section">
             <div className="section-title"><span>Inputs Contract</span><span>required / accepts / resolvers</span></div>
