@@ -1306,14 +1306,17 @@ function detailRecord(value: unknown): Record<string, unknown> {
 
 function nodeRunBusinessArtifacts(result?: NodeRunResult): Artifact[] {
   const business = result?.businessArtifacts || [];
-  const all = result?.artifacts || [];
-  const diagnostics = new Set(["node-run.result", "node-test.result"]);
-  const fallback = all.filter((artifact) => !diagnostics.has(artifact.type));
-  return business.length ? business : fallback;
+  if (business.length) return business;
+  const coreArtifacts = (result?.coreOutputs || []).flatMap((output) => output.artifacts || []);
+  if (coreArtifacts.length) return coreArtifacts;
+  const actualPaths = new Set(nodeRunActualOutputPaths(result).filter((path) => !path.includes("://")));
+  return (result?.artifacts || []).filter((artifact) => actualPaths.has(artifact.path));
 }
 
 function nodeRunDiagnosticArtifacts(result?: NodeRunResult): Artifact[] {
   const businessIds = new Set(nodeRunBusinessArtifacts(result).map((artifact) => artifact.id || artifact.path));
+  const evidence = result?.executionEvidence?.artifacts || [];
+  if (evidence.length) return evidence.filter((artifact) => !businessIds.has(artifact.id || artifact.path));
   return (result?.artifacts || []).filter((artifact) => !businessIds.has(artifact.id || artifact.path));
 }
 
@@ -2115,6 +2118,88 @@ function nodeRunStringArray(value: unknown) {
   return Array.isArray(value) ? value.map(String).filter(Boolean) : [];
 }
 
+function nodeRunCoreOutputRows(result?: NodeRunResult) {
+  if (result?.coreOutputs?.length) return result.coreOutputs;
+  return Object.entries(result?.actualOutputs || {}).map(([name, value]) => ({
+    name,
+    kind: Array.isArray(value) ? "files" : "scalar",
+    value,
+    files: Array.isArray(value) ? value.map(String).filter(Boolean) : [],
+    artifacts: [],
+    declared: {},
+  }));
+}
+
+function NodeRunCoreOutputsSummary({ result }: { result: NodeRunResult | undefined }) {
+  const outputs = nodeRunCoreOutputRows(result);
+  if (!outputs.length) return <Empty text="没有核心输出记录" />;
+  return (
+    <div className="node-run-core-output-list">
+      {outputs.map((output) => {
+        const files = output.files || [];
+        const artifacts = output.artifacts || [];
+        const isScalar = !files.length;
+        return (
+          <article key={output.name} className="node-run-core-output-card">
+            <div>
+              <strong>{output.name}</strong>
+              <span className="status-pill done">{output.kind || (isScalar ? "scalar" : "file")}</span>
+            </div>
+            {isScalar ? (
+              <code>{nodeRunOutputValue(output.value)}</code>
+            ) : (
+              <div className="node-run-core-output-files">
+                {files.map((file) => <code key={file}>{file}</code>)}
+              </div>
+            )}
+            {artifacts.length ? <ArtifactList artifacts={artifacts} /> : null}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function NodeRunRelayPackageSummary({ result }: { result: NodeRunResult | undefined }) {
+  const relay = result?.relayPackage;
+  const items = relay?.items || [];
+  if (!relay?.manifestPath && !items.length) return <Empty text="没有接力包记录" />;
+  return (
+    <div className="node-run-relay-package">
+      <div className="node-run-step-meta-grid">
+        <span><b>输出目录</b>{relay?.outputDirectory || "-"}</span>
+        <span><b>Manifest</b>{relay?.manifestPath || "-"}</span>
+        <span><b>可接力输出</b>{items.length}</span>
+      </div>
+      <div className="node-run-relay-item-list">
+        {items.map((item) => (
+          <article key={`${item.output}-${item.path}`} className="node-run-relay-item">
+            <div>
+              <strong>{item.output || pathBasename(item.path)}</strong>
+              <span className="status-pill waiting">{item.valueType || "file"}</span>
+            </div>
+            <code>{item.path}</code>
+            {item.sourcePath ? <small>来源：{item.sourcePath}</small> : null}
+            {item.artifact?.preview ? (
+              <details className="node-run-input-preview">
+                <summary><span>查看内容</span><ChevronDown size={14} /></summary>
+                <pre>{item.artifact.preview}</pre>
+              </details>
+            ) : null}
+          </article>
+        ))}
+      </div>
+      {!items.length ? <div className="node-run-empty">Manifest 中没有可接力 item。</div> : null}
+    </div>
+  );
+}
+
+function NodeRunExecutionEvidenceSummary({ result }: { result: NodeRunResult | undefined }) {
+  const artifacts = nodeRunDiagnosticArtifacts(result);
+  if (!artifacts.length) return <Empty text="没有执行证据文件" />;
+  return <ArtifactList artifacts={artifacts} />;
+}
+
 function NodeRunOutputValidationSummary({
   result,
   step,
@@ -2143,7 +2228,6 @@ function NodeRunOutputValidationSummary({
   const unexpected = nodeRunStringArray(validation.unexpected_outputs);
   const declaredEntries = Object.entries(declaredOutputs);
   const actualEntries = Object.entries(actualOutputs || {});
-  const outputCategories = nodeRunOutputCategories(result);
   return (
     <div className="node-run-validation-summary">
       <div className="section-title"><span>输出校验摘要</span><span>{String(validation.status || step?.status || "unknown")}</span></div>
@@ -2153,11 +2237,11 @@ function NodeRunOutputValidationSummary({
         <span><b>缺失</b>{missing.length}</span>
         <span><b>多余</b>{unexpected.length}</span>
       </div>
-      <div className="node-run-output-category-list">
-        {outputCategories.map((category) => (
-          <CapabilityFileList key={category.key} title={category.title} files={category.files} max={5} />
-        ))}
-      </div>
+      <NodeRunCoreOutputsSummary result={result} />
+      <details className="node-run-step-raw">
+        <summary><span>接力包</span><ChevronDown size={14} /></summary>
+        <NodeRunRelayPackageSummary result={result} />
+      </details>
       <div className="node-run-output-grid">
         {declaredEntries.map(([name, spec]) => {
           const isMissing = missing.includes(name);
@@ -2224,8 +2308,39 @@ function NodeRunInputArtifactsSummary({
   const stepDetail = detailRecord(step?.detail);
   const inputManifest = String(stepDetail.input_manifest || result?.detail?.input_manifest || "");
   const inputDirectory = String(stepDetail.input_directory || result?.detail?.input_directory || "");
+  const resolvedInputs = detailList(stepDetail.resolved_inputs).length
+    ? detailList(stepDetail.resolved_inputs)
+    : detailList(detailRecord(result?.detail).resolved_inputs);
+  const missingInputs = detailList(stepDetail.missing_inputs).length
+    ? detailList(stepDetail.missing_inputs)
+    : detailList(detailRecord(result?.detail).missing_inputs);
   return (
     <div className="node-run-input-artifacts">
+      {resolvedInputs.length || missingInputs.length ? (
+        <div className="node-run-input-resolved-list">
+          <div className="section-title"><span>解析结果</span><span>{resolvedInputs.length} resolved · {missingInputs.length} missing</span></div>
+          {resolvedInputs.map((item) => (
+            <article key={`${String(item.name)}-${String(item.provenance || "")}`} className="node-run-input-resolved-card">
+              <div>
+                <strong>{String(item.name || "input")}</strong>
+                <span className="status-pill done">{String(item.provenance || "resolved")}</span>
+              </div>
+              <code>{nodeRunOutputValue(item.value)}</code>
+              {item.source ? <small>定义来源：{String(item.source)}</small> : null}
+              {item.source_node_run_id ? <small>上游 Node Run：{String(item.source_node_run_id)}</small> : null}
+            </article>
+          ))}
+          {missingInputs.map((item) => (
+            <article key={`${String(item.name)}-missing`} className="node-run-input-resolved-card err">
+              <div>
+                <strong>{String(item.name || "input")}</strong>
+                <span className="status-pill failed">missing</span>
+              </div>
+              <small>{String(item.reason || "没有解析到输入")}</small>
+            </article>
+          ))}
+        </div>
+      ) : null}
       <div className="section-title"><span>实际输入产物</span><span>{artifacts.length}</span></div>
       {inputDirectory || inputManifest ? (
         <div className="node-run-input-artifact-context">
@@ -3165,11 +3280,10 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
   const resolvedInputs = detailList(detail.resolved_inputs);
   const missingInputs = detailList(detail.missing_inputs);
   const visibleEvents = events.length ? events : result.events || [];
-  const businessArtifacts = nodeRunBusinessArtifacts(result);
+  const coreOutputs = nodeRunCoreOutputRows(result);
   const diagnosticArtifacts = nodeRunDiagnosticArtifacts(result);
   const actualOutputs = detailRecord(result.actualOutputs);
   const validation = detailRecord(result.validation);
-  const outputCategories = nodeRunOutputCategories(result);
   return (
     <section className="node-run-results-panel">
       <div className="node-run-results-tabs" role="tablist" aria-label="Node run result sections">
@@ -3216,8 +3330,8 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
           <div className="node-run-artifact-summary">
             <div>
               <span className={`status-pill ${nodeRunTone(String(validation.status || result.status || ""))}`}>{String(validation.status || result.status || "unknown")}</span>
-              <strong>{businessArtifacts.length} 个核心输出</strong>
-              <small>{Object.keys(actualOutputs).length ? Object.keys(actualOutputs).join(", ") : "暂无声明输出记录"}</small>
+              <strong>{coreOutputs.length} 个核心输出</strong>
+              <small>{coreOutputs.length ? coreOutputs.map((item) => item.name).join(", ") : "暂无声明输出记录"}</small>
             </div>
           </div>
           {Object.keys(actualOutputs).length ? (
@@ -3227,22 +3341,18 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
               ))}
             </div>
           ) : null}
-          <DetailBlock title={`核心输出 · ${businessArtifacts.length}`}>
-            <ArtifactList artifacts={businessArtifacts} />
+          <DetailBlock title={`核心输出 · ${coreOutputs.length}`}>
+            <NodeRunCoreOutputsSummary result={result} />
           </DetailBlock>
-          <DetailBlock title="输出分类">
-            <div className="node-run-output-category-list">
-              {outputCategories.map((category) => (
-                <CapabilityFileList key={category.key} title={category.title} files={category.files} max={6} />
-              ))}
-            </div>
+          <DetailBlock title={`接力包 · ${result.relayPackage?.items?.length || 0}`}>
+            <NodeRunRelayPackageSummary result={result} />
           </DetailBlock>
           {diagnosticArtifacts.length ? (
-            <DetailBlock title={`诊断产物 · ${diagnosticArtifacts.length}`}>
-              <ArtifactList artifacts={diagnosticArtifacts} />
+            <DetailBlock title={`执行证据 · ${diagnosticArtifacts.length}`}>
+              <NodeRunExecutionEvidenceSummary result={result} />
             </DetailBlock>
           ) : null}
-          {!businessArtifacts.length && !diagnosticArtifacts.length ? <Empty text="没有产物记录" /> : null}
+          {!coreOutputs.length && !diagnosticArtifacts.length ? <Empty text="没有产物记录" /> : null}
         </div>
       ) : null}
       {tab === "raw" ? (

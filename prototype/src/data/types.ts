@@ -649,6 +649,41 @@ export interface NodeRunIssue {
   relatedConfigKeys?: string[];
 }
 
+export interface NodeRunCoreOutput {
+  name: string;
+  kind?: string;
+  type?: string;
+  value?: unknown;
+  files?: string[];
+  artifacts?: Artifact[];
+  declared?: Record<string, unknown>;
+}
+
+export interface NodeRunRelayItem {
+  output: string;
+  path: string;
+  relativePath?: string;
+  valueType?: string;
+  source?: string;
+  sourceNode?: string;
+  sourceRunId?: string;
+  sourcePath?: string;
+  artifact?: Artifact;
+}
+
+export interface NodeRunRelayPackage {
+  kind?: string;
+  outputDirectory?: string;
+  manifestPath?: string;
+  itemCount?: number;
+  items?: NodeRunRelayItem[];
+}
+
+export interface NodeRunExecutionEvidence {
+  count?: number;
+  artifacts?: Artifact[];
+}
+
 export interface NodeRunResult {
   nodeRunId: string;
   pipelineId?: string;
@@ -674,6 +709,9 @@ export interface NodeRunResult {
   artifacts?: Artifact[];
   inputArtifacts?: Artifact[];
   businessArtifacts?: Artifact[];
+  coreOutputs?: NodeRunCoreOutput[];
+  relayPackage?: NodeRunRelayPackage;
+  executionEvidence?: NodeRunExecutionEvidence;
   actualOutputs?: Record<string, unknown>;
   outputCategories?: Record<string, unknown>;
   validation?: Record<string, unknown>;

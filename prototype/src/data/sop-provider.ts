@@ -408,6 +408,52 @@ function mapArtifact(artifact: Record<string, unknown>) {
   };
 }
 
+function mapNodeRunCoreOutput(raw: Record<string, unknown>) {
+  return {
+    name: String(raw.name || ""),
+    kind: raw.kind ? String(raw.kind) : undefined,
+    type: raw.type ? String(raw.type) : undefined,
+    value: raw.value,
+    files: Array.isArray(raw.files) ? raw.files.map(String).filter(Boolean) : [],
+    artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+    declared: (raw.declared as Record<string, unknown>) || {},
+  };
+}
+
+function mapNodeRunRelayItem(raw: Record<string, unknown>) {
+  const artifact = raw.artifact && typeof raw.artifact === "object" && !Array.isArray(raw.artifact)
+    ? mapArtifact(raw.artifact as Record<string, unknown>)
+    : undefined;
+  return {
+    output: String(raw.output || ""),
+    path: String(raw.path || ""),
+    relativePath: raw.relative_path ? String(raw.relative_path) : raw.relativePath ? String(raw.relativePath) : undefined,
+    valueType: raw.value_type ? String(raw.value_type) : raw.valueType ? String(raw.valueType) : undefined,
+    source: raw.source ? String(raw.source) : undefined,
+    sourceNode: raw.source_node ? String(raw.source_node) : raw.sourceNode ? String(raw.sourceNode) : undefined,
+    sourceRunId: raw.source_run_id ? String(raw.source_run_id) : raw.sourceRunId ? String(raw.sourceRunId) : undefined,
+    sourcePath: raw.source_path ? String(raw.source_path) : raw.sourcePath ? String(raw.sourcePath) : undefined,
+    artifact,
+  };
+}
+
+function mapNodeRunRelayPackage(raw: Record<string, unknown>) {
+  return {
+    kind: raw.kind ? String(raw.kind) : undefined,
+    outputDirectory: raw.output_directory ? String(raw.output_directory) : raw.outputDirectory ? String(raw.outputDirectory) : undefined,
+    manifestPath: raw.manifest_path ? String(raw.manifest_path) : raw.manifestPath ? String(raw.manifestPath) : undefined,
+    itemCount: typeof raw.item_count === "number" ? raw.item_count : typeof raw.itemCount === "number" ? raw.itemCount : undefined,
+    items: ((raw.items as Array<Record<string, unknown>>) || []).map(mapNodeRunRelayItem),
+  };
+}
+
+function mapNodeRunExecutionEvidence(raw: Record<string, unknown>) {
+  return {
+    count: typeof raw.count === "number" ? raw.count : undefined,
+    artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+  };
+}
+
 function mapNodeModule(raw: Record<string, unknown>): NodeModule {
   return {
     id: String(raw.id || ""),
@@ -795,6 +841,9 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     inputArtifacts: ((raw.input_artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     businessArtifacts: ((raw.business_artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+    coreOutputs: ((raw.core_outputs as Array<Record<string, unknown>>) || []).map(mapNodeRunCoreOutput),
+    relayPackage: mapNodeRunRelayPackage((raw.relay_package as Record<string, unknown>) || {}),
+    executionEvidence: mapNodeRunExecutionEvidence((raw.execution_evidence as Record<string, unknown>) || {}),
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
     outputCategories: (raw.output_categories as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
