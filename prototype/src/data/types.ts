@@ -587,6 +587,12 @@ export type NodeRunMode = "preflight" | "probe" | "dry-run" | "real-node";
 export type NodeRunInputSource = NodeTestInputSource | "artifact";
 export type NodeRunRelayMode = "auto_by_target_inputs" | "selected_outputs" | "all_outputs";
 
+export interface NodeRunRelayMapping {
+  sourceOutput: string;
+  targetInput?: string;
+  resolver?: string;
+}
+
 export interface NodeRunCreateInput {
   nodeRunId?: string;
   mode?: NodeRunMode;
@@ -595,6 +601,7 @@ export interface NodeRunCreateInput {
   sourceNodeRunId?: string;
   relayMode?: NodeRunRelayMode | string;
   selectedOutputs?: string[];
+  relayMappings?: NodeRunRelayMapping[];
   manualInputs?: Record<string, unknown>;
   overrides?: Record<string, unknown>;
   capabilityOverrides?: Record<string, unknown>;
@@ -702,6 +709,7 @@ export interface NodeRunResult {
   inputSource?: NodeRunInputSource | string;
   relayMode?: NodeRunRelayMode | string;
   selectedOutputs?: string[];
+  relayMappings?: NodeRunRelayMapping[];
   sourceNodeRunId?: string;
   relaySelection?: Record<string, unknown>;
   inputResolution?: Record<string, unknown>;

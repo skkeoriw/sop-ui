@@ -62,6 +62,7 @@ import type {
   NodeContract,
   NodeRunCreateInput,
   NodeRunEvent,
+  NodeRunRelayMapping,
   NodeRunMode,
   NodeRunRelayMode,
   NodeRunResult,
@@ -1099,6 +1100,7 @@ type NodeRelayTarget = {
 type NodeRelayOptions = {
   relayMode?: NodeRunRelayMode | string;
   selectedOutputs?: string[];
+  relayMappings?: NodeRunRelayMapping[];
 };
 
 function nodeRelayReason(node: NodeRegistryItem, currentNodeId: string) {
@@ -1156,6 +1158,87 @@ function nodeRunRelayModeHelp(mode?: string) {
   return "默认模式。根据目标节点 inputs 和当前 workflow 默认绑定自动选择匹配输出。";
 }
 
+function contractRecord(spec: unknown): Record<string, unknown> {
+  return spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+}
+
+function nodeInputContractRows(node: NodeRegistryItem | undefined) {
+  return [
+    ...Object.entries(node?.inputs || {}).map(([name, spec]) => ({ name, spec, required: true })),
+    ...Object.entries(node?.optionalInputs || {}).map(([name, spec]) => ({ name, spec, required: false })),
+  ];
+}
+
+function contractResolvers(spec: unknown): Array<{ id: string; label: string }> {
+  const record = contractRecord(spec);
+  const raw = Array.isArray(record.resolvers) ? record.resolvers : record.resolvers && typeof record.resolvers === "object" ? [record.resolvers] : [];
+  return raw.map((item) => {
+    if (typeof item === "string") return { id: item, label: item };
+    const row = contractRecord(item);
+    const id = String(row.id || row.name || row.kind || row.type || "").trim();
+    const label = String(row.label || row.title || row.path || row.pattern || id).trim();
+    return id ? { id, label } : null;
+  }).filter(Boolean) as Array<{ id: string; label: string }>;
+}
+
+function defaultTargetInputForOutput(targetNode: NodeRegistryItem | undefined, sourceOutput: string) {
+  const rows = nodeInputContractRows(targetNode);
+  if (!rows.length) return "";
+  const exact = rows.find((row) => row.name === sourceOutput);
+  if (exact) return exact.name;
+  const required = rows.filter((row) => row.required);
+  if (required.length === 1) return required[0].name;
+  return rows[0].name;
+}
+
+function normalizeRelayMappingsForTarget(
+  targetNode: NodeRegistryItem | undefined,
+  sourceOutputs: string[],
+  current: NodeRunRelayMapping[] = [],
+) {
+  const bySource = new Map(current.map((item) => [item.sourceOutput, item]));
+  const targetInputs = new Set(nodeInputContractRows(targetNode).map((row) => row.name));
+  return sourceOutputs.filter(Boolean).map((sourceOutput) => {
+    const existing = bySource.get(sourceOutput);
+    const targetInput = existing?.targetInput && targetInputs.has(existing.targetInput)
+      ? existing.targetInput
+      : defaultTargetInputForOutput(targetNode, sourceOutput);
+    const targetSpec = nodeInputContractRows(targetNode).find((row) => row.name === targetInput)?.spec;
+    const resolvers = contractResolvers(targetSpec);
+    return {
+      sourceOutput,
+      targetInput,
+      resolver: existing?.resolver || resolvers[0]?.id || "",
+    };
+  });
+}
+
+function encodeRelayMappings(mappings: NodeRunRelayMapping[] = []) {
+  const rows = mappings
+    .filter((item) => item.sourceOutput)
+    .map((item) => ({
+      sourceOutput: item.sourceOutput,
+      targetInput: item.targetInput || "",
+      resolver: item.resolver || "",
+    }));
+  return rows.length ? JSON.stringify(rows) : "";
+}
+
+function decodeRelayMappings(value: string | null): NodeRunRelayMapping[] {
+  if (!value) return [];
+  try {
+    const rows = JSON.parse(value);
+    if (!Array.isArray(rows)) return [];
+    return rows.map((item) => ({
+      sourceOutput: String(item.sourceOutput || item.source_output || "").trim(),
+      targetInput: String(item.targetInput || item.target_input || "").trim(),
+      resolver: String(item.resolver || "").trim(),
+    })).filter((item) => item.sourceOutput);
+  } catch {
+    return [];
+  }
+}
+
 function nodeOutputContractRows(node: NodeRegistryItem | undefined, fallback?: NodeRunResult) {
   const outputEntries = Object.entries(node?.outputs || {});
   if (outputEntries.length) {
@@ -1188,6 +1271,7 @@ function outputContractPath(spec: unknown) {
 function outputContractType(spec: unknown) {
   if (spec && typeof spec === "object") {
     const record = spec as Record<string, unknown>;
+    if (record.kind) return String(record.kind);
     if (record.shape) return String(record.shape);
     if (record.type) return String(record.type);
   }
@@ -1205,6 +1289,7 @@ function nodeRunInputPreviewRows(
   manualInputs: Record<string, string>,
   relayMode: string = "auto_by_target_inputs",
   selectedOutputs: string[] = [],
+  relayMappings: NodeRunRelayMapping[] = [],
 ) {
   const inputs = Object.entries(node?.inputs || {});
   if (!inputs.length) {
@@ -1230,13 +1315,16 @@ function nodeRunInputPreviewRows(
       };
     }
     if (inputSource === "existing-node-run") {
+      const mappingText = relayMappings.length
+        ? relayMappings.map((item) => `${item.sourceOutput} -> ${item.targetInput || "?"}${item.resolver ? ` · ${item.resolver}` : ""}`).join("; ")
+        : selectedOutputs.join(", ");
       return {
         key: name,
         name,
         value: sourceNodeRunId || "未指定上游 Node Run",
         source,
         logic: sourceNodeRunId
-          ? `${nodeRunRelayModeLabel(relayMode)}${selectedOutputs.length ? `：${selectedOutputs.join(", ")}` : ""}`
+          ? `${nodeRunRelayModeLabel(relayMode)}${mappingText ? `：${mappingText}` : ""}`
           : "需要指定一个已完成的上游 Node Run。",
         missing: !sourceNodeRunId,
       };
@@ -2930,6 +3018,7 @@ function useNodeRunController({
   const [sourceNodeRunId, setSourceNodeRunId] = useState("");
   const [relayMode, setRelayMode] = useState<NodeRunRelayMode>("auto_by_target_inputs");
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>([]);
+  const [relayMappings, setRelayMappings] = useState<NodeRunRelayMapping[]>([]);
   const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
   const [runtimeOverrides, setRuntimeOverrides] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
@@ -2963,7 +3052,10 @@ function useNodeRunController({
       setSourceNodeRunId(params.get("test_run") || "");
       const nextRelayMode = (params.get("relay_mode") || "auto_by_target_inputs") as NodeRunRelayMode;
       setRelayMode(["selected_outputs", "all_outputs", "auto_by_target_inputs"].includes(nextRelayMode) ? nextRelayMode : "auto_by_target_inputs");
-      setSelectedOutputs((params.get("relay_outputs") || "").split(",").map((item) => item.trim()).filter(Boolean));
+      const decodedMappings = decodeRelayMappings(params.get("relay_map"));
+      const outputs = (params.get("relay_outputs") || "").split(",").map((item) => item.trim()).filter(Boolean);
+      setSelectedOutputs(outputs.length ? outputs : decodedMappings.map((item) => item.sourceOutput).filter(Boolean));
+      setRelayMappings(decodedMappings);
     }
   }, [nodeId]);
 
@@ -3000,6 +3092,9 @@ function useNodeRunController({
   function startNodeRun(retryOf = "") {
     if (!runtime || !instance || !nodeId) return;
     const nodeRunId = makeNodeRunId(nodeId);
+    const effectiveRelayMappings = inputSource === "existing-node-run" && relayMode === "selected_outputs"
+      ? normalizeRelayMappingsForTarget(node, selectedOutputs, relayMappings)
+      : relayMappings;
     const payload: NodeRunCreateInput = {
       nodeRunId,
       mode: runMode,
@@ -3008,6 +3103,7 @@ function useNodeRunController({
       sourceNodeRunId: inputSource === "existing-node-run" ? sourceNodeRunId : undefined,
       relayMode: inputSource === "existing-node-run" ? relayMode : undefined,
       selectedOutputs: inputSource === "existing-node-run" ? selectedOutputs : undefined,
+      relayMappings: inputSource === "existing-node-run" ? effectiveRelayMappings : undefined,
       manualInputs,
       overrides: runtimeOverrides,
       capabilityOverrides: nodeRunCapabilityOverridePayload({
@@ -3059,6 +3155,8 @@ function useNodeRunController({
     setRelayMode,
     selectedOutputs,
     setSelectedOutputs,
+    relayMappings,
+    setRelayMappings,
     manualInputs,
     setManualInputs,
     runtimeOverrides,
@@ -3095,6 +3193,7 @@ function NodeRunInputPreview({ controller }: { controller: ReturnType<typeof use
     controller.manualInputs,
     controller.relayMode,
     controller.selectedOutputs,
+    controller.relayMappings,
   );
   return (
     <section className="node-run-input-preview">
@@ -3145,6 +3244,8 @@ function NodeRunStartPanel({
     setRelayMode,
     selectedOutputs,
     setSelectedOutputs,
+    relayMappings,
+    setRelayMappings,
     manualInputs,
     setManualInputs,
     gitEnabled,
@@ -3256,14 +3357,52 @@ function NodeRunStartPanel({
               </select>
             </label>
             {relayMode === "selected_outputs" ? (
-              <label>选择输出
-                <input
-                  value={selectedOutputs.join(",")}
-                  onChange={(event) => setSelectedOutputs(event.target.value.split(",").map((item) => item.trim()).filter(Boolean))}
-                  placeholder="source_url, analysis_file"
-                  autoComplete="off"
-                />
-              </label>
+              <>
+                <label>选择输出
+                  <input
+                    value={selectedOutputs.join(",")}
+                    onChange={(event) => {
+                      const outputs = event.target.value.split(",").map((item) => item.trim()).filter(Boolean);
+                      setSelectedOutputs(outputs);
+                      setRelayMappings(normalizeRelayMappingsForTarget(node, outputs, relayMappings));
+                    }}
+                    placeholder="source_url, analysis_file"
+                    autoComplete="off"
+                  />
+                </label>
+                {selectedOutputs.length ? (
+                  <div className="node-relay-inline-mapping">
+                    {normalizeRelayMappingsForTarget(node, selectedOutputs, relayMappings).map((mapping) => {
+                      const targetRows = nodeInputContractRows(node);
+                      const targetSpec = targetRows.find((row) => row.name === mapping.targetInput)?.spec;
+                      const resolvers = contractResolvers(targetSpec);
+                      return (
+                        <article key={mapping.sourceOutput}>
+                          <code>{mapping.sourceOutput}</code>
+                          <span>{"->"}</span>
+                          <select
+                            value={mapping.targetInput || ""}
+                            onChange={(event) => setRelayMappings((current) => normalizeRelayMappingsForTarget(node, selectedOutputs, current).map((item) => (
+                              item.sourceOutput === mapping.sourceOutput ? { ...item, targetInput: event.target.value, resolver: "" } : item
+                            )))}
+                          >
+                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · 必填" : " · 可选"}</option>)}
+                          </select>
+                          <select
+                            value={mapping.resolver || ""}
+                            onChange={(event) => setRelayMappings((current) => normalizeRelayMappingsForTarget(node, selectedOutputs, current).map((item) => (
+                              item.sourceOutput === mapping.sourceOutput ? { ...item, resolver: event.target.value } : item
+                            )))}
+                          >
+                            <option value="">自动 resolver</option>
+                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{resolver.label}</option>)}
+                          </select>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </>
             ) : null}
           </>
         ) : null}
@@ -3624,9 +3763,7 @@ function NodeDetailOverviewPanel({
 }
 
 function NodeInputContractPanel({ node, payload }: { node: NodeRegistryItem; payload: Record<string, unknown> }) {
-  const required = Object.entries(node.inputs || {}).map(([name, spec]) => ({ name, spec, required: true }));
-  const optional = Object.entries(node.optionalInputs || {}).map(([name, spec]) => ({ name, spec, required: false }));
-  const rows = [...required, ...optional];
+  const rows = nodeInputContractRows(node);
   const bindings = rows
     .map((row) => ({ ...row, source: nodeInputSourceExpression(row.spec) }))
     .filter((row) => row.source.includes(".outputs."));
@@ -3641,6 +3778,9 @@ function NodeInputContractPanel({ node, payload }: { node: NodeRegistryItem; pay
         <div className="node-contract-cards">
           {rows.map((row) => {
             const source = nodeInputSourceExpression(row.spec);
+            const spec = contractRecord(row.spec);
+            const accepts = Array.isArray(spec.accepts) ? spec.accepts.map(String).join(", ") : "-";
+            const resolvers = contractResolvers(row.spec);
             return (
               <article key={row.name} className="node-contract-card">
                 <div>
@@ -3648,10 +3788,11 @@ function NodeInputContractPanel({ node, payload }: { node: NodeRegistryItem; pay
                   <strong>{row.name}</strong>
                 </div>
                 <div className="node-run-step-meta-grid">
-                  <span><b>shape</b>{source.startsWith("context.") ? "text" : "auto"}</span>
-                  <span><b>accepts</b>手动输入 / 上游输出 / Node Run 输出</span>
-                  <span><b>hint</b>{row.name.includes("url") ? "youtube-url" : "runtime-resolved"}</span>
+                  <span><b>kind</b>{String(spec.kind || spec.type || "auto")}</span>
+                  <span><b>value_type</b>{String(spec.value_type || spec.format || spec.type || "-")}</span>
+                  <span><b>accepts</b>{accepts}</span>
                   <span><b>source hint</b>{source || "-"}</span>
+                  <span><b>resolvers</b>{resolvers.length ? resolvers.map((item) => item.id).join(", ") : "-"}</span>
                 </div>
               </article>
             );
@@ -3701,10 +3842,10 @@ function NodeOutputContractPanel({ node, payload }: { node: NodeRegistryItem; pa
                 <strong>{output.name}</strong>
               </div>
               <div className="node-run-step-meta-grid">
-                <span><b>shape</b>{output.type}</span>
-                <span><b>format</b>{String((output.spec as Record<string, unknown>)?.format || output.type || "-")}</span>
+                <span><b>kind</b>{String(contractRecord(output.spec).kind || output.type)}</span>
+                <span><b>value_type</b>{String(contractRecord(output.spec).value_type || contractRecord(output.spec).format || output.type || "-")}</span>
                 <span><b>default path</b>{output.path || "runtime value"}</span>
-                <span><b>role</b>{output.name.includes("metadata") ? "metadata" : "primary"}</span>
+                <span><b>role</b>{String(contractRecord(output.spec).role || "relay-output")}</span>
               </div>
             </article>
           ))}
@@ -3923,6 +4064,8 @@ function NodeRunDetailPage({
   const [relaySearch, setRelaySearch] = useState("");
   const [relayMode, setRelayMode] = useState<NodeRunRelayMode>("auto_by_target_inputs");
   const [selectedRelayOutputs, setSelectedRelayOutputs] = useState<string[]>([]);
+  const [selectedRelayTargetId, setSelectedRelayTargetId] = useState("");
+  const [relayMappings, setRelayMappings] = useState<NodeRunRelayMapping[]>([]);
   const stepKey = (result?.steps || []).map((step) => step.id).join("|");
   const sourceOutputRows = useMemo(() => nodeOutputContractRows(node, result), [node?.nodeId, result?.nodeRunId, result?.relayPackage?.items?.length]);
   const sourceOutputNames = sourceOutputRows.map((item) => item.name).filter(Boolean);
@@ -3940,7 +4083,11 @@ function NodeRunDetailPage({
     });
   }, [relaySearch, relayTargets]);
   const recommendedRelayCount = relayTargets.filter((item) => item.recommended).length;
-  const relayReady = relayMode !== "selected_outputs" || selectedRelayOutputs.length > 0;
+  const selectedRelayTarget = relayTargets.find((item) => item.node.nodeId === selectedRelayTargetId) || relayTargets[0];
+  const relayMappingRows = relayMode === "selected_outputs"
+    ? normalizeRelayMappingsForTarget(selectedRelayTarget?.node, selectedRelayOutputs, relayMappings)
+    : [];
+  const relayReady = Boolean(selectedRelayTarget) && (relayMode !== "selected_outputs" || selectedRelayOutputs.length > 0);
   function toggleRelayOutput(name: string) {
     if (!name) return;
     setSelectedRelayOutputs((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
@@ -3948,6 +4095,10 @@ function NodeRunDetailPage({
   useEffect(() => {
     removeSearchParams(["test_source", "test_run"], "replace");
   }, [selectedNodeRunId]);
+  useEffect(() => {
+    if (!relayOpen || selectedRelayTargetId || !relayTargets.length) return;
+    setSelectedRelayTargetId((relayTargets.find((item) => item.recommended) || relayTargets[0]).node.nodeId);
+  }, [relayOpen, selectedRelayTargetId, relayTargets]);
   useEffect(() => {
     const onPopState = () => setSelectedStepId(readSearchParam("step"));
     window.addEventListener("popstate", onPopState);
@@ -4068,15 +4219,8 @@ function NodeRunDetailPage({
                     <button
                       key={item.node.nodeId}
                       type="button"
-                      className={`node-relay-row ${item.recommended ? "recommended" : ""}`}
-                      disabled={!relayReady}
-                      onClick={() => {
-                        onRelayNodeRun(item.node.nodeId, result.nodeRunId, {
-                          relayMode,
-                          selectedOutputs: relayMode === "selected_outputs" ? selectedRelayOutputs : [],
-                        });
-                        setRelayOpen(false);
-                      }}
+                      className={`node-relay-row ${item.recommended ? "recommended" : ""} ${selectedRelayTarget?.node.nodeId === item.node.nodeId ? "active" : ""}`}
+                      onClick={() => setSelectedRelayTargetId(item.node.nodeId)}
                     >
                       <span className="stage-letter">{item.node.ui?.stageLetter || item.node.nodeId.slice(0, 1).toUpperCase()}</span>
                       <span>
@@ -4091,6 +4235,62 @@ function NodeRunDetailPage({
                     </button>
                   ))}
                   {!filteredRelayTargets.length ? <Empty text="没有匹配的节点" /> : null}
+                </div>
+                {selectedRelayTarget && relayMode === "selected_outputs" ? (
+                  <div className="node-relay-mapping-panel">
+                    <div className="section-title"><span>输出到目标输入映射</span><span>{relayMappingRows.length}</span></div>
+                    {relayMappingRows.map((mapping) => {
+                      const targetRows = nodeInputContractRows(selectedRelayTarget.node);
+                      const targetSpec = targetRows.find((row) => row.name === mapping.targetInput)?.spec;
+                      const resolvers = contractResolvers(targetSpec);
+                      return (
+                        <article key={mapping.sourceOutput} className="node-relay-mapping-row">
+                          <code>{mapping.sourceOutput}</code>
+                          <span>{"->"}</span>
+                          <select
+                            value={mapping.targetInput || ""}
+                            onChange={(event) => setRelayMappings((current) => normalizeRelayMappingsForTarget(selectedRelayTarget.node, selectedRelayOutputs, current).map((item) => (
+                              item.sourceOutput === mapping.sourceOutput ? { ...item, targetInput: event.target.value, resolver: "" } : item
+                            )))}
+                          >
+                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · 必填" : " · 可选"}</option>)}
+                          </select>
+                          <select
+                            value={mapping.resolver || ""}
+                            onChange={(event) => setRelayMappings((current) => normalizeRelayMappingsForTarget(selectedRelayTarget.node, selectedRelayOutputs, current).map((item) => (
+                              item.sourceOutput === mapping.sourceOutput ? { ...item, resolver: event.target.value } : item
+                            )))}
+                          >
+                            <option value="">自动 resolver</option>
+                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{resolver.label}</option>)}
+                          </select>
+                        </article>
+                      );
+                    })}
+                    {!relayMappingRows.length ? <Empty text="先选择至少一个上游输出，再配置它映射到目标节点的哪个输入。" /> : null}
+                  </div>
+                ) : null}
+                <div className="node-relay-footer">
+                  <div>
+                    <strong>{selectedRelayTarget?.node.title || selectedRelayTarget?.node.nodeId || "未选择目标节点"}</strong>
+                    <span>{relayMode === "selected_outputs" ? "手动映射会在运行前按目标输入契约校验。" : "运行时会按目标节点输入契约解析接力包。"}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={!relayReady}
+                    onClick={() => {
+                      if (!selectedRelayTarget) return;
+                      onRelayNodeRun(selectedRelayTarget.node.nodeId, result.nodeRunId, {
+                        relayMode,
+                        selectedOutputs: relayMode === "selected_outputs" ? selectedRelayOutputs : [],
+                        relayMappings: relayMode === "selected_outputs" ? relayMappingRows : [],
+                      });
+                      setRelayOpen(false);
+                    }}
+                  >
+                    打开目标运行工作台
+                  </button>
                 </div>
               </section>
             </div>
@@ -5550,6 +5750,9 @@ export default function App() {
     params.set("relay_mode", String(options?.relayMode || "auto_by_target_inputs"));
     if (options?.selectedOutputs?.length) params.set("relay_outputs", options.selectedOutputs.join(","));
     else params.delete("relay_outputs");
+    const relayMap = encodeRelayMappings(options?.relayMappings || []);
+    if (relayMap) params.set("relay_map", relayMap);
+    else params.delete("relay_map");
     const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs`;
     const query = params.toString();
     const nextUrl = `${nextPath}${query ? `?${query}` : ""}`;

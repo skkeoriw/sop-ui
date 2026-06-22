@@ -831,6 +831,19 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     inputSource: raw.input_source ? String(raw.input_source) : undefined,
     relayMode: raw.relay_mode ? String(raw.relay_mode) : raw.relayMode ? String(raw.relayMode) : undefined,
     selectedOutputs: Array.isArray(raw.selected_outputs) ? raw.selected_outputs.map(String).filter(Boolean) : Array.isArray(raw.selectedOutputs) ? raw.selectedOutputs.map(String).filter(Boolean) : [],
+    relayMappings: Array.isArray(raw.relay_mappings)
+      ? raw.relay_mappings.map((item) => ({
+        sourceOutput: String((item as Record<string, unknown>).source_output || (item as Record<string, unknown>).sourceOutput || ""),
+        targetInput: String((item as Record<string, unknown>).target_input || (item as Record<string, unknown>).targetInput || ""),
+        resolver: String((item as Record<string, unknown>).resolver || ""),
+      })).filter((item) => item.sourceOutput)
+      : Array.isArray(raw.relayMappings)
+      ? raw.relayMappings.map((item) => ({
+        sourceOutput: String((item as Record<string, unknown>).sourceOutput || (item as Record<string, unknown>).source_output || ""),
+        targetInput: String((item as Record<string, unknown>).targetInput || (item as Record<string, unknown>).target_input || ""),
+        resolver: String((item as Record<string, unknown>).resolver || ""),
+      })).filter((item) => item.sourceOutput)
+      : [],
     sourceNodeRunId: raw.source_node_run_id ? String(raw.source_node_run_id) : raw.sourceNodeRunId ? String(raw.sourceNodeRunId) : undefined,
     relaySelection: (raw.relay_selection as Record<string, unknown>) || (raw.relaySelection as Record<string, unknown>) || {},
     inputResolution: (raw.input_resolution as Record<string, unknown>) || (raw.inputResolution as Record<string, unknown>) || {},
@@ -1475,6 +1488,11 @@ export const sopProvider: SopDataProvider = {
       source_node_run_id: input.sourceNodeRunId || "",
       relay_mode: input.relayMode || "",
       selected_outputs: input.selectedOutputs || [],
+      relay_mappings: (input.relayMappings || []).map((item) => ({
+        source_output: item.sourceOutput,
+        target_input: item.targetInput || "",
+        resolver: item.resolver || "",
+      })),
       manual_inputs: input.manualInputs || {},
       overrides: input.overrides || {},
       capability_overrides: input.capabilityOverrides || {},
