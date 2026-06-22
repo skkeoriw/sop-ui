@@ -1078,6 +1078,31 @@ function nodeInputSourceExpression(spec: unknown) {
   return String(spec || "");
 }
 
+function nodeDefinitionOrder(node: NodeRegistryItem) {
+  return typeof node.ui?.order === "number" ? node.ui.order : Number.MAX_SAFE_INTEGER;
+}
+
+function nodeInputReferencesNode(spec: unknown, nodeId: string) {
+  const source = nodeInputSourceExpression(spec);
+  if (!source || !nodeId) return false;
+  return source === nodeId || source.startsWith(`${nodeId}.`) || source.includes(`${nodeId}.outputs.`);
+}
+
+function findRelayTargetNode(nodes: NodeRegistryItem[], currentNodeId: string) {
+  if (!currentNodeId) return undefined;
+  const candidates = nodes
+    .filter((item) => item.nodeId !== currentNodeId)
+    .sort((left, right) => nodeDefinitionOrder(left) - nodeDefinitionOrder(right));
+  return candidates.find((item) => (item.needs || []).includes(currentNodeId))
+    || candidates.find((item) => {
+      const inputSpecs = [
+        ...Object.values(item.inputs || {}),
+        ...Object.values(item.optionalInputs || {}),
+      ];
+      return inputSpecs.some((spec) => nodeInputReferencesNode(spec, currentNodeId));
+    });
+}
+
 function generatedNodeRunFixtureValue(inputName: string, sourceExpression = "") {
   const name = inputName.toLowerCase();
   const source = sourceExpression.toLowerCase();
@@ -3355,6 +3380,8 @@ function NodeRunDetailPage({
   onOpenNode,
   onOpenNodeRuns,
   onOpenNodeRun,
+  relayNode,
+  onRelayNodeRun,
   onOpenSettings,
 }: {
   provider: SopDataProvider;
@@ -3368,6 +3395,8 @@ function NodeRunDetailPage({
   onOpenNode: (nodeId: string) => void;
   onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+  relayNode?: NodeRegistryItem;
+  onRelayNodeRun: (nodeId: string, sourceNodeRunId: string) => void;
   onOpenSettings: () => void;
 }) {
   const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId, onOpenNodeRun });
@@ -3427,7 +3456,12 @@ function NodeRunDetailPage({
           <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNode(node.nodeId)}>返回节点</button>
           <button type="button" className="btn" disabled={!node} onClick={() => node && onOpenNodeRuns(node.nodeId)}>运行列表</button>
           <button type="button" className="btn" onClick={copyLink}><Copy size={13} />复制链接</button>
-          {result ? <button type="button" className="btn primary" onClick={() => controller.startNodeRun(result.nodeRunId)}><RefreshCw size={13} />重试</button> : null}
+          {result?.status === "done" && relayNode ? (
+            <button type="button" className="btn primary" onClick={() => onRelayNodeRun(relayNode.nodeId, result.nodeRunId)}>
+              <Play size={13} />接力 {relayNode.title || relayNode.nodeId}
+            </button>
+          ) : null}
+          {result ? <button type="button" className="btn" onClick={() => controller.startNodeRun(result.nodeRunId)}><RefreshCw size={13} />重试</button> : null}
         </div>
       </div>
       {!selectedNodeRunId ? (
@@ -4885,6 +4919,24 @@ export default function App() {
     setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunList: true });
   }
 
+  function openNodeRelayFromNodeRun(nodeId: string, sourceNodeRunId: string) {
+    if (!nodeId || !sourceNodeRunId) return;
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const baseInstance = routeInstanceId(instance, instanceId);
+    const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("step");
+    params.set("test_source", "existing-node-run");
+    params.set("test_run", sourceNodeRunId);
+    const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs`;
+    const query = params.toString();
+    const nextUrl = `${nextPath}${query ? `?${query}` : ""}`;
+    setSelectedManagedNodeId(nodeId);
+    setSelectedNodeModuleId("basic");
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunList: true });
+  }
+
   function handleCancelRun() {
     if (!window.confirm(`确认取消 Run: ${selectedRun?.pipelineId}？\n当前阶段完成后不会触发下一阶段。`)) return;
     cancelRunMutation.mutate();
@@ -5210,6 +5262,7 @@ export default function App() {
             onSelectNode={selectManagedNode}
             onOpenNodeRuns={openNodeRuns}
             onOpenNodeRun={openNodeRun}
+            onRelayNodeRun={openNodeRelayFromNodeRun}
             onOpenSettings={() => navigateTo("settings")}
             onSelectModule={(moduleId) => {
               setSelectedNodeModuleId(moduleId);
@@ -9099,6 +9152,7 @@ function NodesWorkspace({
   onSelectNode,
   onOpenNodeRuns,
   onOpenNodeRun,
+  onRelayNodeRun,
   onOpenSettings,
   onSelectModule,
   onOpenDraft,
@@ -9130,6 +9184,7 @@ function NodesWorkspace({
   onSelectNode: (nodeId: string, moduleId?: string) => void;
   onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
+  onRelayNodeRun: (nodeId: string, sourceNodeRunId: string) => void;
   onOpenSettings: () => void;
   onSelectModule: (moduleId: string) => void;
   onOpenDraft: () => void;
@@ -9142,6 +9197,7 @@ function NodesWorkspace({
   const isRouteNode = Boolean(routeNodeId && selectedNode);
   const isNodeRunDetailRoute = Boolean(isRouteNode && selectedNodeRunId);
   const isNodeRunsRoute = Boolean(isRouteNode && nodeRunList && !selectedNodeRunId);
+  const relayNode = selectedNode ? findRelayTargetNode(nodes, selectedNode.nodeId) : undefined;
 
   useEffect(() => {
     if (isRouteNode && !isNodeRunDetailRoute) removeSearchParams(["step"], "replace");
@@ -9315,6 +9371,8 @@ function NodesWorkspace({
           onOpenNode={onSelectNode}
           onOpenNodeRuns={onOpenNodeRuns}
           onOpenNodeRun={onOpenNodeRun}
+          relayNode={relayNode}
+          onRelayNodeRun={onRelayNodeRun}
           onOpenSettings={onOpenSettings}
         />
       ) : isNodeRunsRoute ? (
