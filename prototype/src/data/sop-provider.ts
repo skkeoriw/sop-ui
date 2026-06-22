@@ -799,6 +799,7 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     outputCategories: (raw.output_categories as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
+    agentRequest: (raw.agent_request as Record<string, unknown>) || {},
     runtimeContext: (raw.runtime_context as Record<string, unknown>) || {},
     instanceContext: (raw.instance_context as Record<string, unknown>) || {},
     definitionDefaults: (raw.definition_defaults as Record<string, unknown>) || {},

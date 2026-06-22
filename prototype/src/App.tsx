@@ -1053,6 +1053,7 @@ const NODE_RUN_OUTER_STEP_COPY: Record<string, { title: string; summary?: string
   "resolve-context": { title: "解析执行环境", summary: "确认 Runtime、Instance、Workflow 和 Node 的执行上下文。" },
   "resolve-inputs": { title: "解析节点输入", summary: "从历史 Run、系统测试输入或手动输入中准备本次节点入参。" },
   "resolve-config": { title: "解析运行配置", summary: "加载 Runtime 与 Instance 配置，检查 GitHub、TG、Worker 等依赖。" },
+  "generate-agent-request": { title: "生成 Agent Request", summary: "渲染本次交给 Hermes skill 的 request.md，并保存执行器元数据。" },
   "probe-capabilities": { title: "探测附属能力", summary: "检查节点可能用到的外部能力是否可用。" },
   "build-execution-plan": { title: "生成执行计划", summary: "根据模式和输入生成节点级执行计划。" },
   "execute-or-dry-run": { title: "执行节点逻辑", summary: "真实执行节点，或生成试运行计划。" },
@@ -1280,6 +1281,7 @@ function makeOptimisticNodeRun(params: {
       { id: "resolve-context", title: NODE_RUN_OUTER_STEP_COPY["resolve-context"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["resolve-context"].summary },
       { id: "resolve-inputs", title: NODE_RUN_OUTER_STEP_COPY["resolve-inputs"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["resolve-inputs"].summary },
       { id: "resolve-config", title: NODE_RUN_OUTER_STEP_COPY["resolve-config"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["resolve-config"].summary },
+      { id: "generate-agent-request", title: NODE_RUN_OUTER_STEP_COPY["generate-agent-request"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["generate-agent-request"].summary },
       { id: "probe-capabilities", title: NODE_RUN_OUTER_STEP_COPY["probe-capabilities"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["probe-capabilities"].summary },
       { id: "build-execution-plan", title: NODE_RUN_OUTER_STEP_COPY["build-execution-plan"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["build-execution-plan"].summary },
       { id: "execute-or-dry-run", title: NODE_RUN_OUTER_STEP_COPY["execute-or-dry-run"].title, status: "waiting", summary: NODE_RUN_OUTER_STEP_COPY["execute-or-dry-run"].summary },
@@ -2260,6 +2262,49 @@ function NodeRunInputArtifactsSummary({
   );
 }
 
+function NodeRunAgentRequestSummary({
+  result,
+  step,
+}: {
+  result: NodeRunResult | undefined;
+  step: NodeTestStep | undefined;
+}) {
+  const stepDetail = detailRecord(step?.detail);
+  const agent = { ...detailRecord(result?.agentRequest), ...stepDetail };
+  const rendered = String(agent.rendered_request || "");
+  const receipt = detailRecord(agent.receipt);
+  const command = Array.isArray(agent.command) ? agent.command.map(String).join(" ") : String(agent.stage_command_preview || "");
+  return (
+    <div className="node-run-agent-request">
+      <div className="section-title"><span>Agent Request</span><span>{String(agent.template_version || "hermes-agent-executor.v1")}</span></div>
+      <div className="node-run-step-meta-grid">
+        <span><b>Executor</b>{String(agent.executor || "hermes")}</span>
+        <span><b>Skill</b>{String(agent.requested_skill || agent.skill || "-")}</span>
+        <span><b>Request</b>{String(agent.request_path || "-")}</span>
+        <span><b>Receipt</b>{String(agent.receipt_path || "-")}</span>
+      </div>
+      {command ? (
+        <details className="node-run-step-raw" open>
+          <summary><span>执行命令</span><ChevronDown size={14} /></summary>
+          <code>{command}</code>
+        </details>
+      ) : null}
+      {rendered ? (
+        <details className="node-run-step-raw" open>
+          <summary><span>request.md</span><ChevronDown size={14} /></summary>
+          <pre className="artifact-preview">{rendered}</pre>
+        </details>
+      ) : <div className="node-run-empty">Agent Request 尚未生成。</div>}
+      {Object.keys(receipt).length ? (
+        <details className="node-run-step-raw">
+          <summary><span>receipt.json</span><ChevronDown size={14} /></summary>
+          <code>{formatValue(receipt)}</code>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function NodeRunStepDetailPanel({
   step,
   result,
@@ -2337,6 +2382,7 @@ function NodeRunStepDetailPanel({
           <NodeRunInnerFlow result={result} />
         </div>
       ) : null}
+      {step.id === "generate-agent-request" ? <NodeRunAgentRequestSummary result={result} step={step} /> : null}
       {step.id === "resolve-inputs" ? <NodeRunInputArtifactsSummary result={result} step={step} /> : null}
       {gitCapability ? <GitCapabilitySummary detail={gitCapability.detail} result={result} /> : null}
       {telegramCapability ? <TelegramCapabilitySummary detail={telegramCapability.detail} /> : null}
@@ -3113,7 +3159,7 @@ function NodeRunContextPanel({ controller, showRaw = false }: { controller: Retu
 }
 
 function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefined; events: NodeRunEvent[] }) {
-  const [tab, setTab] = useState<"events" | "inputs" | "artifacts" | "raw">("events");
+  const [tab, setTab] = useState<"events" | "inputs" | "agent" | "artifacts" | "raw">("events");
   if (!result) return <div className="node-run-empty">选择一次 Node Run 后展示事件、输入和产物。</div>;
   const detail = detailRecord(result.detail);
   const resolvedInputs = detailList(detail.resolved_inputs);
@@ -3129,6 +3175,7 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
       <div className="node-run-results-tabs" role="tablist" aria-label="Node run result sections">
         <button type="button" className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>事件</button>
         <button type="button" className={tab === "inputs" ? "active" : ""} onClick={() => setTab("inputs")}>输入</button>
+        <button type="button" className={tab === "agent" ? "active" : ""} onClick={() => setTab("agent")}>Agent Request</button>
         <button type="button" className={tab === "artifacts" ? "active" : ""} onClick={() => setTab("artifacts")}>产物</button>
         <button type="button" className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")}>原始数据</button>
       </div>
@@ -3157,6 +3204,11 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
             ))}
           </div>
           {!(resolvedInputs.length || missingInputs.length) ? <Empty text="没有已解析输入" /> : null}
+        </div>
+      ) : null}
+      {tab === "agent" ? (
+        <div className="node-run-results-body">
+          <NodeRunAgentRequestSummary result={result} step={(result.steps || []).find((item) => item.id === "generate-agent-request")} />
         </div>
       ) : null}
       {tab === "artifacts" ? (
