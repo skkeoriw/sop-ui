@@ -4450,6 +4450,119 @@ pre {
   background: var(--surface-2);
 }
 
+.node-relay-mode-panel,
+.node-relay-outputs-panel,
+.node-run-input-resolution {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.node-relay-mode-panel {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.node-relay-mode-panel > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.node-relay-mode-panel span,
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.field-hint.bad {
+  color: var(--danger);
+}
+
+.node-relay-output-list,
+.node-contract-cards,
+.node-binding-list,
+.node-relay-rules,
+.node-run-relay-resolution-list {
+  display: grid;
+  gap: 8px;
+}
+
+.node-relay-output-row,
+.node-contract-card,
+.node-binding-list article,
+.node-relay-rules article,
+.node-run-relay-resolution-list article {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.node-relay-output-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.node-relay-output-row.active,
+.node-contract-card:hover {
+  border-color: rgba(37, 99, 235, .38);
+  background: rgba(37, 99, 235, .05);
+}
+
+.node-relay-output-row input {
+  width: 16px;
+  min-height: 16px;
+}
+
+.node-relay-output-row span,
+.node-contract-card > div:first-child,
+.node-binding-list article,
+.node-relay-rules article {
+  min-width: 0;
+}
+
+.node-relay-output-row strong,
+.node-relay-output-row small,
+.node-binding-list strong,
+.node-binding-list small,
+.node-run-relay-resolution-list strong,
+.node-run-relay-resolution-list code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-contract-definition-view {
+  display: grid;
+  gap: 12px;
+}
+
+.node-contract-card > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-run-relay-resolution-list pre {
+  max-height: 150px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: 7px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+}
+
 .node-relay-list {
   min-height: 0;
   display: grid;

@@ -63,6 +63,7 @@ import type {
   NodeRunCreateInput,
   NodeRunEvent,
   NodeRunMode,
+  NodeRunRelayMode,
   NodeRunResult,
   NodeTestStep,
   NodeTestPlan,
@@ -1095,6 +1096,11 @@ type NodeRelayTarget = {
   reason: string;
 };
 
+type NodeRelayOptions = {
+  relayMode?: NodeRunRelayMode | string;
+  selectedOutputs?: string[];
+};
+
 function nodeRelayReason(node: NodeRegistryItem, currentNodeId: string) {
   if ((node.needs || []).includes(currentNodeId)) return "来自 workflow 依赖关系";
   const inputSpecs = [
@@ -1132,10 +1138,63 @@ function generatedNodeRunFixtureValue(inputName: string, sourceExpression = "") 
 
 function nodeRunInputSourceHelp(inputSource?: string) {
   if (inputSource === "existing-run") return "从选中的历史 Workflow Run 读取 context 和上游节点 outputs。";
-  if (inputSource === "existing-node-run") return "读取上游 Node Run 的 outputs/files/manifest.json，动态生成本次输入目录。";
+  if (inputSource === "existing-node-run") return "从上游 Node Run 的接力包中选择输出，并物化为本次输入目录。";
   if (inputSource === "manual") return "使用下方手动填写的字段，适合复现单个节点的问题。";
   if (inputSource === "deepseek-mock") return "请求运行时生成模拟输入；当前没有模型模拟时会回退到默认示例。";
   return "按节点输入契约生成固定示例值，适合快速真实执行单个节点。";
+}
+
+function nodeRunRelayModeLabel(mode?: string) {
+  if (mode === "selected_outputs") return "手动选择输出";
+  if (mode === "all_outputs") return "传递整个输出包";
+  return "按目标输入自动匹配";
+}
+
+function nodeRunRelayModeHelp(mode?: string) {
+  if (mode === "selected_outputs") return "只传递勾选的上游输出。适合下游只需要 source_url、analysis_file 等单个输出。";
+  if (mode === "all_outputs") return "传递上游所有 relayable outputs。适合下游自己遍历整个输出包。";
+  return "默认模式。根据目标节点 inputs 和当前 workflow 默认绑定自动选择匹配输出。";
+}
+
+function nodeOutputContractRows(node: NodeRegistryItem | undefined, fallback?: NodeRunResult) {
+  const outputEntries = Object.entries(node?.outputs || {});
+  if (outputEntries.length) {
+    return outputEntries.map(([name, spec]) => ({
+      name,
+      spec,
+      type: outputContractType(spec),
+      path: outputContractPath(spec),
+      relayable: true,
+    }));
+  }
+  return (fallback?.relayPackage?.items || []).map((item) => ({
+    name: item.output || item.relativePath || item.path,
+    spec: item.valueType || "file",
+    type: item.valueType || "file",
+    path: item.relativePath || item.path,
+    relayable: true,
+  })).filter((item) => item.name);
+}
+
+function outputContractPath(spec: unknown) {
+  if (typeof spec === "string") return spec;
+  if (spec && typeof spec === "object") {
+    const record = spec as Record<string, unknown>;
+    return String(record.path || record.from || record.value || "");
+  }
+  return "";
+}
+
+function outputContractType(spec: unknown) {
+  if (spec && typeof spec === "object") {
+    const record = spec as Record<string, unknown>;
+    if (record.shape) return String(record.shape);
+    if (record.type) return String(record.type);
+  }
+  const path = outputContractPath(spec);
+  if (!path || path.startsWith("context.")) return "text";
+  if (path.includes("*")) return "file_set";
+  return "file";
 }
 
 function nodeRunInputPreviewRows(
@@ -1144,6 +1203,8 @@ function nodeRunInputPreviewRows(
   seedRunId: string,
   sourceNodeRunId: string,
   manualInputs: Record<string, string>,
+  relayMode: string = "auto_by_target_inputs",
+  selectedOutputs: string[] = [],
 ) {
   const inputs = Object.entries(node?.inputs || {});
   if (!inputs.length) {
@@ -1174,7 +1235,9 @@ function nodeRunInputPreviewRows(
         name,
         value: sourceNodeRunId || "未指定上游 Node Run",
         source,
-        logic: sourceNodeRunId ? `从 ${sourceNodeRunId} 的 outputs/files manifest 动态生成输入目录。` : "需要指定一个已完成的上游 Node Run。",
+        logic: sourceNodeRunId
+          ? `${nodeRunRelayModeLabel(relayMode)}${selectedOutputs.length ? `：${selectedOutputs.join(", ")}` : ""}`
+          : "需要指定一个已完成的上游 Node Run。",
         missing: !sourceNodeRunId,
       };
     }
@@ -2306,6 +2369,8 @@ function NodeRunInputArtifactsSummary({
 }) {
   const artifacts = nodeRunInputArtifacts(result, step);
   const stepDetail = detailRecord(step?.detail);
+  const inputResolution = detailRecord(stepDetail.input_resolution || result?.inputResolution);
+  const manifestItems = detailList(inputResolution.items);
   const inputManifest = String(stepDetail.input_manifest || result?.detail?.input_manifest || "");
   const inputDirectory = String(stepDetail.input_directory || result?.detail?.input_directory || "");
   const resolvedInputs = detailList(stepDetail.resolved_inputs).length
@@ -2316,6 +2381,28 @@ function NodeRunInputArtifactsSummary({
     : detailList(detailRecord(result?.detail).missing_inputs);
   return (
     <div className="node-run-input-artifacts">
+      {Object.keys(inputResolution).length ? (
+        <div className="node-run-input-resolution">
+          <div className="section-title"><span>接力解析</span><span>{nodeRunRelayModeLabel(String(inputResolution.relay_mode || result?.relayMode || "auto_by_target_inputs"))}</span></div>
+          <div className="node-run-step-meta-grid">
+            <span><b>来源 Node Run</b>{String(inputResolution.source_node_run_id || result?.sourceNodeRunId || "-")}</span>
+            <span><b>Relay Mode</b>{nodeRunRelayModeLabel(String(inputResolution.relay_mode || result?.relayMode || "auto_by_target_inputs"))}</span>
+            <span><b>Selected</b>{nodeRunStringArray(inputResolution.selected_outputs).join(", ") || "-"}</span>
+            <span><b>Matched</b>{nodeRunStringArray(inputResolution.matched_outputs).join(", ") || "-"}</span>
+          </div>
+          {manifestItems.length ? (
+            <div className="node-run-relay-resolution-list">
+              {manifestItems.map((item, index) => (
+                <article key={`${String(item.path || index)}-${String(item.source_output || "")}`}>
+                  <strong>{String(item.source_output || item.output || "output")} → {String(item.target_input || item.input_name || "input")}</strong>
+                  <code>{String(item.path || "")}</code>
+                  {item.value_preview ? <pre>{String(item.value_preview)}</pre> : null}
+                </article>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {resolvedInputs.length || missingInputs.length ? (
         <div className="node-run-input-resolved-list">
           <div className="section-title"><span>解析结果</span><span>{resolvedInputs.length} resolved · {missingInputs.length} missing</span></div>
@@ -2836,6 +2923,8 @@ function useNodeRunController({
   const [inputSource, setInputSource] = useState<NodeRunCreateInput["inputSource"]>(DEFAULT_NODE_RUN_INPUT_SOURCE);
   const [seedRunId, setSeedRunId] = useState("");
   const [sourceNodeRunId, setSourceNodeRunId] = useState("");
+  const [relayMode, setRelayMode] = useState<NodeRunRelayMode>("auto_by_target_inputs");
+  const [selectedOutputs, setSelectedOutputs] = useState<string[]>([]);
   const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
   const [runtimeOverrides, setRuntimeOverrides] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
@@ -2867,6 +2956,9 @@ function useNodeRunController({
     if (params.get("test_source") === "existing-node-run" && params.get("test_run")) {
       setInputSource("existing-node-run");
       setSourceNodeRunId(params.get("test_run") || "");
+      const nextRelayMode = (params.get("relay_mode") || "auto_by_target_inputs") as NodeRunRelayMode;
+      setRelayMode(["selected_outputs", "all_outputs", "auto_by_target_inputs"].includes(nextRelayMode) ? nextRelayMode : "auto_by_target_inputs");
+      setSelectedOutputs((params.get("relay_outputs") || "").split(",").map((item) => item.trim()).filter(Boolean));
     }
   }, [nodeId]);
 
@@ -2909,6 +3001,8 @@ function useNodeRunController({
       inputSource,
       pipelineId: inputSource === "existing-run" ? seedRunId : undefined,
       sourceNodeRunId: inputSource === "existing-node-run" ? sourceNodeRunId : undefined,
+      relayMode: inputSource === "existing-node-run" ? relayMode : undefined,
+      selectedOutputs: inputSource === "existing-node-run" ? selectedOutputs : undefined,
       manualInputs,
       overrides: runtimeOverrides,
       capabilityOverrides: nodeRunCapabilityOverridePayload({
@@ -2956,6 +3050,10 @@ function useNodeRunController({
     setSeedRunId,
     sourceNodeRunId,
     setSourceNodeRunId,
+    relayMode,
+    setRelayMode,
+    selectedOutputs,
+    setSelectedOutputs,
     manualInputs,
     setManualInputs,
     runtimeOverrides,
@@ -2990,6 +3088,8 @@ function NodeRunInputPreview({ controller }: { controller: ReturnType<typeof use
     controller.seedRunId,
     controller.sourceNodeRunId,
     controller.manualInputs,
+    controller.relayMode,
+    controller.selectedOutputs,
   );
   return (
     <section className="node-run-input-preview">
@@ -3036,6 +3136,10 @@ function NodeRunStartPanel({
     setSeedRunId,
     sourceNodeRunId,
     setSourceNodeRunId,
+    relayMode,
+    setRelayMode,
+    selectedOutputs,
+    setSelectedOutputs,
     manualInputs,
     setManualInputs,
     gitEnabled,
@@ -3130,14 +3234,33 @@ function NodeRunStartPanel({
           </label>
         ) : null}
         {inputSource === "existing-node-run" ? (
-          <label>Source Node Run
-            <input
-              value={sourceNodeRunId}
-              onChange={(event) => setSourceNodeRunId(event.target.value)}
-              placeholder="node-run-youtube-deep-research-..."
-              autoComplete="off"
-            />
-          </label>
+          <>
+            <label>Source Node Run
+              <input
+                value={sourceNodeRunId}
+                onChange={(event) => setSourceNodeRunId(event.target.value)}
+                placeholder="node-run-youtube-deep-research-..."
+                autoComplete="off"
+              />
+            </label>
+            <label>接力模式
+              <select value={relayMode} onChange={(event) => setRelayMode(event.target.value as NodeRunRelayMode)}>
+                <option value="auto_by_target_inputs">按目标输入自动匹配</option>
+                <option value="selected_outputs">手动选择输出</option>
+                <option value="all_outputs">传递整个输出包</option>
+              </select>
+            </label>
+            {relayMode === "selected_outputs" ? (
+              <label>选择输出
+                <input
+                  value={selectedOutputs.join(",")}
+                  onChange={(event) => setSelectedOutputs(event.target.value.split(",").map((item) => item.trim()).filter(Boolean))}
+                  placeholder="source_url, analysis_file"
+                  autoComplete="off"
+                />
+              </label>
+            ) : null}
+          </>
         ) : null}
         {inputSource === "manual" ? inputFields.map(([name, spec]) => (
           <label key={name}>{name}
@@ -3253,6 +3376,9 @@ function NodeRunContextPanel({ controller, showRaw = false }: { controller: Retu
           node: controller.node?.nodeId || "-",
           mode: result?.mode || controller.runMode,
           input_source: result?.inputSource || controller.inputSource || "-",
+          relay_mode: result?.relayMode || controller.relayMode || "-",
+          source_node_run: result?.sourceNodeRunId || controller.sourceNodeRunId || "-",
+          selected_outputs: (result?.selectedOutputs?.length ? result.selectedOutputs : controller.selectedOutputs).join(", ") || "-",
           seed_workflow_run: result?.createdFrom || controller.seedRunId || "-",
           dry_run: result?.mode === "dry-run" ? "yes" : "-",
         }} />
@@ -3492,6 +3618,109 @@ function NodeDetailOverviewPanel({
   );
 }
 
+function NodeInputContractPanel({ node, payload }: { node: NodeRegistryItem; payload: Record<string, unknown> }) {
+  const required = Object.entries(node.inputs || {}).map(([name, spec]) => ({ name, spec, required: true }));
+  const optional = Object.entries(node.optionalInputs || {}).map(([name, spec]) => ({ name, spec, required: false }));
+  const rows = [...required, ...optional];
+  const bindings = rows
+    .map((row) => ({ ...row, source: nodeInputSourceExpression(row.spec) }))
+    .filter((row) => row.source.includes(".outputs."));
+  const rawDefinition = {
+    declared_inputs: node.inputs || {},
+    optional_inputs: node.optionalInputs || {},
+    schema: payload.schema || payload.declared_inputs || undefined,
+  };
+  return (
+    <div className="node-contract-definition-view">
+      <DetailBlock title={`输入契约 · ${rows.length}`}>
+        <div className="node-contract-cards">
+          {rows.map((row) => {
+            const source = nodeInputSourceExpression(row.spec);
+            return (
+              <article key={row.name} className="node-contract-card">
+                <div>
+                  <span className={`status-pill ${row.required ? "running" : "waiting"}`}>{row.required ? "必填" : "可选"}</span>
+                  <strong>{row.name}</strong>
+                </div>
+                <div className="node-run-step-meta-grid">
+                  <span><b>shape</b>{source.startsWith("context.") ? "text" : "auto"}</span>
+                  <span><b>accepts</b>手动输入 / 上游输出 / Node Run 输出</span>
+                  <span><b>hint</b>{row.name.includes("url") ? "youtube-url" : "runtime-resolved"}</span>
+                  <span><b>source hint</b>{source || "-"}</span>
+                </div>
+              </article>
+            );
+          })}
+          {!rows.length ? <Empty text="该节点没有声明输入契约" /> : null}
+        </div>
+      </DetailBlock>
+      <DetailBlock title={`Workflow 默认绑定 · ${bindings.length}`}>
+        <div className="node-binding-list">
+          {bindings.map((binding) => {
+            const [fromNode, rest] = binding.source.split(".outputs.");
+            return (
+              <article key={`${binding.name}-${binding.source}`}>
+                <span className="status-pill subtle">workflow binding</span>
+                <strong>{fromNode || "-"} → {node.nodeId}</strong>
+                <small>{binding.source} → {binding.name}</small>
+                <small>这是当前 workflow 的默认连线，不是 Node Definition 的硬依赖。</small>
+                {rest ? <code>{rest}</code> : null}
+              </article>
+            );
+          })}
+          {!bindings.length ? <Empty text="当前 workflow 没有为该节点返回默认绑定" /> : null}
+        </div>
+      </DetailBlock>
+      <details className="node-run-step-raw">
+        <summary><span>Raw Definition</span><ChevronDown size={14} /></summary>
+        <code>{formatValue(rawDefinition)}</code>
+      </details>
+    </div>
+  );
+}
+
+function NodeOutputContractPanel({ node, payload }: { node: NodeRegistryItem; payload: Record<string, unknown> }) {
+  const outputs = nodeOutputContractRows(node);
+  const rawDefinition = {
+    declared_outputs: node.outputs || {},
+    schema: payload.schema || payload.declared_outputs || undefined,
+  };
+  return (
+    <div className="node-contract-definition-view">
+      <DetailBlock title={`输出契约 · ${outputs.length}`}>
+        <div className="node-contract-cards">
+          {outputs.map((output) => (
+            <article key={output.name} className="node-contract-card">
+              <div>
+                <span className="status-pill done">relayable</span>
+                <strong>{output.name}</strong>
+              </div>
+              <div className="node-run-step-meta-grid">
+                <span><b>shape</b>{output.type}</span>
+                <span><b>format</b>{String((output.spec as Record<string, unknown>)?.format || output.type || "-")}</span>
+                <span><b>default path</b>{output.path || "runtime value"}</span>
+                <span><b>role</b>{output.name.includes("metadata") ? "metadata" : "primary"}</span>
+              </div>
+            </article>
+          ))}
+          {!outputs.length ? <Empty text="该节点没有声明输出契约" /> : null}
+        </div>
+      </DetailBlock>
+      <DetailBlock title="接力规则">
+        <div className="node-relay-rules">
+          <article><strong>自动匹配</strong><span>根据目标节点输入契约和 workflow 默认绑定选择 source output。</span></article>
+          <article><strong>手动选择</strong><span>用户在接力弹窗中选择一个或多个 output，例如 source_url、analysis_file。</span></article>
+          <article><strong>整包传递</strong><span>显式把所有 relayable outputs 物化为下游输入；manifest 只作为索引。</span></article>
+        </div>
+      </DetailBlock>
+      <details className="node-run-step-raw">
+        <summary><span>Raw Definition</span><ChevronDown size={14} /></summary>
+        <code>{formatValue(rawDefinition)}</code>
+      </details>
+    </div>
+  );
+}
+
 function NodeModuleInlinePanel({
   node,
   module,
@@ -3506,6 +3735,28 @@ function NodeModuleInlinePanel({
   if (loading) return <section className="module-detail-panel inline-module-detail"><Skeleton /></section>;
   if (!node || !module) return <section className="module-detail-panel inline-module-detail"><Empty text="选择模块查看详情" /></section>;
   const payload = detail?.detail || {};
+  if (module.id === "inputs") {
+    return (
+      <section className="module-detail-panel inline-module-detail">
+        <div className="panel-head compact">
+          <div><strong>输入契约</strong><span>Node Definition 只声明需要什么；实际 resolved inputs 只在 Node Run Detail 展示。</span></div>
+          <span className="status-pill done">Definition</span>
+        </div>
+        <NodeInputContractPanel node={node} payload={payload} />
+      </section>
+    );
+  }
+  if (module.id === "outputs") {
+    return (
+      <section className="module-detail-panel inline-module-detail">
+        <div className="panel-head compact">
+          <div><strong>输出契约</strong><span>这些 outputs 是接力选择的规范，不是某次运行产物列表。</span></div>
+          <span className="status-pill done">Definition</span>
+        </div>
+        <NodeOutputContractPanel node={node} payload={payload} />
+      </section>
+    );
+  }
   return (
     <section className="module-detail-panel inline-module-detail">
       <div className="panel-head compact">
@@ -3654,7 +3905,7 @@ function NodeRunDetailPage({
   onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
   relayTargets: NodeRelayTarget[];
-  onRelayNodeRun: (nodeId: string, sourceNodeRunId: string) => void;
+  onRelayNodeRun: (nodeId: string, sourceNodeRunId: string, options?: NodeRelayOptions) => void;
   onOpenSettings: () => void;
 }) {
   const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId, onOpenNodeRun });
@@ -3665,7 +3916,11 @@ function NodeRunDetailPage({
   const [selectedStepId, setSelectedStepId] = useState(() => readSearchParam("step"));
   const [relayOpen, setRelayOpen] = useState(false);
   const [relaySearch, setRelaySearch] = useState("");
+  const [relayMode, setRelayMode] = useState<NodeRunRelayMode>("auto_by_target_inputs");
+  const [selectedRelayOutputs, setSelectedRelayOutputs] = useState<string[]>([]);
   const stepKey = (result?.steps || []).map((step) => step.id).join("|");
+  const sourceOutputRows = useMemo(() => nodeOutputContractRows(node, result), [node?.nodeId, result?.nodeRunId, result?.relayPackage?.items?.length]);
+  const sourceOutputNames = sourceOutputRows.map((item) => item.name).filter(Boolean);
   const filteredRelayTargets = useMemo(() => {
     const needle = relaySearch.trim().toLowerCase();
     if (!needle) return relayTargets;
@@ -3680,6 +3935,11 @@ function NodeRunDetailPage({
     });
   }, [relaySearch, relayTargets]);
   const recommendedRelayCount = relayTargets.filter((item) => item.recommended).length;
+  const relayReady = relayMode !== "selected_outputs" || selectedRelayOutputs.length > 0;
+  function toggleRelayOutput(name: string) {
+    if (!name) return;
+    setSelectedRelayOutputs((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
+  }
   useEffect(() => {
     removeSearchParams(["test_source", "test_run"], "replace");
   }, [selectedNodeRunId]);
@@ -3756,9 +4016,39 @@ function NodeRunDetailPage({
                 <div className="modal-head">
                   <div>
                     <h2>接力到节点</h2>
-                    <span>{result.nodeRunId} 的 outputs/files 会作为目标节点输入</span>
+                    <span>{result.nodeRunId} 的输出契约会按接力模式物化为目标节点输入</span>
                   </div>
                   <button type="button" className="ghost-btn" onClick={() => setRelayOpen(false)}><X size={16} />关闭</button>
+                </div>
+                <div className="node-relay-mode-panel">
+                  <div>
+                    <strong>传递什么</strong>
+                    <span>{nodeRunRelayModeHelp(relayMode)}</span>
+                  </div>
+                  <div className="segmented compact">
+                    <button type="button" className={relayMode === "auto_by_target_inputs" ? "active" : ""} onClick={() => setRelayMode("auto_by_target_inputs")}>自动匹配</button>
+                    <button type="button" className={relayMode === "selected_outputs" ? "active" : ""} onClick={() => setRelayMode("selected_outputs")}>手动选择</button>
+                    <button type="button" className={relayMode === "all_outputs" ? "active" : ""} onClick={() => setRelayMode("all_outputs")}>整包</button>
+                  </div>
+                </div>
+                <div className="node-relay-outputs-panel">
+                  <div className="section-title"><span>上游输出规范</span><span>{sourceOutputRows.length}</span></div>
+                  <div className="node-relay-output-list">
+                    {sourceOutputRows.map((output) => (
+                      <label key={output.name} className={`node-relay-output-row ${relayMode === "selected_outputs" && selectedRelayOutputs.includes(output.name) ? "active" : ""}`}>
+                        {relayMode === "selected_outputs" ? (
+                          <input type="checkbox" checked={selectedRelayOutputs.includes(output.name)} onChange={() => toggleRelayOutput(output.name)} />
+                        ) : <span className="dot done" />}
+                        <span>
+                          <strong>{output.name}</strong>
+                          <small>{output.type} · {output.path || "runtime value"}</small>
+                        </span>
+                      </label>
+                    ))}
+                    {!sourceOutputRows.length ? <Empty text="当前节点没有声明输出契约；只能使用整包或运行结果中的 relay package。" /> : null}
+                  </div>
+                  {relayMode === "selected_outputs" && !selectedRelayOutputs.length ? <small className="field-hint bad">请选择至少一个输出。</small> : null}
+                  {relayMode !== "selected_outputs" && sourceOutputNames.length ? <small className="field-hint">{nodeRunRelayModeLabel(relayMode)}会在后端解析，不会把 manifest.json 当成业务输入。</small> : null}
                 </div>
                 <label className="node-relay-search">
                   <span>选择目标 Node</span>
@@ -3774,7 +4064,14 @@ function NodeRunDetailPage({
                       key={item.node.nodeId}
                       type="button"
                       className={`node-relay-row ${item.recommended ? "recommended" : ""}`}
-                      onClick={() => onRelayNodeRun(item.node.nodeId, result.nodeRunId)}
+                      disabled={!relayReady}
+                      onClick={() => {
+                        onRelayNodeRun(item.node.nodeId, result.nodeRunId, {
+                          relayMode,
+                          selectedOutputs: relayMode === "selected_outputs" ? selectedRelayOutputs : [],
+                        });
+                        setRelayOpen(false);
+                      }}
                     >
                       <span className="stage-letter">{item.node.ui?.stageLetter || item.node.nodeId.slice(0, 1).toUpperCase()}</span>
                       <span>
@@ -5236,7 +5533,7 @@ export default function App() {
     setRoute({ view: "nodes", nodeId, pipelineId: "", artifactId: "", moduleId: "", nodeRunList: true });
   }
 
-  function openNodeRelayFromNodeRun(nodeId: string, sourceNodeRunId: string) {
+  function openNodeRelayFromNodeRun(nodeId: string, sourceNodeRunId: string, options?: NodeRelayOptions) {
     if (!nodeId || !sourceNodeRunId) return;
     const baseRuntime = routeRuntimeId(runtime, runtimeId);
     const baseInstance = routeInstanceId(instance, instanceId);
@@ -5245,6 +5542,9 @@ export default function App() {
     params.delete("step");
     params.set("test_source", "existing-node-run");
     params.set("test_run", sourceNodeRunId);
+    params.set("relay_mode", String(options?.relayMode || "auto_by_target_inputs"));
+    if (options?.selectedOutputs?.length) params.set("relay_outputs", options.selectedOutputs.join(","));
+    else params.delete("relay_outputs");
     const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs`;
     const query = params.toString();
     const nextUrl = `${nextPath}${query ? `?${query}` : ""}`;
@@ -9501,7 +9801,7 @@ function NodesWorkspace({
   onSelectNode: (nodeId: string, moduleId?: string) => void;
   onOpenNodeRuns: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
-  onRelayNodeRun: (nodeId: string, sourceNodeRunId: string) => void;
+  onRelayNodeRun: (nodeId: string, sourceNodeRunId: string, options?: NodeRelayOptions) => void;
   onOpenSettings: () => void;
   onSelectModule: (moduleId: string) => void;
   onOpenDraft: () => void;
