@@ -769,16 +769,23 @@ export interface NodeModuleDetail {
 }
 
 export interface NodeDraftInput {
-  skill_install_command: string;
-  skill_id: string;
+  draft_type?: "create_node" | "edit_node_definition" | string;
+  skill_install_command?: string;
+  skill_id?: string;
   node_id: string;
-  title: string;
+  title?: string;
   description?: string;
+  mode?: string;
+  needs?: string[] | string;
   upstream?: string;
   upstream_output?: string;
   input_name?: string;
   output_name?: string;
   output_path?: string;
+  inputs?: Record<string, unknown>;
+  optional_inputs?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
+  capabilities?: Record<string, unknown>;
 }
 
 export interface NodeDraftSchemaField {
@@ -802,7 +809,10 @@ export interface NodeDraftSchema {
 
 export interface NodeDraft {
   draftId: string;
+  draftType?: string;
+  draftPath?: string;
   node: Record<string, unknown>;
+  changeRequest?: Record<string, unknown>;
   validation: Record<string, unknown>;
 }
 

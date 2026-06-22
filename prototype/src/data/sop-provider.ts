@@ -883,7 +883,10 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
 function mapNodeDraft(raw: Record<string, unknown>): NodeDraft {
   return {
     draftId: String(raw.draft_id || raw.draftId || ""),
+    draftType: raw.draft_type ? String(raw.draft_type) : raw.draftType ? String(raw.draftType) : undefined,
+    draftPath: raw.draft_path ? String(raw.draft_path) : raw.draftPath ? String(raw.draftPath) : undefined,
     node: (raw.node as Record<string, unknown>) || {},
+    changeRequest: (raw.change_request as Record<string, unknown>) || (raw.changeRequest as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
   };
 }

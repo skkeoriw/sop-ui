@@ -7746,6 +7746,58 @@ pre {
   background: var(--surface-2);
 }
 
+.node-definition-editor-drawer {
+  width: min(760px, calc(100vw - 28px));
+}
+
+.definition-editor-targets,
+.definition-editor-section,
+.definition-editor-review {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.definition-editor-section + .definition-editor-section,
+.definition-editor-review {
+  margin-top: 12px;
+}
+
+.definition-json-editor {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.definition-json-editor.compact {
+  min-height: 120px;
+}
+
+.definition-change-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.definition-change-list article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel);
+  display: grid;
+  gap: 6px;
+}
+
+.definition-change-list code {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .node-run-repair-actions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

@@ -90,6 +90,17 @@ type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
   nodes?: Record<string, StageStatus>;
   nodeStates?: Record<string, RunNodeState>;
 };
+type NodeDefinitionEditInput = {
+  nodeId: string;
+  title: string;
+  description: string;
+  mode: string;
+  needs: string;
+  inputs: string;
+  optionalInputs: string;
+  outputs: string;
+  capabilities: string;
+};
 type RuntimeProbeStatus = "ok" | "failed" | "unknown";
 type RuntimeProbeResult = {
   id: string;
@@ -4236,6 +4247,27 @@ function NodeRunDetailPage({
                   ))}
                   {!filteredRelayTargets.length ? <Empty text="没有匹配的节点" /> : null}
                 </div>
+                {selectedRelayTarget ? (
+                  <div className="node-relay-mapping-panel">
+                    <div className="section-title"><span>目标输入契约</span><span>{nodeInputContractRows(selectedRelayTarget.node).length}</span></div>
+                    <div className="node-run-input-preview-rows">
+                      {nodeInputContractRows(selectedRelayTarget.node).map((row) => {
+                        const spec = contractRecord(row.spec);
+                        return (
+                          <article key={row.name}>
+                            <div>
+                              <strong>{row.name}</strong>
+                              <code>{String(spec.type || spec.kind || "auto")}{row.required ? " · required" : " · optional"}</code>
+                            </div>
+                            <small>{String(spec.from || "没有默认 workflow binding")}</small>
+                            {contractResolvers(row.spec).length ? <small>resolvers: {contractResolvers(row.spec).map((resolver) => resolver.label).join(", ")}</small> : <small>resolvers: auto/direct</small>}
+                          </article>
+                        );
+                      })}
+                      {!nodeInputContractRows(selectedRelayTarget.node).length ? <Empty text="目标节点没有声明输入契约，建议先编辑节点定义。" /> : null}
+                    </div>
+                  </div>
+                ) : null}
                 {selectedRelayTarget && relayMode === "selected_outputs" ? (
                   <div className="node-relay-mapping-panel">
                     <div className="section-title"><span>输出到目标输入映射</span><span>{relayMappingRows.length}</span></div>
@@ -4524,7 +4556,6 @@ export default function App() {
     output_name: "cover_images",
     output_path: "raw/generated-images/{pipeline_id}/cover-images.json"
   });
-
   const isRuntimeDirectory = viewMode === "runtime" && !hasRuntimeRouteId;
   const isInstanceDirectory = viewMode === "instance" && !routeContext.instanceId;
   const runtimeDirectoryPageSize = 25;
@@ -5401,7 +5432,6 @@ export default function App() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
   });
-
   useEffect(() => {
     const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/workflows", "/nodes", "/artifacts", "/machines", "/settings"];
     if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
@@ -10023,10 +10053,95 @@ function NodesWorkspace({
   const isNodeRunDetailRoute = Boolean(isRouteNode && selectedNodeRunId);
   const isNodeRunsRoute = Boolean(isRouteNode && nodeRunList && !selectedNodeRunId);
   const relayTargets = selectedNode ? buildRelayTargetNodes(nodes, selectedNode.nodeId) : [];
+  const queryClient = useQueryClient();
+  const [definitionEditOpen, setDefinitionEditOpen] = useState(false);
+  const [definitionEditError, setDefinitionEditError] = useState("");
+  const [confirmDefinitionEdit, setConfirmDefinitionEdit] = useState(false);
+  const [latestDefinitionDraft, setLatestDefinitionDraft] = useState<NodeDraft | undefined>(undefined);
+  const [definitionEditInput, setDefinitionEditInput] = useState<NodeDefinitionEditInput>({
+    nodeId: "",
+    title: "",
+    description: "",
+    mode: "",
+    needs: "",
+    inputs: "{}",
+    optionalInputs: "{}",
+    outputs: "{}",
+    capabilities: "{}",
+  });
+  const nodeDraftSchemaQuery = useQuery({
+    queryKey: queryKeys.nodeDraftSchema(mode, runtime, instance?.instanceId || ""),
+    queryFn: () => provider.getNodeDraftSchema(runtime!, instance!.instanceId),
+    enabled: Boolean(runtime && instance && definitionEditOpen),
+  });
+  const createDefinitionDraftMutation = useMutation({
+    mutationFn: () => {
+      const payload: NodeDraftInput = {
+        draft_type: "edit_node_definition",
+        node_id: definitionEditInput.nodeId,
+        title: definitionEditInput.title,
+        description: definitionEditInput.description,
+        mode: definitionEditInput.mode,
+        needs: definitionEditInput.needs.split(",").map((item) => item.trim()).filter(Boolean),
+        inputs: parseEditorObject("Inputs", definitionEditInput.inputs),
+        optional_inputs: parseEditorObject("Optional Inputs", definitionEditInput.optionalInputs),
+        outputs: parseEditorObject("Outputs", definitionEditInput.outputs),
+        capabilities: parseEditorObject("Capabilities", definitionEditInput.capabilities),
+      };
+      return provider.createNodeDraft(runtime!, instance!.instanceId, payload);
+    },
+    onSuccess: async (draft) => {
+      setDefinitionEditError("");
+      setConfirmDefinitionEdit(false);
+      setLatestDefinitionDraft(draft);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || "") });
+    },
+    onError: (error) => {
+      setDefinitionEditError(String((error as Error).message || error));
+    }
+  });
 
   useEffect(() => {
     if (isRouteNode && !isNodeRunDetailRoute) removeSearchParams(["step"], "replace");
   }, [isRouteNode, isNodeRunDetailRoute, routeNodeId]);
+
+  function openDefinitionEditor(node: NodeRegistryItem | undefined) {
+    if (!node) return;
+    setDefinitionEditInput({
+      nodeId: node.nodeId,
+      title: node.title || node.nodeId,
+      description: node.description || node.purpose || "",
+      mode: node.mode || "blocking",
+      needs: (node.needs || []).join(", "),
+      inputs: formatJsonForEditor(node.inputs || {}),
+      optionalInputs: formatJsonForEditor(node.optionalInputs || {}),
+      outputs: formatJsonForEditor(node.outputs || {}),
+      capabilities: formatJsonForEditor(node.capabilities || {}),
+    });
+    setDefinitionEditError("");
+    setConfirmDefinitionEdit(false);
+    setLatestDefinitionDraft(undefined);
+    setDefinitionEditOpen(true);
+  }
+
+  function submitDefinitionEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!definitionEditInput.nodeId.trim()) {
+      setDefinitionEditError("Node ID 不能为空");
+      return;
+    }
+    try {
+      parseEditorObject("Inputs", definitionEditInput.inputs);
+      parseEditorObject("Optional Inputs", definitionEditInput.optionalInputs);
+      parseEditorObject("Outputs", definitionEditInput.outputs);
+      parseEditorObject("Capabilities", definitionEditInput.capabilities);
+    } catch (error) {
+      setDefinitionEditError(String((error as Error).message || error));
+      return;
+    }
+    setDefinitionEditError("");
+    createDefinitionDraftMutation.mutate();
+  }
 
   const nodeListPanel = (
     <aside className="node-list-panel">
@@ -10221,6 +10336,9 @@ function NodesWorkspace({
                 <strong>Node Detail</strong>
                 <span>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</span>
               </div>
+              <button type="button" className="btn primary" disabled={!selectedNode} onClick={() => openDefinitionEditor(selectedNode)}>
+                <Edit3 size={14} />Edit Definition
+              </button>
             </div>
             <section className="node-three-layer-grid">
               <article>
@@ -10267,6 +10385,23 @@ function NodesWorkspace({
           </section>
         </section>
       )}
+      {definitionEditOpen && runtime && instance ? (
+        <NodeDefinitionEditorDrawer
+          mode={mode}
+          runtime={runtime}
+          instance={instance}
+          schema={nodeDraftSchemaQuery.data}
+          input={definitionEditInput}
+          setInput={(next) => { setDefinitionEditError(""); setDefinitionEditInput(next); }}
+          confirmRealDraft={confirmDefinitionEdit}
+          setConfirmRealDraft={setConfirmDefinitionEdit}
+          creatingDraft={createDefinitionDraftMutation.isPending}
+          createError={definitionEditError || (createDefinitionDraftMutation.error ? String(createDefinitionDraftMutation.error.message) : "")}
+          latestDraft={latestDefinitionDraft || drafts.find((draft) => draft.changeRequest?.["node_id"] === definitionEditInput.nodeId || draft.node?.["id"] === definitionEditInput.nodeId)}
+          onClose={() => setDefinitionEditOpen(false)}
+          onCreateDraft={submitDefinitionEdit}
+        />
+      ) : null}
     </>
   );
 }
@@ -10520,6 +10655,134 @@ function NodeDraftDrawer({
           <button type="submit" className="primary" disabled={creatingDraft || (mode === "real" && !confirmRealDraft)}>
             {creatingDraft ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
             {creatingDraft ? "Creating" : "Create draft"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function NodeDefinitionEditorDrawer({
+  mode,
+  runtime,
+  instance,
+  schema,
+  input,
+  setInput,
+  confirmRealDraft,
+  setConfirmRealDraft,
+  creatingDraft,
+  createError,
+  latestDraft,
+  onClose,
+  onCreateDraft,
+}: {
+  mode: DataMode;
+  runtime: Runtime;
+  instance: Instance;
+  schema: NodeDraftSchema | undefined;
+  input: NodeDefinitionEditInput;
+  setInput: (input: NodeDefinitionEditInput) => void;
+  confirmRealDraft: boolean;
+  setConfirmRealDraft: (value: boolean) => void;
+  creatingDraft: boolean;
+  createError: string;
+  latestDraft?: NodeDraft;
+  onClose: () => void;
+  onCreateDraft: (event: FormEvent) => void;
+}) {
+  const changeRequest = latestDraft?.changeRequest || {};
+  const targets = (changeRequest.targets as Record<string, unknown>) || {};
+  const changeSummary = Array.isArray(changeRequest.change_summary) ? changeRequest.change_summary as Array<Record<string, unknown>> : [];
+  return (
+    <div className="drawer-backdrop" role="presentation">
+      <form className="side-drawer node-definition-editor-drawer" onSubmit={onCreateDraft}>
+        <div className="drawer-head">
+          <div>
+            <h2>Edit Definition</h2>
+            <span>{instance.instanceId} · {runtime.name} · {input.nodeId}</span>
+          </div>
+          <button type="button" className="icon-btn" title="关闭节点定义编辑器" onClick={onClose}><X size={16} /></button>
+        </div>
+        <div className="drawer-body">
+          <div className="drawer-note">
+            <strong>保存边界</strong>
+            <span>这里只生成 definition draft/change request，不直接修改 Runtime 或生产 workflow。正式应用必须走 agent-brain-plugins repo-first 流程。</span>
+          </div>
+          <div className="schema-note">
+            <span>{schema?.schemaId || "node-draft-schema"}</span>
+            <span>draft_type: edit_node_definition</span>
+            <span>target: agent-brain-plugins</span>
+            <span>publish disabled</span>
+          </div>
+          <section className="definition-editor-targets">
+            <div className="section-title"><span>保存目标</span><span>draft only</span></div>
+            <KeyValues data={{
+              runtime_sop_file: targets.runtime_sop_file || "runtime sop.yaml 不直接修改",
+              project_skill_node_yaml: targets.project_skill_node_yaml || `agent-brain-plugins/youtube-wiki/skills/sop-${input.nodeId}/node.yaml`,
+              project_template_sop_yaml: targets.project_template_sop_yaml || "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml",
+              draft_workspace: latestDraft?.draftPath || "raw/node-drafts/{draft_id}",
+            }} />
+          </section>
+          <section className="definition-editor-section">
+            <div className="section-title"><span>Identity</span><span>definition</span></div>
+            <div className="draft-grid">
+              <label>Node ID<input value={input.nodeId} disabled /></label>
+              <label>Title<input value={input.title} onChange={(event) => setInput({ ...input, title: event.target.value })} /></label>
+              <label>Mode<input value={input.mode} onChange={(event) => setInput({ ...input, mode: event.target.value })} /></label>
+              <label>Needs<input value={input.needs} onChange={(event) => setInput({ ...input, needs: event.target.value })} placeholder="youtube-fetch, notebooklm-research" /></label>
+            </div>
+            <label>Description<textarea value={input.description} onChange={(event) => setInput({ ...input, description: event.target.value })} /></label>
+          </section>
+          <section className="definition-editor-section">
+            <div className="section-title"><span>Inputs Contract</span><span>required / accepts / resolvers</span></div>
+            <textarea className="definition-json-editor" value={input.inputs} onChange={(event) => setInput({ ...input, inputs: event.target.value })} spellCheck={false} />
+          </section>
+          <section className="definition-editor-section">
+            <div className="section-title"><span>Optional Inputs</span><span>non-blocking</span></div>
+            <textarea className="definition-json-editor" value={input.optionalInputs} onChange={(event) => setInput({ ...input, optionalInputs: event.target.value })} spellCheck={false} />
+          </section>
+          <section className="definition-editor-section">
+            <div className="section-title"><span>Outputs Contract</span><span>path / relayable / role</span></div>
+            <textarea className="definition-json-editor" value={input.outputs} onChange={(event) => setInput({ ...input, outputs: event.target.value })} spellCheck={false} />
+          </section>
+          <section className="definition-editor-section">
+            <div className="section-title"><span>Capabilities</span><span>GitHub / Telegram / SSE</span></div>
+            <textarea className="definition-json-editor compact" value={input.capabilities} onChange={(event) => setInput({ ...input, capabilities: event.target.value })} spellCheck={false} />
+          </section>
+          {latestDraft ? (
+            <section className="definition-editor-review">
+              <div className="section-title"><span>Latest Draft Review</span><span>{latestDraft.validation?.status ? String(latestDraft.validation.status) : "created"}</span></div>
+              <KeyValues data={{
+                draft_id: latestDraft.draftId,
+                draft_type: latestDraft.draftType || "edit_node_definition",
+                change_count: latestDraft.validation?.change_count ?? changeSummary.length,
+              }} />
+              {changeSummary.length ? (
+                <div className="definition-change-list">
+                  {changeSummary.slice(0, 8).map((row, index) => (
+                    <article key={`${row.field || "field"}-${index}`}>
+                      <strong>{String(row.field || "field")}</strong>
+                      <small>before</small>
+                      <code>{formatValue(row.before)}</code>
+                      <small>after</small>
+                      <code>{formatValue(row.after)}</code>
+                    </article>
+                  ))}
+                </div>
+              ) : <Empty text="还没有生成本节点的编辑草稿" />}
+            </section>
+          ) : null}
+          {mode === "real" && (
+            <label className="confirm-row"><input type="checkbox" checked={confirmRealDraft} onChange={(event) => setConfirmRealDraft(event.target.checked)} />我确认只在真实 Runtime 上创建定义草稿，不发布生产 DAG</label>
+          )}
+          {createError && <div className="inline-error">{createError}</div>}
+        </div>
+        <div className="drawer-actions">
+          <button type="button" onClick={onClose}>Cancel</button>
+          <button type="submit" className="primary" disabled={creatingDraft || (mode === "real" && !confirmRealDraft)}>
+            {creatingDraft ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+            {creatingDraft ? "Creating" : "Save Draft"}
           </button>
         </div>
       </form>
@@ -11779,6 +12042,21 @@ function formatValue(value: unknown) {
   if (value === undefined || value === null || value === "") return "-";
   if (typeof value === "string") return value;
   return JSON.stringify(value, null, 2);
+}
+
+function formatJsonForEditor(value: unknown) {
+  if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)) return "{}";
+  return JSON.stringify(value, null, 2);
+}
+
+function parseEditorObject(label: string, value: string) {
+  const text = value.trim();
+  if (!text) return {};
+  const parsed = JSON.parse(text) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} 必须是 JSON object`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function ValidationSummary({ validation }: { validation: { status: string; missingOutputs: string[]; unexpectedOutputs: string[] } }) {
