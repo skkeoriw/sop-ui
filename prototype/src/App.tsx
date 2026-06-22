@@ -2181,6 +2181,85 @@ function NodeRunOutputValidationSummary({
   );
 }
 
+function pathBasename(value: unknown) {
+  const text = String(value || "").trim();
+  return text.split("/").filter(Boolean).pop() || text;
+}
+
+function artifactFromRecord(record: Record<string, unknown>): Artifact {
+  return {
+    id: String(record.id || record.path || ""),
+    producer: String(record.producer || ""),
+    output: String(record.output || ""),
+    type: String(record.type || "file"),
+    format: String(record.format || "text"),
+    path: String(record.path || ""),
+    title: String(record.title || pathBasename(record.path)),
+    size: Number(record.size || 0),
+    mimeType: String(record.mimeType || record.mime_type || "text/plain"),
+    tags: Array.isArray(record.tags) ? record.tags.map(String) : [],
+    resolution: String(record.resolution || "node-run-input-manifest"),
+    metadata: detailRecord(record.metadata),
+    preview: record.preview ? String(record.preview) : undefined,
+    previewTruncated: Boolean(record.previewTruncated || record.preview_truncated),
+  };
+}
+
+function nodeRunInputArtifacts(result: NodeRunResult | undefined, step: NodeTestStep | undefined) {
+  if (result?.inputArtifacts?.length) return result.inputArtifacts;
+  const stepDetail = detailRecord(step?.detail);
+  return detailList(stepDetail.materialized_inputs).map(artifactFromRecord);
+}
+
+function NodeRunInputArtifactsSummary({
+  result,
+  step,
+}: {
+  result: NodeRunResult | undefined;
+  step: NodeTestStep | undefined;
+}) {
+  const artifacts = nodeRunInputArtifacts(result, step);
+  const stepDetail = detailRecord(step?.detail);
+  const inputManifest = String(stepDetail.input_manifest || result?.detail?.input_manifest || "");
+  const inputDirectory = String(stepDetail.input_directory || result?.detail?.input_directory || "");
+  return (
+    <div className="node-run-input-artifacts">
+      <div className="section-title"><span>实际输入产物</span><span>{artifacts.length}</span></div>
+      {inputDirectory || inputManifest ? (
+        <div className="node-run-input-artifact-context">
+          {inputDirectory ? <span><b>输入目录</b>{inputDirectory}</span> : null}
+          {inputManifest ? <span><b>索引文件</b>{inputManifest}</span> : null}
+        </div>
+      ) : null}
+      <div className="node-run-input-artifact-list">
+        {artifacts.map((artifact) => {
+          const metadata = artifact.metadata || {};
+          const sourcePath = String(metadata.source_path || "");
+          const sourceNode = String(metadata.source_node || "");
+          const sourceRun = String(metadata.source_run_id || "");
+          const sourceOutput = String(metadata.source_output || artifact.output || "");
+          return (
+            <article key={artifact.id || artifact.path} className="node-run-input-artifact-card">
+              <div>
+                <strong>{artifact.title || pathBasename(sourcePath || artifact.path)}</strong>
+                <span className="status-pill done">{sourceOutput || "input"}</span>
+              </div>
+              <code>{artifact.path}</code>
+              {sourcePath ? <small>来自：{sourcePath}</small> : null}
+              {sourceNode || sourceRun ? <small>{[sourceNode, sourceRun].filter(Boolean).join(" · ")}</small> : null}
+              <details className="node-run-input-preview">
+                <summary><span>查看内容</span><ChevronDown size={14} /></summary>
+                <pre>{artifact.preview || "当前输入文件没有文本预览。"}</pre>
+              </details>
+            </article>
+          );
+        })}
+      </div>
+      {!artifacts.length ? <div className="node-run-empty">还没有物化后的输入文件。真实执行开始后会显示下游节点实际读取的文件。</div> : null}
+    </div>
+  );
+}
+
 function NodeRunStepDetailPanel({
   step,
   result,
@@ -2258,6 +2337,7 @@ function NodeRunStepDetailPanel({
           <NodeRunInnerFlow result={result} />
         </div>
       ) : null}
+      {step.id === "resolve-inputs" ? <NodeRunInputArtifactsSummary result={result} step={step} /> : null}
       {gitCapability ? <GitCapabilitySummary detail={gitCapability.detail} result={result} /> : null}
       {telegramCapability ? <TelegramCapabilitySummary detail={telegramCapability.detail} /> : null}
       {step.id === "validate-outputs" ? <NodeRunOutputValidationSummary result={result} step={step} /> : null}
@@ -3067,6 +3147,7 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
       ) : null}
       {tab === "inputs" ? (
         <div className="node-run-results-body">
+          <NodeRunInputArtifactsSummary result={result} step={(result.steps || []).find((item) => item.id === "resolve-inputs")} />
           <div className="node-test-detail">
             {resolvedInputs.map((item) => (
               <span key={String(item.name)} className="kv good">{String(item.name)}: {String(item.value ?? "").slice(0, 120)}</span>

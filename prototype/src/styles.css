@@ -8336,6 +8336,109 @@ pre {
   font-size: 11px;
 }
 
+.node-run-input-artifacts {
+  display: grid;
+  gap: 10px;
+}
+
+.node-run-input-artifact-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.node-run-input-artifact-context span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.node-run-input-artifact-context b {
+  color: var(--text);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.node-run-input-artifact-list {
+  display: grid;
+  gap: 8px;
+}
+
+.node-run-input-artifact-card {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(20, 184, 166, .28);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, .05);
+}
+
+.node-run-input-artifact-card > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-run-input-artifact-card strong,
+.node-run-input-artifact-card small,
+.node-run-input-artifact-card code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.node-run-input-artifact-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.node-run-input-artifact-card code {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.node-run-input-preview {
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.node-run-input-preview summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.node-run-input-preview pre {
+  max-height: 280px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border-radius: 7px;
+  background: #111827;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .node-run-capability-summary {
   min-width: 0;
   display: grid;

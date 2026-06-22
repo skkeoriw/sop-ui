@@ -380,6 +380,7 @@ export interface Artifact {
   tags: string[];
   resolution: string;
   ownership?: string;
+  metadata?: Record<string, unknown>;
   preview?: string;
   previewTruncated?: boolean;
 }
@@ -671,6 +672,7 @@ export interface NodeRunResult {
   innerSteps?: NodeTestStep[];
   events?: NodeRunEvent[];
   artifacts?: Artifact[];
+  inputArtifacts?: Artifact[];
   businessArtifacts?: Artifact[];
   actualOutputs?: Record<string, unknown>;
   outputCategories?: Record<string, unknown>;

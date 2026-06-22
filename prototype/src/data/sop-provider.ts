@@ -402,6 +402,7 @@ function mapArtifact(artifact: Record<string, unknown>) {
     tags: (artifact.tags as string[]) || [],
     resolution: String(artifact.resolution || ""),
     ownership: artifact.ownership ? String(artifact.ownership) : undefined,
+    metadata: (artifact.metadata as Record<string, unknown>) || {},
     preview: artifact.preview ? String(artifact.preview) : undefined,
     previewTruncated: Boolean(artifact.preview_truncated)
   };
@@ -792,6 +793,7 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     innerSteps: ((raw.inner_steps as Array<Record<string, unknown>>) || ((raw.detail as Record<string, unknown>)?.inner_steps as Array<Record<string, unknown>>) || []).map(mapNodeTestStep),
     events,
     artifacts: ((raw.artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
+    inputArtifacts: ((raw.input_artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     businessArtifacts: ((raw.business_artifacts as Array<Record<string, unknown>>) || []).map(mapArtifact),
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
     outputCategories: (raw.output_categories as Record<string, unknown>) || {},
