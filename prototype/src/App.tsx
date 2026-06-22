@@ -2392,13 +2392,18 @@ function NodeRunInputArtifactsSummary({
           </div>
           {manifestItems.length ? (
             <div className="node-run-relay-resolution-list">
-              {manifestItems.map((item, index) => (
-                <article key={`${String(item.path || index)}-${String(item.source_output || "")}`}>
-                  <strong>{String(item.source_output || item.output || "output")} → {String(item.target_input || item.input_name || "input")}</strong>
-                  <code>{String(item.path || "")}</code>
-                  {item.value_preview ? <pre>{String(item.value_preview)}</pre> : null}
-                </article>
-              ))}
+              {manifestItems.map((item, index) => {
+                const materializedPath = String(item.materialized_path || item.path || "");
+                const sourcePath = String(item.source_path || "");
+                return (
+                  <article key={`${materializedPath || String(item.path || index)}-${String(item.source_output || "")}`}>
+                    <strong>{String(item.source_output || item.output || "output")} → {String(item.target_input || item.input_name || "input")}</strong>
+                    <code>{materializedPath}</code>
+                    {sourcePath ? <small>来源文件：{sourcePath}</small> : null}
+                    {item.value_preview ? <pre>{String(item.value_preview)}</pre> : null}
+                  </article>
+                );
+              })}
             </div>
           ) : null}
         </div>
