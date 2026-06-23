@@ -1,5 +1,5 @@
 import { FormEvent, ReactNode, memo, useEffect, useMemo, useState } from "react";
-import { Background, Controls, Edge, Handle, MiniMap, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
+import { Background, Connection, Controls, Edge, Handle, MiniMap, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -135,6 +135,7 @@ type WorkflowDraftState = {
   goal: string;
   nodes: WorkflowDraftNode[];
   edges: WorkflowDraftEdge[];
+  positions?: Record<string, { x: number; y: number }>;
 };
 type WorkflowDraftEvaluation = {
   status: WorkflowDraftEdgeStatus;
@@ -156,6 +157,12 @@ interface NodeRunStepNodeData extends Record<string, unknown> {
   index: number;
   selected: boolean;
   active: boolean;
+}
+
+interface WorkflowDraftFlowNodeData extends Record<string, unknown> {
+  node: NodeRegistryItem;
+  selected: boolean;
+  onRemove: (nodeId: string) => void;
 }
 
 const statusOrder: StageStatus[] = ["running", "waiting", "failed", "skipped", "done"];
@@ -4547,6 +4554,41 @@ const StageNode = memo(({ data }: NodeProps<Node<StageNodeData>>) => {
 
 const nodeTypes = { stage: StageNode };
 
+const WorkflowDraftFlowNode = memo(({ data }: NodeProps<Node<WorkflowDraftFlowNodeData>>) => {
+  const { node, selected, onRemove } = data;
+  const inputCount = Object.keys(node.inputs || {}).length;
+  const outputCount = Object.keys(node.outputs || {}).length;
+  return (
+    <div className={`workflow-draft-flow-node ${selected ? "selected" : ""}`}>
+      <Handle type="target" position={Position.Left} />
+      <div className="workflow-draft-flow-node-top">
+        <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+        <button
+          type="button"
+          className="icon-btn compact"
+          title="Remove node from draft"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove(node.nodeId);
+          }}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+      <strong title={node.title || node.nodeId}>{node.title || node.nodeId}</strong>
+      <code title={node.nodeId}>{node.nodeId}</code>
+      <div className="workflow-draft-flow-node-metrics">
+        <span>{inputCount} inputs</span>
+        <span>{outputCount} outputs</span>
+      </div>
+      <p title={workflowDraftNodeAgentSummary(node)}>{workflowDraftNodeAgentSummary(node)}</p>
+      <Handle type="source" position={Position.Right} />
+    </div>
+  );
+});
+
+const workflowDraftNodeTypes = { workflowDraft: WorkflowDraftFlowNode };
+
 export default function App() {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<DataMode>(getMode);
@@ -7723,6 +7765,10 @@ function WorkflowCatalog({
   const [draftNodeSearch, setDraftNodeSearch] = useState("");
   const [draftFromNode, setDraftFromNode] = useState("");
   const [draftToNode, setDraftToNode] = useState("");
+  const [selectedDraftNodeId, setSelectedDraftNodeId] = useState("");
+  const [selectedDraftEdgeId, setSelectedDraftEdgeId] = useState("");
+  const [draftCanvasMessage, setDraftCanvasMessage] = useState("从节点右侧 handle 拖到另一个节点左侧 handle，可直接创建接力连接。");
+  const [draftNodePositions, setDraftNodePositions] = useState<Record<string, { x: number; y: number }>>(() => draft.positions || {});
   const filteredWorkflows = useMemo(() => {
     const query = workflowSearch.trim().toLowerCase();
     return workflows.filter((item) => {
@@ -7764,16 +7810,47 @@ function WorkflowCatalog({
     counts[status] = (counts[status] || 0) + 1;
     return counts;
   }, {} as Record<WorkflowDraftEdgeStatus, number>);
+  const selectedDraftNode = selectedDraftNodeId ? nodesById.get(selectedDraftNodeId) : undefined;
+  const selectedDraftEdge = draft.edges.find((edge) => edge.id === selectedDraftEdgeId);
+  const selectedDraftEdgeEvaluation = selectedDraftEdge ? draftEdgeEvaluations.get(selectedDraftEdge.id) || evaluateWorkflowDraftEdge(selectedDraftEdge, nodesById) : undefined;
+  const draftFlowNodes = useMemo<Node<WorkflowDraftFlowNodeData>[]>(() => draftNodes.map((node, index) => {
+    const fallbackPosition = {
+      x: Math.floor(index / 3) * 292,
+      y: (index % 3) * 174,
+    };
+    return {
+      id: node.nodeId,
+      type: "workflowDraft",
+      position: draftNodePositions[node.nodeId] || fallbackPosition,
+      data: {
+        node,
+        selected: selectedDraftNodeId === node.nodeId,
+        onRemove: removeDraftNode,
+      },
+    };
+  }), [draftNodePositions, draftNodes, selectedDraftNodeId]);
+  const draftFlowEdges = useMemo<Edge[]>(() => draft.edges.map((edge) => {
+    const evaluation = draftEdgeEvaluations.get(edge.id) || evaluateWorkflowDraftEdge(edge, nodesById);
+    return {
+      id: edge.id,
+      source: edge.from,
+      target: edge.to,
+      type: "smoothstep",
+      label: workflowDraftStatusLabel(evaluation.status),
+      animated: evaluation.status === "stale",
+      className: `workflow-draft-flow-edge ${evaluation.status} ${selectedDraftEdgeId === edge.id ? "selected" : ""}`,
+    };
+  }), [draft.edges, draftEdgeEvaluations, nodesById, selectedDraftEdgeId]);
   useEffect(() => {
     if (!selectedWorkflowId && workflows[0]) setSelectedWorkflowId(workflows[0].workflowId);
   }, [selectedWorkflowId, workflows]);
   useEffect(() => {
     try {
-      window.localStorage.setItem(WORKFLOW_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+      window.localStorage.setItem(WORKFLOW_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft, positions: draftNodePositions }));
     } catch {
       // Locked-down browsers can reject localStorage; the draft still works in memory.
     }
-  }, [draft]);
+  }, [draft, draftNodePositions]);
   useEffect(() => {
     if (!draftFromNode || !draftNodeIds.has(draftFromNode)) setDraftFromNode(draft.nodes[0]?.nodeId || "");
     if (!draftToNode || !draftNodeIds.has(draftToNode)) setDraftToNode(draft.nodes.find((node) => node.nodeId !== (draftFromNode || draft.nodes[0]?.nodeId))?.nodeId || "");
@@ -7781,10 +7858,20 @@ function WorkflowCatalog({
   function addDraftNode(nodeId: string) {
     const node = nodesById.get(nodeId);
     if (!node || draft.nodes.some((item) => item.nodeId === nodeId)) return;
+    const nextIndex = draft.nodes.length;
+    setDraftNodePositions((current) => ({
+      ...current,
+      [nodeId]: current[nodeId] || {
+        x: Math.floor(nextIndex / 3) * 292,
+        y: (nextIndex % 3) * 174,
+      },
+    }));
     setDraft((current) => ({
       ...current,
       nodes: [...current.nodes, { nodeId, signature: workflowDraftNodeSignature(node) }],
     }));
+    setSelectedDraftNodeId(nodeId);
+    setSelectedDraftEdgeId("");
   }
   function removeDraftNode(nodeId: string) {
     setDraft((current) => ({
@@ -7792,29 +7879,48 @@ function WorkflowCatalog({
       nodes: current.nodes.filter((node) => node.nodeId !== nodeId),
       edges: current.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId),
     }));
+    setDraftNodePositions((current) => {
+      const next = { ...current };
+      delete next[nodeId];
+      return next;
+    });
+    if (selectedDraftNodeId === nodeId) setSelectedDraftNodeId("");
+    if (selectedDraftEdge && (selectedDraftEdge.from === nodeId || selectedDraftEdge.to === nodeId)) setSelectedDraftEdgeId("");
   }
-  function addDraftEdge() {
-    if (!draftFromNode || !draftToNode || draftFromNode === draftToNode) return;
-    const from = nodesById.get(draftFromNode);
-    const to = nodesById.get(draftToNode);
+  function addDraftEdgeBetween(fromNodeId: string, toNodeId: string) {
+    const disabledReason = workflowDraftEdgeDisabledReason(draft, fromNodeId, toNodeId, nodesById);
+    if (disabledReason) {
+      setDraftCanvasMessage(`无法创建接力：${disabledReason}`);
+      return;
+    }
+    const from = nodesById.get(fromNodeId);
+    const to = nodesById.get(toNodeId);
     if (!from || !to) return;
-    const duplicate = draft.edges.some((edge) => edge.from === draftFromNode && edge.to === draftToNode);
-    if (duplicate) return;
+    const nextEdgeId = `${fromNodeId}-to-${toNodeId}-${Date.now()}`;
     setDraft((current) => ({
       ...current,
       edges: [...current.edges, {
-        id: `${draftFromNode}-to-${draftToNode}-${Date.now()}`,
-        from: draftFromNode,
-        to: draftToNode,
+        id: nextEdgeId,
+        from: fromNodeId,
+        to: toNodeId,
         sourceIntent: workflowDraftNodeOutputIntent(from),
         targetIntent: workflowDraftNodeInputIntent(to),
         fromSignature: workflowDraftNodeSignature(from),
         toSignature: workflowDraftNodeSignature(to),
       }],
     }));
+    setDraftFromNode(fromNodeId);
+    setDraftToNode(toNodeId);
+    setSelectedDraftNodeId("");
+    setSelectedDraftEdgeId(nextEdgeId);
+    setDraftCanvasMessage(`已创建接力：${fromNodeId} -> ${toNodeId}`);
+  }
+  function addDraftEdge() {
+    addDraftEdgeBetween(draftFromNode, draftToNode);
   }
   function removeDraftEdge(edgeId: string) {
     setDraft((current) => ({ ...current, edges: current.edges.filter((edge) => edge.id !== edgeId) }));
+    if (selectedDraftEdgeId === edgeId) setSelectedDraftEdgeId("");
   }
   function reEvaluateDraftEdge(edgeId: string) {
     setDraft((current) => ({
@@ -7835,6 +7941,9 @@ function WorkflowCatalog({
     setDraft(createEmptyWorkflowDraft());
     setDraftFromNode("");
     setDraftToNode("");
+    setSelectedDraftNodeId("");
+    setSelectedDraftEdgeId("");
+    setDraftNodePositions({});
   }
   function seedYoutubeWikiDraft() {
     const seedNodes = WORKFLOW_DRAFT_NODE_PRIORITY
@@ -7863,11 +7972,19 @@ function WorkflowCatalog({
       goal: "YouTube 元数据获取 agent 将视频来源交给深度研究 agent，深度研究 agent 再把研究上下文交给 wiki-build agent 生成 wiki 页面。",
       nodes: nextNodes,
       edges: nextEdges,
+      positions: Object.fromEntries(nextNodes.map((node, index) => [node.nodeId, { x: index * 292, y: index % 2 ? 96 : 0 }])),
     });
+    setDraftNodePositions(Object.fromEntries(nextNodes.map((node, index) => [node.nodeId, { x: index * 292, y: index % 2 ? 96 : 0 }])));
     setDraftFromNode(nextNodes[0]?.nodeId || "");
     setDraftToNode(nextNodes[1]?.nodeId || "");
+    setSelectedDraftNodeId(nextNodes[0]?.nodeId || "");
+    setSelectedDraftEdgeId("");
   }
-  const canAddEdge = Boolean(draftFromNode && draftToNode && draftFromNode !== draftToNode && !draft.edges.some((edge) => edge.from === draftFromNode && edge.to === draftToNode));
+  function connectDraftNodes(connection: Connection) {
+    addDraftEdgeBetween(connection.source || "", connection.target || "");
+  }
+  const draftEdgeDisabledReason = workflowDraftEdgeDisabledReason(draft, draftFromNode, draftToNode, nodesById);
+  const canAddEdge = !draftEdgeDisabledReason;
   return (
     <section className="workflow-catalog-page">
       <section className="ops-page-header">
@@ -8014,7 +8131,7 @@ function WorkflowCatalog({
           </button>
         </div>
         <div className="workflow-draft-layout">
-          <section className="workflow-draft-compose">
+          <section className="workflow-draft-library">
             <div className="workflow-draft-form">
               <label>
                 <span>草稿名称</span>
@@ -8027,7 +8144,7 @@ function WorkflowCatalog({
             </div>
 
             <div className="workflow-draft-node-picker">
-              <div className="section-title"><span>添加节点</span><span>{filteredDraftCandidates.length}/{nodes.length}</span></div>
+              <div className="section-title"><span>节点库</span><span>{filteredDraftCandidates.length}/{nodes.length}</span></div>
               <label className="search-box">
                 <Search size={14} />
                 <input value={draftNodeSearch} onChange={(event) => setDraftNodeSearch(event.target.value)} placeholder="Search node catalog" />
@@ -8049,24 +8166,56 @@ function WorkflowCatalog({
           </section>
 
           <section className="workflow-draft-canvas">
-            <div className="section-title"><span>草稿节点</span><span>{draft.name || "unnamed"}</span></div>
-            <div className="workflow-draft-node-list">
-              {draftNodes.map((node) => (
-                <article key={node.nodeId} className="workflow-draft-node-card">
-                  <div>
-                    <strong>{node.title || node.nodeId}</strong>
-                    <span>{node.nodeId}</span>
-                  </div>
-                  <div className="workflow-draft-node-meta">
-                    <span>{Object.keys(node.inputs || {}).length} inputs</span>
-                    <span>{Object.keys(node.outputs || {}).length} outputs</span>
-                    <button type="button" className="icon-btn" title="Remove node from draft" onClick={() => removeDraftNode(node.nodeId)}>
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </article>
-              ))}
-              {!draftNodes.length && <Empty text="从左侧添加节点来开始 workflow draft" />}
+            <div className="section-title"><span>Handoff Canvas</span><span>{draft.name || "unnamed"}</span></div>
+            <div className="workflow-draft-react-flow">
+              {draftNodes.length ? (
+                <ReactFlow
+                  nodes={draftFlowNodes}
+                  edges={draftFlowEdges}
+                  nodeTypes={workflowDraftNodeTypes}
+                  fitView
+                  fitViewOptions={{ padding: .24 }}
+                  minZoom={.35}
+                  maxZoom={1.55}
+                  nodesDraggable
+                  nodesConnectable
+                  elementsSelectable
+                  onConnect={connectDraftNodes}
+                  onNodeClick={(_, node) => {
+                    setSelectedDraftNodeId(node.id);
+                    setSelectedDraftEdgeId("");
+                  }}
+                  onEdgeClick={(_, edge) => {
+                    setSelectedDraftEdgeId(edge.id);
+                    setSelectedDraftNodeId("");
+                    const draftEdge = draft.edges.find((item) => item.id === edge.id);
+                    if (draftEdge) {
+                      setDraftFromNode(draftEdge.from);
+                      setDraftToNode(draftEdge.to);
+                    }
+                  }}
+                  onPaneClick={() => {
+                    setSelectedDraftNodeId("");
+                    setSelectedDraftEdgeId("");
+                  }}
+                  onNodeDragStop={(_, node) => {
+                    setDraftNodePositions((current) => ({ ...current, [node.id]: node.position }));
+                  }}
+                  defaultEdgeOptions={{ className: "workflow-draft-flow-edge" }}
+                >
+                  <Background color="#dfe4ec" gap={22} />
+                  <Controls />
+                  <MiniMap pannable zoomable />
+                </ReactFlow>
+              ) : (
+                <div className="workflow-draft-canvas-empty">
+                  <Network size={22} />
+                  <span>从左侧节点库添加节点，然后从节点右侧 handle 拖到另一个节点左侧 handle 创建 handoff。</span>
+                </div>
+              )}
+            </div>
+            <div className={`workflow-draft-canvas-message ${draftCanvasMessage.startsWith("无法") ? "blocked" : ""}`}>
+              {draftCanvasMessage}
             </div>
 
             <div className="workflow-draft-edge-form">
@@ -8088,42 +8237,86 @@ function WorkflowCatalog({
                 <GitBranch size={15} />
                 创建接力连接
               </button>
+              <span className={`workflow-draft-edge-reason ${draftEdgeDisabledReason ? "disabled" : ""}`}>
+                {draftEdgeDisabledReason || "也可以直接在画布上拖线连接节点"}
+              </span>
             </div>
           </section>
 
-          <aside className="workflow-draft-edge-panel">
+          <aside className="workflow-draft-inspector">
             <div className="section-title">
-              <span>接力评估</span>
+              <span>Inspector</span>
               <span>{draftStatusCounts.compatible || 0} compatible · {draftStatusCounts.needs_review || 0} review · {draftStatusCounts.incompatible || 0} incompatible · {draftStatusCounts.stale || 0} stale</span>
             </div>
-            <div className="workflow-draft-edge-list">
-              {draft.edges.map((edge) => {
-                const evaluation = draftEdgeEvaluations.get(edge.id) || evaluateWorkflowDraftEdge(edge, nodesById);
-                return (
-                  <article key={edge.id} className={`workflow-draft-edge-card ${evaluation.status}`}>
-                    <div className="workflow-draft-edge-head">
-                      <strong>{edge.from} → {edge.to}</strong>
+            {selectedDraftEdge && selectedDraftEdgeEvaluation ? (
+              <article className={`workflow-draft-edge-card selected ${selectedDraftEdgeEvaluation.status}`}>
+                <div className="workflow-draft-edge-head">
+                  <strong>{selectedDraftEdge.from} → {selectedDraftEdge.to}</strong>
+                  <span className={`status-pill ${workflowDraftStatusTone(selectedDraftEdgeEvaluation.status)}`}>{workflowDraftStatusLabel(selectedDraftEdgeEvaluation.status)}</span>
+                </div>
+                <div className="workflow-draft-handoff-copy expanded">
+                  <span><b>sourceIntent → targetIntent</b>{selectedDraftEdge.sourceIntent} → {selectedDraftEdge.targetIntent}</span>
+                  <span><b>上游交付</b>{selectedDraftEdgeEvaluation.delivers}</span>
+                  <span><b>下游需要</b>{selectedDraftEdgeEvaluation.needs}</span>
+                  <span><b>系统判断</b>{selectedDraftEdgeEvaluation.reason}</span>
+                </div>
+                <div className="workflow-draft-edge-actions">
+                  <button type="button" className="ghost-btn compact" onClick={() => reEvaluateDraftEdge(selectedDraftEdge.id)}>
+                    <RefreshCw size={14} />重新评估
+                  </button>
+                  <button type="button" className="ghost-btn compact" onClick={() => removeDraftEdge(selectedDraftEdge.id)}>
+                    <Trash2 size={14} />删除
+                  </button>
+                </div>
+              </article>
+            ) : selectedDraftNode ? (
+              <article className="workflow-draft-node-inspector">
+                <div className="workflow-draft-inspector-head">
+                  <span className="stage-letter">{selectedDraftNode.ui?.stageLetter || selectedDraftNode.nodeId.slice(0, 1).toUpperCase()}</span>
+                  <div>
+                    <strong>{selectedDraftNode.title || selectedDraftNode.nodeId}</strong>
+                    <code>{selectedDraftNode.nodeId}</code>
+                  </div>
+                </div>
+                <div className="workflow-draft-node-stats">
+                  <span>{Object.keys(selectedDraftNode.inputs || {}).length} inputs</span>
+                  <span>{Object.keys(selectedDraftNode.outputs || {}).length} outputs</span>
+                  <span>{workflowDraftNodeAgentSummary(selectedDraftNode)}</span>
+                </div>
+                <div className="workflow-draft-handoff-copy expanded">
+                  <span><b>输入意图</b>{workflowDraftNodeInputIntent(selectedDraftNode)}</span>
+                  <span><b>输出意图</b>{workflowDraftNodeOutputIntent(selectedDraftNode)}</span>
+                </div>
+                <div className="workflow-draft-edge-actions">
+                  <button type="button" className="ghost-btn compact" onClick={() => removeDraftNode(selectedDraftNode.nodeId)}>
+                    <Trash2 size={14} />从草稿删除
+                  </button>
+                </div>
+              </article>
+            ) : (
+              <div className="workflow-draft-edge-list">
+                {draft.edges.map((edge) => {
+                  const evaluation = draftEdgeEvaluations.get(edge.id) || evaluateWorkflowDraftEdge(edge, nodesById);
+                  return (
+                    <button
+                      key={edge.id}
+                      type="button"
+                      className={`workflow-draft-edge-row ${evaluation.status}`}
+                      onClick={() => {
+                        setSelectedDraftEdgeId(edge.id);
+                        setSelectedDraftNodeId("");
+                        setDraftFromNode(edge.from);
+                        setDraftToNode(edge.to);
+                      }}
+                    >
+                      <span>{edge.from} → {edge.to}</span>
                       <span className={`status-pill ${workflowDraftStatusTone(evaluation.status)}`}>{workflowDraftStatusLabel(evaluation.status)}</span>
-                    </div>
-                    <div className="workflow-draft-handoff-copy">
-                      <span><b>保存意图</b>{edge.sourceIntent} → {edge.targetIntent}</span>
-                      <span><b>上游交付</b>{evaluation.delivers}</span>
-                      <span><b>下游需要</b>{evaluation.needs}</span>
-                      <span><b>系统判断</b>{evaluation.reason}</span>
-                    </div>
-                    <div className="workflow-draft-edge-actions">
-                      <button type="button" className="ghost-btn compact" onClick={() => reEvaluateDraftEdge(edge.id)}>
-                        <RefreshCw size={14} />重新评估
-                      </button>
-                      <button type="button" className="ghost-btn compact" onClick={() => removeDraftEdge(edge.id)}>
-                        <Trash2 size={14} />删除
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-              {!draft.edges.length && <Empty text="连接两个 draft 节点后查看 handoff 语义评估" />}
-            </div>
+                    </button>
+                  );
+                })}
+                {!draft.edges.length && <Empty text="选择节点查看输入/输出意图，连接节点后查看 handoff 评估" />}
+              </div>
+            )}
           </aside>
         </div>
       </section>
@@ -8176,6 +8369,9 @@ function readWorkflowDraftFromStorage(): WorkflowDraftState {
             toSignature: typeof item.toSignature === "string" ? item.toSignature : "",
           }))
         : [],
+      positions: parsed.positions && typeof parsed.positions === "object" && !Array.isArray(parsed.positions)
+        ? parsed.positions as Record<string, { x: number; y: number }>
+        : {},
     };
   } catch {
     return createEmptyWorkflowDraft();
@@ -8316,6 +8512,22 @@ function workflowDraftStatusTone(status: WorkflowDraftEdgeStatus) {
   if (status === "needs_review") return "waiting";
   if (status === "incompatible") return "failed";
   return "stale";
+}
+
+function workflowDraftNodeAgentSummary(node: NodeRegistryItem | undefined) {
+  if (!node) return "agent / skill pending";
+  const agent = String(node.executor?.agent || node.executor?.type || node.case || node.mode || "agent");
+  const skill = String(node.skill?.id || node.executor?.skill || node.skillScript || "skill pending");
+  return `${agent} · ${skill}`;
+}
+
+function workflowDraftEdgeDisabledReason(draft: WorkflowDraftState, fromNodeId: string, toNodeId: string, nodesById: Map<string, NodeRegistryItem>) {
+  if (draft.nodes.length < 2) return "少于2节点";
+  if (!fromNodeId || !toNodeId) return "未选上下游";
+  if (fromNodeId === toNodeId) return "同节点";
+  if (draft.edges.some((edge) => edge.from === fromNodeId && edge.to === toNodeId)) return "边已存在";
+  if (!nodesById.has(fromNodeId) || !nodesById.has(toNodeId)) return "节点未加载";
+  return "";
 }
 
 function ManagementActionCard({
