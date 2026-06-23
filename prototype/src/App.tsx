@@ -116,6 +116,32 @@ type RuntimeProbeResult = {
   summary: string;
   checkedAt: string;
 };
+type WorkflowDraftEdgeStatus = "compatible" | "needs_review" | "incompatible" | "stale";
+type WorkflowDraftNode = {
+  nodeId: string;
+  signature: string;
+};
+type WorkflowDraftEdge = {
+  id: string;
+  from: string;
+  to: string;
+  sourceIntent: string;
+  targetIntent: string;
+  fromSignature: string;
+  toSignature: string;
+};
+type WorkflowDraftState = {
+  name: string;
+  goal: string;
+  nodes: WorkflowDraftNode[];
+  edges: WorkflowDraftEdge[];
+};
+type WorkflowDraftEvaluation = {
+  status: WorkflowDraftEdgeStatus;
+  delivers: string;
+  needs: string;
+  reason: string;
+};
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -140,6 +166,8 @@ const GLOBAL_TUNNEL_ADMIN_URL = "https://tunnel-admin-9vt.pages.dev";
 const RUNTIME_HOST_ARCHITECTURE_DOC_URL = "https://pub-6c235832628e401093619867c6100e22.r2.dev/sop-runtime-host-architecture.html";
 const DEFAULT_HERMES_SMOKE_ROUTE = "sop-runtime-hermes-smoke";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
+const WORKFLOW_DRAFT_STORAGE_KEY = "sop-ui.workflow-draft-builder.v1";
+const WORKFLOW_DRAFT_NODE_PRIORITY = ["youtube-fetch", "youtube-deep-research", "wiki-build"];
 type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
 type RuntimeManagementConfigPreview = RuntimeInheritancePreview & {
   backend?: string;
@@ -5010,7 +5038,7 @@ export default function App() {
   const nodesQuery = useQuery({
     queryKey: queryKeys.nodes(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodes(runtime!, instance!.instanceId),
-    enabled: Boolean(runtime && instance && (viewMode === "instance" || viewMode === "nodes"))
+    enabled: Boolean(runtime && instance && (viewMode === "instance" || viewMode === "workflows" || viewMode === "nodes"))
   });
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
@@ -6029,6 +6057,7 @@ export default function App() {
         {viewMode === "workflows" ? (
           <WorkflowCatalog
             workflows={workflowDefinitions}
+            nodes={managedNodes}
             runtimes={runtimes}
             runtime={runtime}
             selectedInstance={instance}
@@ -7664,6 +7693,7 @@ function RuntimeDirectory({
 
 function WorkflowCatalog({
   workflows,
+  nodes,
   runtimes,
   runtime,
   selectedInstance,
@@ -7675,6 +7705,7 @@ function WorkflowCatalog({
   onOpenManagement,
 }: {
   workflows: WorkflowDefinition[];
+  nodes: NodeRegistryItem[];
   runtimes: Runtime[];
   runtime: Runtime | undefined;
   selectedInstance: Instance | undefined;
@@ -7688,6 +7719,10 @@ function WorkflowCatalog({
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [workflowSearch, setWorkflowSearch] = useState("");
   const [workflowTypeFilter, setWorkflowTypeFilter] = useState("all");
+  const [draft, setDraft] = useState<WorkflowDraftState>(() => readWorkflowDraftFromStorage());
+  const [draftNodeSearch, setDraftNodeSearch] = useState("");
+  const [draftFromNode, setDraftFromNode] = useState("");
+  const [draftToNode, setDraftToNode] = useState("");
   const filteredWorkflows = useMemo(() => {
     const query = workflowSearch.trim().toLowerCase();
     return workflows.filter((item) => {
@@ -7700,9 +7735,139 @@ function WorkflowCatalog({
   const selectedWorkflow = workflows.find((item) => item.workflowId === selectedWorkflowId) || workflows[0];
   const managementWorkflow = selectedWorkflow?.workflowId === "runtime-management";
   const defaultInstance = selectedInstance || instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.nodeId, node])), [nodes]);
+  const draftNodeIds = useMemo(() => new Set(draft.nodes.map((node) => node.nodeId)), [draft.nodes]);
+  const draftNodes = draft.nodes.map((item) => nodesById.get(item.nodeId)).filter(Boolean) as NodeRegistryItem[];
+  const filteredDraftCandidates = useMemo(() => {
+    const query = draftNodeSearch.trim().toLowerCase();
+    return [...nodes]
+      .filter((node) => !draftNodeIds.has(node.nodeId))
+      .filter((node) => {
+        if (!query) return true;
+        const searchable = [node.nodeId, node.title, node.description, node.case, node.ui?.category].filter(Boolean).join(" ").toLowerCase();
+        return searchable.includes(query);
+      })
+      .sort((left, right) => {
+        const leftPriority = WORKFLOW_DRAFT_NODE_PRIORITY.indexOf(left.nodeId);
+        const rightPriority = WORKFLOW_DRAFT_NODE_PRIORITY.indexOf(right.nodeId);
+        if (leftPriority !== rightPriority) return (leftPriority < 0 ? 99 : leftPriority) - (rightPriority < 0 ? 99 : rightPriority);
+        return nodeDefinitionOrder(left) - nodeDefinitionOrder(right);
+      });
+  }, [draftNodeIds, draftNodeSearch, nodes]);
+  const draftEdgeEvaluations = useMemo(() => {
+    const evaluations = new Map<string, WorkflowDraftEvaluation>();
+    draft.edges.forEach((edge) => evaluations.set(edge.id, evaluateWorkflowDraftEdge(edge, nodesById)));
+    return evaluations;
+  }, [draft.edges, nodesById]);
+  const draftStatusCounts = draft.edges.reduce((counts, edge) => {
+    const status = draftEdgeEvaluations.get(edge.id)?.status || "needs_review";
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {} as Record<WorkflowDraftEdgeStatus, number>);
   useEffect(() => {
     if (!selectedWorkflowId && workflows[0]) setSelectedWorkflowId(workflows[0].workflowId);
   }, [selectedWorkflowId, workflows]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(WORKFLOW_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch {
+      // Locked-down browsers can reject localStorage; the draft still works in memory.
+    }
+  }, [draft]);
+  useEffect(() => {
+    if (!draftFromNode || !draftNodeIds.has(draftFromNode)) setDraftFromNode(draft.nodes[0]?.nodeId || "");
+    if (!draftToNode || !draftNodeIds.has(draftToNode)) setDraftToNode(draft.nodes.find((node) => node.nodeId !== (draftFromNode || draft.nodes[0]?.nodeId))?.nodeId || "");
+  }, [draft.nodes, draftFromNode, draftNodeIds, draftToNode]);
+  function addDraftNode(nodeId: string) {
+    const node = nodesById.get(nodeId);
+    if (!node || draft.nodes.some((item) => item.nodeId === nodeId)) return;
+    setDraft((current) => ({
+      ...current,
+      nodes: [...current.nodes, { nodeId, signature: workflowDraftNodeSignature(node) }],
+    }));
+  }
+  function removeDraftNode(nodeId: string) {
+    setDraft((current) => ({
+      ...current,
+      nodes: current.nodes.filter((node) => node.nodeId !== nodeId),
+      edges: current.edges.filter((edge) => edge.from !== nodeId && edge.to !== nodeId),
+    }));
+  }
+  function addDraftEdge() {
+    if (!draftFromNode || !draftToNode || draftFromNode === draftToNode) return;
+    const from = nodesById.get(draftFromNode);
+    const to = nodesById.get(draftToNode);
+    if (!from || !to) return;
+    const duplicate = draft.edges.some((edge) => edge.from === draftFromNode && edge.to === draftToNode);
+    if (duplicate) return;
+    setDraft((current) => ({
+      ...current,
+      edges: [...current.edges, {
+        id: `${draftFromNode}-to-${draftToNode}-${Date.now()}`,
+        from: draftFromNode,
+        to: draftToNode,
+        sourceIntent: workflowDraftNodeOutputIntent(from),
+        targetIntent: workflowDraftNodeInputIntent(to),
+        fromSignature: workflowDraftNodeSignature(from),
+        toSignature: workflowDraftNodeSignature(to),
+      }],
+    }));
+  }
+  function removeDraftEdge(edgeId: string) {
+    setDraft((current) => ({ ...current, edges: current.edges.filter((edge) => edge.id !== edgeId) }));
+  }
+  function reEvaluateDraftEdge(edgeId: string) {
+    setDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => {
+        if (edge.id !== edgeId) return edge;
+        return {
+          ...edge,
+          sourceIntent: workflowDraftNodeOutputIntent(nodesById.get(edge.from)),
+          targetIntent: workflowDraftNodeInputIntent(nodesById.get(edge.to)),
+          fromSignature: workflowDraftNodeSignature(nodesById.get(edge.from)),
+          toSignature: workflowDraftNodeSignature(nodesById.get(edge.to)),
+        };
+      }),
+    }));
+  }
+  function resetDraft() {
+    setDraft(createEmptyWorkflowDraft());
+    setDraftFromNode("");
+    setDraftToNode("");
+  }
+  function seedYoutubeWikiDraft() {
+    const seedNodes = WORKFLOW_DRAFT_NODE_PRIORITY
+      .map((nodeId) => nodesById.get(nodeId))
+      .filter(Boolean) as NodeRegistryItem[];
+    const nextNodes = seedNodes.map((node) => ({ nodeId: node.nodeId, signature: workflowDraftNodeSignature(node) }));
+    const nextEdges = [
+      ["youtube-fetch", "youtube-deep-research"],
+      ["youtube-deep-research", "wiki-build"],
+    ].map(([fromId, toId]) => {
+      const from = nodesById.get(fromId);
+      const to = nodesById.get(toId);
+      if (!from || !to) return null;
+      return {
+        id: `${fromId}-to-${toId}-${Date.now()}`,
+        from: fromId,
+        to: toId,
+        sourceIntent: workflowDraftNodeOutputIntent(from),
+        targetIntent: workflowDraftNodeInputIntent(to),
+        fromSignature: workflowDraftNodeSignature(from),
+        toSignature: workflowDraftNodeSignature(to),
+      } as WorkflowDraftEdge;
+    }).filter(Boolean) as WorkflowDraftEdge[];
+    setDraft({
+      name: "youtube-wiki-handoff-draft",
+      goal: "YouTube 元数据获取 agent 将视频来源交给深度研究 agent，深度研究 agent 再把研究上下文交给 wiki-build agent 生成 wiki 页面。",
+      nodes: nextNodes,
+      edges: nextEdges,
+    });
+    setDraftFromNode(nextNodes[0]?.nodeId || "");
+    setDraftToNode(nextNodes[1]?.nodeId || "");
+  }
+  const canAddEdge = Boolean(draftFromNode && draftToNode && draftFromNode !== draftToNode && !draft.edges.some((edge) => edge.from === draftFromNode && edge.to === draftToNode));
   return (
     <section className="workflow-catalog-page">
       <section className="ops-page-header">
@@ -7823,6 +7988,145 @@ function WorkflowCatalog({
           ) : <Empty text="选择一个 Workflow Definition" />}
         </div>
       </section>
+
+      <section className="flow-panel workflow-draft-builder">
+        <div className="panel-head">
+          <div>
+            <strong>Workflow Draft Builder v1</strong>
+            <span>Draft only：只在浏览器本地编辑 agent handoff workflow 草稿，不发布生产 DAG 或 sop.yaml。</span>
+          </div>
+          <div className="draft-builder-status">
+            <span className="status-pill waiting">draft only</span>
+            <span>{draft.nodes.length} nodes</span>
+            <span>{draft.edges.length} handoffs</span>
+          </div>
+        </div>
+        <div className="workflow-draft-notice">
+          <AlertTriangle size={16} />
+          <span>Apply / Publish 后续必须走 agent-brain-plugins repo-first 流程；此页面只生成设计草稿和本地兼容性评估。</span>
+        </div>
+        <div className="workflow-draft-toolbar">
+          <button type="button" className="btn primary" disabled={!WORKFLOW_DRAFT_NODE_PRIORITY.every((nodeId) => nodesById.has(nodeId))} onClick={seedYoutubeWikiDraft}>
+            <Workflow size={15} />生成三节点 YouTube Wiki 草稿
+          </button>
+          <button type="button" className="btn" onClick={resetDraft}>
+            <RefreshCw size={15} />重置本地草稿
+          </button>
+        </div>
+        <div className="workflow-draft-layout">
+          <section className="workflow-draft-compose">
+            <div className="workflow-draft-form">
+              <label>
+                <span>草稿名称</span>
+                <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="workflow draft name" />
+              </label>
+              <label>
+                <span>工作流目标</span>
+                <textarea value={draft.goal} onChange={(event) => setDraft({ ...draft, goal: event.target.value })} placeholder="描述这个 agent 接力工作流要完成什么" />
+              </label>
+            </div>
+
+            <div className="workflow-draft-node-picker">
+              <div className="section-title"><span>添加节点</span><span>{filteredDraftCandidates.length}/{nodes.length}</span></div>
+              <label className="search-box">
+                <Search size={14} />
+                <input value={draftNodeSearch} onChange={(event) => setDraftNodeSearch(event.target.value)} placeholder="Search node catalog" />
+              </label>
+              <div className="workflow-draft-candidate-list">
+                {filteredDraftCandidates.slice(0, 9).map((node) => (
+                  <button key={node.nodeId} type="button" className="workflow-draft-candidate" onClick={() => addDraftNode(node.nodeId)}>
+                    <span className="stage-letter">{node.ui?.stageLetter || node.nodeId.slice(0, 1).toUpperCase()}</span>
+                    <span>
+                      <strong>{node.title || node.nodeId}</strong>
+                      <small>{node.nodeId} · {contractSummary(node)}</small>
+                    </span>
+                    <Plus size={15} />
+                  </button>
+                ))}
+                {!filteredDraftCandidates.length && <Empty text={nodes.length ? "没有可添加的节点" : "当前页面还没有加载节点目录"} />}
+              </div>
+            </div>
+          </section>
+
+          <section className="workflow-draft-canvas">
+            <div className="section-title"><span>草稿节点</span><span>{draft.name || "unnamed"}</span></div>
+            <div className="workflow-draft-node-list">
+              {draftNodes.map((node) => (
+                <article key={node.nodeId} className="workflow-draft-node-card">
+                  <div>
+                    <strong>{node.title || node.nodeId}</strong>
+                    <span>{node.nodeId}</span>
+                  </div>
+                  <div className="workflow-draft-node-meta">
+                    <span>{Object.keys(node.inputs || {}).length} inputs</span>
+                    <span>{Object.keys(node.outputs || {}).length} outputs</span>
+                    <button type="button" className="icon-btn" title="Remove node from draft" onClick={() => removeDraftNode(node.nodeId)}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!draftNodes.length && <Empty text="从左侧添加节点来开始 workflow draft" />}
+            </div>
+
+            <div className="workflow-draft-edge-form">
+              <label>
+                <span>上游 agent 交付</span>
+                <select value={draftFromNode} onChange={(event) => setDraftFromNode(event.target.value)} disabled={draft.nodes.length < 2}>
+                  <option value="">Select upstream node</option>
+                  {draft.nodes.map((item) => <option key={item.nodeId} value={item.nodeId}>{item.nodeId}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>下游 agent 接收</span>
+                <select value={draftToNode} onChange={(event) => setDraftToNode(event.target.value)} disabled={draft.nodes.length < 2}>
+                  <option value="">Select downstream node</option>
+                  {draft.nodes.filter((item) => item.nodeId !== draftFromNode).map((item) => <option key={item.nodeId} value={item.nodeId}>{item.nodeId}</option>)}
+                </select>
+              </label>
+              <button type="button" className="primary" disabled={!canAddEdge} onClick={addDraftEdge}>
+                <GitBranch size={15} />
+                创建接力连接
+              </button>
+            </div>
+          </section>
+
+          <aside className="workflow-draft-edge-panel">
+            <div className="section-title">
+              <span>接力评估</span>
+              <span>{draftStatusCounts.compatible || 0} compatible · {draftStatusCounts.needs_review || 0} review · {draftStatusCounts.incompatible || 0} incompatible · {draftStatusCounts.stale || 0} stale</span>
+            </div>
+            <div className="workflow-draft-edge-list">
+              {draft.edges.map((edge) => {
+                const evaluation = draftEdgeEvaluations.get(edge.id) || evaluateWorkflowDraftEdge(edge, nodesById);
+                return (
+                  <article key={edge.id} className={`workflow-draft-edge-card ${evaluation.status}`}>
+                    <div className="workflow-draft-edge-head">
+                      <strong>{edge.from} → {edge.to}</strong>
+                      <span className={`status-pill ${workflowDraftStatusTone(evaluation.status)}`}>{workflowDraftStatusLabel(evaluation.status)}</span>
+                    </div>
+                    <div className="workflow-draft-handoff-copy">
+                      <span><b>保存意图</b>{edge.sourceIntent} → {edge.targetIntent}</span>
+                      <span><b>上游交付</b>{evaluation.delivers}</span>
+                      <span><b>下游需要</b>{evaluation.needs}</span>
+                      <span><b>系统判断</b>{evaluation.reason}</span>
+                    </div>
+                    <div className="workflow-draft-edge-actions">
+                      <button type="button" className="ghost-btn compact" onClick={() => reEvaluateDraftEdge(edge.id)}>
+                        <RefreshCw size={14} />重新评估
+                      </button>
+                      <button type="button" className="ghost-btn compact" onClick={() => removeDraftEdge(edge.id)}>
+                        <Trash2 size={14} />删除
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+              {!draft.edges.length && <Empty text="连接两个 draft 节点后查看 handoff 语义评估" />}
+            </div>
+          </aside>
+        </div>
+      </section>
     </section>
   );
 }
@@ -7834,6 +8138,184 @@ function RuntimeHealthItem({ label, value, ok }: { label: string; value: string;
       <strong>{value || "-"}</strong>
     </div>
   );
+}
+
+function createEmptyWorkflowDraft(): WorkflowDraftState {
+  return {
+    name: "youtube-wiki-handoff-draft",
+    goal: "Fetch YouTube source material, research it deeply, then build wiki-ready pages through explicit agent handoffs.",
+    nodes: [],
+    edges: [],
+  };
+}
+
+function readWorkflowDraftFromStorage(): WorkflowDraftState {
+  if (typeof window === "undefined") return createEmptyWorkflowDraft();
+  try {
+    const raw = window.localStorage.getItem(WORKFLOW_DRAFT_STORAGE_KEY);
+    if (!raw) return createEmptyWorkflowDraft();
+    const parsed = JSON.parse(raw) as Partial<WorkflowDraftState>;
+    return {
+      name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name : createEmptyWorkflowDraft().name,
+      goal: typeof parsed.goal === "string" ? parsed.goal : createEmptyWorkflowDraft().goal,
+      nodes: Array.isArray(parsed.nodes)
+        ? parsed.nodes
+          .filter((item) => item && typeof item.nodeId === "string")
+          .map((item) => ({ nodeId: item.nodeId, signature: typeof item.signature === "string" ? item.signature : "" }))
+        : [],
+      edges: Array.isArray(parsed.edges)
+        ? parsed.edges
+          .filter((item) => item && typeof item.from === "string" && typeof item.to === "string")
+          .map((item, index) => ({
+            id: typeof item.id === "string" && item.id ? item.id : `edge-${index}`,
+            from: item.from,
+            to: item.to,
+            sourceIntent: typeof item.sourceIntent === "string" ? item.sourceIntent : "",
+            targetIntent: typeof item.targetIntent === "string" ? item.targetIntent : "",
+            fromSignature: typeof item.fromSignature === "string" ? item.fromSignature : "",
+            toSignature: typeof item.toSignature === "string" ? item.toSignature : "",
+          }))
+        : [],
+    };
+  } catch {
+    return createEmptyWorkflowDraft();
+  }
+}
+
+function workflowDraftContractKeys(value: unknown) {
+  return value && typeof value === "object" ? Object.keys(value as Record<string, unknown>).sort() : [];
+}
+
+function workflowDraftNodeSignature(node: NodeRegistryItem | undefined) {
+  if (!node) return "";
+  return JSON.stringify({
+    nodeId: node.nodeId,
+    title: node.title || "",
+    needs: [...(node.needs || [])].sort(),
+    inputs: workflowDraftContractKeys(node.inputs),
+    optionalInputs: workflowDraftContractKeys(node.optionalInputs),
+    outputs: workflowDraftContractKeys(node.outputs),
+  });
+}
+
+function workflowDraftContractEntries(value: unknown) {
+  if (!value || typeof value !== "object") return [] as Array<[string, unknown]>;
+  return Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right));
+}
+
+function workflowDraftHandoffSummary(entries: Array<[string, unknown]>, emptyText: string) {
+  if (!entries.length) return emptyText;
+  return entries.slice(0, 4).map(([name, spec]) => {
+    const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+    const intent = record.intent || record.purpose || record.description || record.type || record.value_type;
+    return intent ? `${name}: ${String(intent)}` : name;
+  }).join("; ");
+}
+
+function workflowDraftNodeOutputIntent(node: NodeRegistryItem | undefined) {
+  if (!node) return "missing upstream intent";
+  return workflowDraftHandoffSummary(workflowDraftContractEntries(node.outputs), `${node.nodeId} has no declared handoff output`);
+}
+
+function workflowDraftNodeInputIntent(node: NodeRegistryItem | undefined) {
+  if (!node) return "missing downstream intent";
+  return workflowDraftHandoffSummary(workflowDraftContractEntries(node.inputs), `${node.nodeId} has no declared receiving input`);
+}
+
+function workflowDraftTokens(name: string, spec: unknown) {
+  const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+  const text = [
+    name,
+    record.intent,
+    record.purpose,
+    record.description,
+    record.summary,
+    record.type,
+    record.value_type,
+    record.needs,
+    record.from,
+    record.source,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const stop = new Set(["the", "and", "for", "from", "with", "into", "node", "file", "path", "input", "output", "data", "raw", "result"]);
+  return new Set(text.split(/[^a-z0-9]+/).filter((token) => token.length > 2 && !stop.has(token)));
+}
+
+function workflowDraftHasContractMatch(upstream: NodeRegistryItem, downstream: NodeRegistryItem, outputs: Array<[string, unknown]>, inputs: Array<[string, unknown]>) {
+  if ((downstream.needs || []).includes(upstream.nodeId)) return true;
+  if (inputs.some(([, spec]) => nodeInputReferencesNode(spec, upstream.nodeId))) return true;
+  return outputs.some(([outputName, outputSpec]) => {
+    const outputTokens = workflowDraftTokens(outputName, outputSpec);
+    return inputs.some(([inputName, inputSpec]) => {
+      const inputTokens = workflowDraftTokens(inputName, inputSpec);
+      if (inputName === outputName || inputName.includes(outputName) || outputName.includes(inputName)) return true;
+      return [...outputTokens].some((token) => inputTokens.has(token));
+    });
+  });
+}
+
+function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<string, NodeRegistryItem>): WorkflowDraftEvaluation {
+  const upstream = nodesById.get(edge.from);
+  const downstream = nodesById.get(edge.to);
+  if (!upstream || !downstream) {
+    return {
+      status: "stale",
+      delivers: upstream ? workflowDraftHandoffSummary(workflowDraftContractEntries(upstream.outputs), "No declared outputs") : "Upstream definition is missing",
+      needs: downstream ? workflowDraftHandoffSummary(workflowDraftContractEntries(downstream.inputs), "No declared inputs") : "Downstream definition is missing",
+      reason: "Saved edge points at a node definition that is not in the current catalog.",
+    };
+  }
+  const outputs = workflowDraftContractEntries(upstream.outputs);
+  const inputs = workflowDraftContractEntries(downstream.inputs);
+  const delivers = workflowDraftHandoffSummary(outputs, "No declared outputs");
+  const needs = workflowDraftHandoffSummary(inputs, "No declared inputs");
+  if (edge.fromSignature !== workflowDraftNodeSignature(upstream) || edge.toSignature !== workflowDraftNodeSignature(downstream)) {
+    return {
+      status: "stale",
+      delivers,
+      needs,
+      reason: "The saved from/to definition signature differs from the current node definition. Reconnect this handoff after review.",
+    };
+  }
+  if (!outputs.length || !inputs.length) {
+    return {
+      status: "incompatible",
+      delivers,
+      needs,
+      reason: !outputs.length && !inputs.length
+        ? "The upstream node has no declared outputs and the downstream node has no declared inputs."
+        : !outputs.length
+          ? "The upstream node does not declare what it can hand off."
+          : "The downstream node does not declare what it needs.",
+    };
+  }
+  if (workflowDraftHasContractMatch(upstream, downstream, outputs, inputs)) {
+    return {
+      status: "compatible",
+      delivers,
+      needs,
+      reason: "Declared needs, input references, or intent/name tokens line up between the two node contracts.",
+    };
+  }
+  return {
+    status: "needs_review",
+    delivers,
+    needs,
+    reason: "Both sides declare handoff contracts, but no clear intent/name/needs correspondence was found.",
+  };
+}
+
+function workflowDraftStatusLabel(status: WorkflowDraftEdgeStatus) {
+  if (status === "compatible") return "compatible";
+  if (status === "needs_review") return "needs review";
+  if (status === "incompatible") return "incompatible";
+  return "stale";
+}
+
+function workflowDraftStatusTone(status: WorkflowDraftEdgeStatus) {
+  if (status === "compatible") return "done";
+  if (status === "needs_review") return "waiting";
+  if (status === "incompatible") return "failed";
+  return "stale";
 }
 
 function ManagementActionCard({
