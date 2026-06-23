@@ -121,6 +121,11 @@ type WorkflowDraftNode = {
   nodeId: string;
   signature: string;
 };
+type WorkflowDraftRelayMapping = {
+  sourceOutput: string;
+  targetInput: string;
+  resolver?: string;
+};
 type WorkflowDraftEdge = {
   id: string;
   from: string;
@@ -129,6 +134,8 @@ type WorkflowDraftEdge = {
   targetIntent: string;
   fromSignature: string;
   toSignature: string;
+  relayMode?: NodeRunRelayMode | string;
+  relayMappings?: WorkflowDraftRelayMapping[];
 };
 type WorkflowDraftState = {
   name: string;
@@ -7826,6 +7833,19 @@ function WorkflowCatalog({
   const selectedDraftNode = selectedDraftNodeId ? nodesById.get(selectedDraftNodeId) : undefined;
   const selectedDraftEdge = draft.edges.find((edge) => edge.id === selectedDraftEdgeId);
   const selectedDraftEdgeEvaluation = selectedDraftEdge ? draftEdgeEvaluations.get(selectedDraftEdge.id) || evaluateWorkflowDraftEdge(selectedDraftEdge, nodesById) : undefined;
+  const selectedDraftEdgeSourceNode = selectedDraftEdge ? nodesById.get(selectedDraftEdge.from) : undefined;
+  const selectedDraftEdgeTargetNode = selectedDraftEdge ? nodesById.get(selectedDraftEdge.to) : undefined;
+  const selectedDraftEdgeSourceOutputs = nodeOutputContractRows(selectedDraftEdgeSourceNode);
+  const selectedDraftEdgeTargetInputs = workflowDraftInputContractRows(selectedDraftEdgeTargetNode);
+  const selectedDraftEdgeMode = selectedDraftEdge?.relayMode || "auto_by_target_inputs";
+  const selectedDraftEdgeSelectedOutputs = selectedDraftEdge?.relayMappings
+    ? [...new Set(selectedDraftEdge.relayMappings.map((item) => item.sourceOutput).filter(Boolean))]
+    : [];
+  const selectedDraftEdgeMappings = useMemo(() => workflowDraftBuildRelayMappings(
+    selectedDraftEdgeTargetNode,
+    selectedDraftEdgeMode === "selected_outputs" ? selectedDraftEdgeSelectedOutputs : selectedDraftEdgeSourceOutputs.map((item) => item.name),
+    selectedDraftEdge?.relayMappings || [],
+  ), [selectedDraftEdge?.relayMappings, selectedDraftEdgeMode, selectedDraftEdgeSelectedOutputs, selectedDraftEdgeSourceOutputs, selectedDraftEdgeTargetNode]);
   const activeDraftHandoffNode = activeDraftHandoffNodeId ? nodesById.get(activeDraftHandoffNodeId) : undefined;
   const activeDraftTargets = activeDraftHandoffNode
     ? draftNodes.filter((target) => target.nodeId !== activeDraftHandoffNode.nodeId && !draft.edges.some((edge) => edge.from === activeDraftHandoffNode.nodeId && edge.to === target.nodeId))
@@ -7927,6 +7947,8 @@ function WorkflowCatalog({
         targetIntent: workflowDraftNodeInputIntent(to),
         fromSignature: workflowDraftNodeSignature(from),
         toSignature: workflowDraftNodeSignature(to),
+        relayMode: "auto_by_target_inputs",
+        relayMappings: [],
       }],
     }));
     setDraftFromNode(fromNodeId);
@@ -7960,6 +7982,8 @@ function WorkflowCatalog({
         targetIntent: workflowDraftNodeInputIntent(to),
         fromSignature: workflowDraftNodeSignature(from),
         toSignature: workflowDraftNodeSignature(to),
+        relayMode: "auto_by_target_inputs",
+        relayMappings: [],
       }],
     }));
     setDraftNodePositions((current) => ({
@@ -8001,6 +8025,90 @@ function WorkflowCatalog({
           targetIntent: workflowDraftNodeInputIntent(nodesById.get(edge.to)),
           fromSignature: workflowDraftNodeSignature(nodesById.get(edge.from)),
           toSignature: workflowDraftNodeSignature(nodesById.get(edge.to)),
+          relayMode: edge.relayMode || "auto_by_target_inputs",
+          relayMappings: edge.relayMappings || [],
+        };
+      }),
+    }));
+  }
+  function updateDraftEdgeMode(edgeId: string, relayMode: string) {
+    setDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => {
+        if (edge.id !== edgeId) return edge;
+        return {
+          ...edge,
+          relayMode,
+          relayMappings: relayMode === "selected_outputs"
+            ? (edge.relayMappings || [])
+            : [],
+        };
+      }),
+    }));
+  }
+  function toggleDraftEdgeSourceOutput(edgeId: string, sourceNodeId: string, targetNodeId: string, sourceOutput: string) {
+    const fromNode = nodesById.get(sourceNodeId);
+    const toNode = nodesById.get(targetNodeId);
+    if (!fromNode || !toNode || !sourceOutput) return;
+    setDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => {
+        if (edge.id !== edgeId) return edge;
+        const currentMappings = Array.isArray(edge.relayMappings) ? edge.relayMappings : [];
+        const hasSource = currentMappings.some((item) => item.sourceOutput === sourceOutput);
+        const remaining = hasSource
+          ? currentMappings.filter((item) => item.sourceOutput !== sourceOutput)
+          : [
+            ...currentMappings,
+            {
+              ...workflowDraftBuildRelayMappings(toNode, [sourceOutput], [])[0],
+              sourceOutput,
+            },
+          ];
+        return { ...edge, relayMode: edge.relayMode || "selected_outputs", relayMappings: remaining };
+      }),
+    }));
+  }
+  function setDraftEdgeTargetInput(edgeId: string, sourceOutput: string, targetInput: string) {
+    setDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => edge.id !== edgeId
+        ? edge
+        : {
+          ...edge,
+          relayMappings: (edge.relayMappings || []).map((item) => item.sourceOutput === sourceOutput ? { ...item, targetInput } : item),
+        }),
+    }));
+  }
+  function setDraftEdgeResolver(edgeId: string, sourceOutput: string, resolver: string) {
+    setDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => edge.id !== edgeId
+        ? edge
+        : {
+          ...edge,
+          relayMappings: (edge.relayMappings || []).map((item) => item.sourceOutput === sourceOutput ? { ...item, resolver } : item),
+        }),
+    }));
+  }
+  function syncDraftEdgeDefaults(edgeId: string, sourceNodeId: string, targetNodeId: string) {
+    setDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => {
+        if (edge.id !== edgeId) return edge;
+        const fromNode = nodesById.get(sourceNodeId);
+        const toNode = nodesById.get(targetNodeId);
+        if (!fromNode || !toNode) return edge;
+        const rawMappings = (edge.relayMappings || []).filter((item) => item.sourceOutput).filter((item) => toNode ? !!item.targetInput || item.sourceOutput : true);
+        const outputRows = nodeOutputContractRows(fromNode);
+        const mappingSources = edge.relayMode === "selected_outputs"
+          ? rawMappings.map((item) => item.sourceOutput)
+          : outputRows.map((item) => item.name);
+        const mapped = workflowDraftBuildRelayMappings(toNode, mappingSources, rawMappings);
+        return {
+          ...edge,
+          relayMappings: mapped,
+          relayMode: edge.relayMode || "auto_by_target_inputs",
         };
       }),
     }));
@@ -8034,6 +8142,8 @@ function WorkflowCatalog({
         targetIntent: workflowDraftNodeInputIntent(to),
         fromSignature: workflowDraftNodeSignature(from),
         toSignature: workflowDraftNodeSignature(to),
+        relayMode: "auto_by_target_inputs",
+        relayMappings: [],
       } as WorkflowDraftEdge;
     }).filter(Boolean) as WorkflowDraftEdge[];
     setDraft({
@@ -8260,6 +8370,7 @@ function WorkflowCatalog({
                     setSelectedDraftNodeId("");
                     const draftEdge = draft.edges.find((item) => item.id === edge.id);
                     if (draftEdge) {
+                      syncDraftEdgeDefaults(draftEdge.id, draftEdge.from, draftEdge.to);
                       setDraftFromNode(draftEdge.from);
                       setDraftToNode(draftEdge.to);
                     }
@@ -8331,6 +8442,119 @@ function WorkflowCatalog({
                   <span><b>下游需要</b>{selectedDraftEdgeEvaluation.needs}</span>
                   <span><b>系统判断</b>{selectedDraftEdgeEvaluation.reason}</span>
                 </div>
+
+                <div className="node-relay-mode-panel">
+                  <div>
+                    <strong>接力解析模式</strong>
+                    <span>{nodeRunRelayModeHelp(selectedDraftEdgeMode)}</span>
+                  </div>
+                  <div className="segmented compact">
+                    <button
+                      type="button"
+                      className={selectedDraftEdgeMode === "auto_by_target_inputs" ? "active" : ""}
+                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "auto_by_target_inputs")}
+                    >
+                      自动匹配
+                    </button>
+                    <button
+                      type="button"
+                      className={selectedDraftEdgeMode === "selected_outputs" ? "active" : ""}
+                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "selected_outputs")}
+                    >
+                      手动选择
+                    </button>
+                    <button
+                      type="button"
+                      className={selectedDraftEdgeMode === "all_outputs" ? "active" : ""}
+                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "all_outputs")}
+                    >
+                      整包传递
+                    </button>
+                  </div>
+                </div>
+
+                <div className="node-relay-outputs-panel">
+                  <div className="section-title"><span>上游输出规范</span><span>{selectedDraftEdgeSourceOutputs.length}</span></div>
+                  <div className="node-relay-output-list">
+                    {selectedDraftEdgeSourceOutputs.map((output) => (
+                      <label key={output.name} className={`node-relay-output-row ${selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeSelectedOutputs.includes(output.name) ? "active" : ""}`}>
+                        {selectedDraftEdgeMode === "selected_outputs" ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedDraftEdgeSelectedOutputs.includes(output.name)}
+                            onChange={() => toggleDraftEdgeSourceOutput(selectedDraftEdge.id, selectedDraftEdge.from, selectedDraftEdge.to, output.name)}
+                          />
+                        ) : <span className="dot done" />}
+                        <span>
+                          <strong>{output.name}</strong>
+                          <small>{output.type} · {output.path || "runtime value"}</small>
+                        </span>
+                      </label>
+                    ))}
+                    {!selectedDraftEdgeSourceOutputs.length ? <Empty text="当前节点没有输出契约；切换到手动模式会无法直接选中任何输出。" /> : null}
+                  </div>
+                  {selectedDraftEdgeMode === "selected_outputs" && !selectedDraftEdgeSelectedOutputs.length ? <small className="field-hint bad">请至少选择一个上游输出。</small> : null}
+                  {selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeSelectedOutputs.length > 0 && !selectedDraftEdgeTargetInputs.length ? <small className="field-hint bad">目标节点没有输入契约，不能配置手动接力映射。</small> : null}
+                  {selectedDraftEdgeMode !== "selected_outputs" && selectedDraftEdgeSourceOutputs.length ? <small className="field-hint">{nodeRunRelayModeLabel(selectedDraftEdgeMode)} 会在后端按目标输入合成接力包。</small> : null}
+                </div>
+
+                {selectedDraftEdgeTargetInputs.length ? (
+                  <div className="node-relay-mapping-panel">
+                    <div className="section-title"><span>目标输入契约</span><span>{selectedDraftEdgeTargetInputs.length}</span></div>
+                    <div className="node-run-input-preview-rows">
+                      {selectedDraftEdgeTargetInputs.map((row) => {
+                        const spec = contractRecord(row.spec);
+                        return (
+                          <article key={row.name}>
+                            <div>
+                              <strong>{row.name}</strong>
+                              <code>{String(spec.type || spec.kind || "auto")}{row.required ? " · required" : " · optional"}</code>
+                            </div>
+                            <small>{String(spec.from || "no default binding")}</small>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeMappings.length ? (
+                  <div className="node-relay-mapping-panel">
+                    <div className="section-title"><span>上游 output → 目标 input 映射</span><span>{selectedDraftEdgeMappings.length}</span></div>
+                    <div className="node-relay-mapping-head">
+                      <span>source output</span>
+                      <span />
+                      <span>target input</span>
+                      <span>resolver</span>
+                    </div>
+                    {selectedDraftEdgeMappings.map((mapping) => {
+                      const targetRows = selectedDraftEdgeTargetInputs;
+                      const targetSpec = targetRows.find((row) => row.name === mapping.targetInput)?.spec;
+                      const resolvers = contractResolvers(targetSpec);
+                      return (
+                        <article key={mapping.sourceOutput} className="node-relay-mapping-row">
+                          <code>{mapping.sourceOutput}</code>
+                          <span>→</span>
+                          <select
+                            value={mapping.targetInput || ""}
+                            onChange={(event) => setDraftEdgeTargetInput(selectedDraftEdge.id, mapping.sourceOutput, event.target.value)}
+                            disabled={!targetRows.length}
+                          >
+                            <option value="">选择目标输入</option>
+                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · required" : " · optional"}</option>)}
+                          </select>
+                          <select
+                            value={mapping.resolver || ""}
+                            onChange={(event) => setDraftEdgeResolver(selectedDraftEdge.id, mapping.sourceOutput, event.target.value)}
+                          >
+                            <option value="">自动 resolver</option>
+                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{resolver.label}</option>)}
+                          </select>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : null}
                 <div className="workflow-draft-edge-actions">
                   <button type="button" className="ghost-btn compact" onClick={() => reEvaluateDraftEdge(selectedDraftEdge.id)}>
                     <RefreshCw size={14} />重新评估
@@ -8468,6 +8692,22 @@ function readWorkflowDraftFromStorage(): WorkflowDraftState {
             targetIntent: typeof item.targetIntent === "string" ? item.targetIntent : "",
             fromSignature: typeof item.fromSignature === "string" ? item.fromSignature : "",
             toSignature: typeof item.toSignature === "string" ? item.toSignature : "",
+            relayMode: typeof item.relayMode === "string" ? item.relayMode : undefined,
+            relayMappings: Array.isArray(item.relayMappings)
+              ? item.relayMappings
+                .map((relayItem: unknown) => {
+                  if (!relayItem || typeof relayItem !== "object") return null;
+                  const record = relayItem as Record<string, unknown>;
+                  const sourceOutput = String(record.sourceOutput || "");
+                  if (!sourceOutput.trim()) return null;
+                  return {
+                    sourceOutput: sourceOutput.trim(),
+                    targetInput: String(record.targetInput || ""),
+                    resolver: typeof record.resolver === "string" ? record.resolver.trim() : undefined,
+                  } as WorkflowDraftRelayMapping;
+                })
+                .filter(Boolean) as WorkflowDraftRelayMapping[]
+              : [],
           }))
         : [],
       positions: parsed.positions && typeof parsed.positions === "object" && !Array.isArray(parsed.positions)
@@ -8519,6 +8759,39 @@ function workflowDraftNodeInputIntent(node: NodeRegistryItem | undefined) {
   return workflowDraftHandoffSummary(workflowDraftContractEntries(node.inputs), `${node.nodeId} has no declared receiving input`);
 }
 
+function workflowDraftInputContractRows(node: NodeRegistryItem | undefined) {
+  return [
+    ...Object.entries(node?.inputs || {}).map(([name, spec]) => ({ name, spec, required: true })),
+    ...Object.entries(node?.optionalInputs || {}).map(([name, spec]) => ({ name, spec, required: false })),
+  ];
+}
+
+function workflowDraftRelayModeLabel(mode: string | undefined) {
+  if (mode === "selected_outputs") return "手动选择输出";
+  if (mode === "all_outputs") return "整包传递";
+  return "按目标输入自动匹配";
+}
+
+function workflowDraftBuildRelayMappings(
+  targetNode: NodeRegistryItem | undefined,
+  sourceOutputs: string[] = [],
+  current: WorkflowDraftRelayMapping[] = [],
+) {
+  const bySource = new Map(current.map((item) => [item.sourceOutput, item]));
+  const targetInputs = new Set(nodeInputContractRows(targetNode).map((row) => row.name));
+  const targetRows = nodeInputContractRows(targetNode);
+  return sourceOutputs.filter(Boolean).map((sourceOutput) => {
+    const existing = bySource.get(sourceOutput);
+    const targetInput = existing?.targetInput && targetInputs.has(existing.targetInput)
+      ? existing.targetInput
+      : (targetRows[0]?.name || "");
+    const targetSpec = nodeInputContractRows(targetNode).find((row) => row.name === targetInput)?.spec;
+    const resolvers = contractResolvers(targetSpec);
+    const resolver = existing?.resolver || resolvers[0]?.id || "direct";
+    return { sourceOutput, targetInput, resolver };
+  });
+}
+
 function workflowDraftTokens(name: string, spec: unknown) {
   const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
   const text = [
@@ -8562,9 +8835,13 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
     };
   }
   const outputs = workflowDraftContractEntries(upstream.outputs);
-  const inputs = workflowDraftContractEntries(downstream.inputs);
+  const requiredInputs = workflowDraftContractEntries(downstream.inputs);
+  const optionalInputs = workflowDraftContractEntries(downstream.optionalInputs);
+  const inputs = [...requiredInputs, ...optionalInputs];
   const delivers = workflowDraftHandoffSummary(outputs, "No declared outputs");
-  const needs = workflowDraftHandoffSummary(inputs, "No declared inputs");
+  const needs = workflowDraftHandoffSummary(requiredInputs, "No declared inputs");
+  const relayMode = typeof edge.relayMode === "string" && edge.relayMode ? edge.relayMode : "auto_by_target_inputs";
+  const mappings = Array.isArray(edge.relayMappings) ? edge.relayMappings : [];
   if (edge.fromSignature !== workflowDraftNodeSignature(upstream) || edge.toSignature !== workflowDraftNodeSignature(downstream)) {
     return {
       status: "stale",
@@ -8583,6 +8860,45 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
         : !outputs.length
           ? "The upstream node does not declare what it can hand off."
           : "The downstream node does not declare what it needs.",
+    };
+  }
+  if (relayMode === "selected_outputs") {
+    if (!mappings.length) {
+      return {
+        status: "needs_review",
+        delivers,
+        needs,
+        reason: "手动接力未选择任何上游输出。请至少绑定 1 个上游输出到目标输入。",
+      };
+    }
+    const outputMap = new Set(outputs.map(([name]) => name));
+    const inputMap = new Set(inputs.map(([name]) => name));
+    const missingSource = mappings.filter((item) => !outputMap.has(item.sourceOutput));
+    const missingTarget = mappings.filter((item) => item.targetInput && !inputMap.has(item.targetInput));
+    const missingTargetSummary = [...new Set(missingTarget.map((item) => `${edge.from}.${item.sourceOutput} -> ${item.targetInput || "-"}`))].join(", ");
+    if (missingSource.length || missingTarget.length) {
+      return {
+        status: "needs_review",
+        delivers,
+        needs,
+        reason: missingSource.length
+          ? `手动接力存在未知上游输出：${missingSource.map((item) => item.sourceOutput).join(", ")}。`
+          : `手动接力存在目标输入不存在：${missingTargetSummary}。`,
+      };
+    }
+    return {
+      status: "compatible",
+      delivers,
+      needs,
+      reason: `已通过手动接力绑定：${mappings.slice(0, 4).map((item) => `${item.sourceOutput}→${item.targetInput}`).join("；")}`,
+    };
+  }
+  if (relayMode === "all_outputs") {
+    return {
+      status: "compatible",
+      delivers,
+      needs,
+      reason: "已设置整包传递：运行时将上游所有 relayable outputs 传递给下游。",
     };
   }
   if (workflowDraftHasContractMatch(upstream, downstream, outputs, inputs)) {

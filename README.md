@@ -23,8 +23,10 @@ npm run dev
 ## Build & Deploy (on 165)
 
 ```bash
+cd /root/sop-ui
 git pull
-cd prototype && npm run build
+cd prototype
+npm run build
 node scripts/serve.mjs --host 0.0.0.0 --port 5190
 ```
 
