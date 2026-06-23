@@ -4133,10 +4133,14 @@ function NodeRunDetailPage({
   }, [relaySearch, relayTargets]);
   const recommendedRelayCount = relayTargets.filter((item) => item.recommended).length;
   const selectedRelayTarget = relayTargets.find((item) => item.node.nodeId === selectedRelayTargetId) || relayTargets[0];
+  const selectedTargetInputRows = nodeInputContractRows(selectedRelayTarget?.node);
   const relayMappingRows = relayMode === "selected_outputs"
     ? normalizeRelayMappingsForTarget(selectedRelayTarget?.node, selectedRelayOutputs, relayMappings)
     : [];
-  const relayReady = Boolean(selectedRelayTarget) && (relayMode !== "selected_outputs" || selectedRelayOutputs.length > 0);
+  const relayReady = Boolean(selectedRelayTarget) && (
+    relayMode !== "selected_outputs" ||
+    (selectedRelayOutputs.length > 0 && selectedTargetInputRows.length > 0 && relayMappingRows.every((item) => Boolean(item.targetInput)))
+  );
   function toggleRelayOutput(name: string) {
     if (!name) return;
     setSelectedRelayOutputs((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
@@ -4225,6 +4229,7 @@ function NodeRunDetailPage({
                   </div>
                   <button type="button" className="ghost-btn" onClick={() => setRelayOpen(false)}><X size={16} />关闭</button>
                 </div>
+                <div className="node-relay-body">
                 <div className="node-relay-mode-panel">
                   <div>
                     <strong>传递什么</strong>
@@ -4253,6 +4258,7 @@ function NodeRunDetailPage({
                     {!sourceOutputRows.length ? <Empty text="当前节点没有声明输出契约；只能使用整包或运行结果中的 relay package。" /> : null}
                   </div>
                   {relayMode === "selected_outputs" && !selectedRelayOutputs.length ? <small className="field-hint bad">请选择至少一个输出。</small> : null}
+                  {relayMode === "selected_outputs" && selectedRelayOutputs.length > 0 && !selectedTargetInputRows.length ? <small className="field-hint bad">目标节点没有输入契约，不能建立手动接力映射。</small> : null}
                   {relayMode !== "selected_outputs" && sourceOutputNames.length ? <small className="field-hint">{nodeRunRelayModeLabel(relayMode)}会在后端解析，不会把 manifest.json 当成业务输入。</small> : null}
                 </div>
                 <label className="node-relay-search">
@@ -4287,9 +4293,9 @@ function NodeRunDetailPage({
                 </div>
                 {selectedRelayTarget ? (
                   <div className="node-relay-mapping-panel">
-                    <div className="section-title"><span>目标输入契约</span><span>{nodeInputContractRows(selectedRelayTarget.node).length}</span></div>
+                    <div className="section-title"><span>目标输入契约</span><span>{selectedTargetInputRows.length}</span></div>
                     <div className="node-run-input-preview-rows">
-                      {nodeInputContractRows(selectedRelayTarget.node).map((row) => {
+                      {selectedTargetInputRows.map((row) => {
                         const spec = contractRecord(row.spec);
                         return (
                           <article key={row.name}>
@@ -4302,20 +4308,37 @@ function NodeRunDetailPage({
                           </article>
                         );
                       })}
-                      {!nodeInputContractRows(selectedRelayTarget.node).length ? <Empty text="目标节点没有声明输入契约，建议先编辑节点定义。" /> : null}
+                      {!selectedTargetInputRows.length ? <Empty text="目标节点没有声明输入契约，建议先编辑节点定义。" /> : null}
                     </div>
                   </div>
                 ) : null}
                 {selectedRelayTarget && relayMode === "selected_outputs" ? (
                   <div className="node-relay-mapping-panel">
                     <div className="section-title"><span>输出到目标输入映射</span><span>{relayMappingRows.length}</span></div>
+                    <div className="node-relay-mapping-head">
+                      <span>source output</span>
+                      <span />
+                      <span>target input</span>
+                      <span>resolver</span>
+                    </div>
                     {relayMappingRows.map((mapping) => {
-                      const targetRows = nodeInputContractRows(selectedRelayTarget.node);
+                      const targetRows = selectedTargetInputRows;
                       const targetSpec = targetRows.find((row) => row.name === mapping.targetInput)?.spec;
                       const resolvers = contractResolvers(targetSpec);
                       return (
                         <article key={mapping.sourceOutput} className="node-relay-mapping-row">
-                          <code>{mapping.sourceOutput}</code>
+                          <select
+                            value={mapping.sourceOutput}
+                            onChange={(event) => {
+                              const nextOutput = event.target.value;
+                              setSelectedRelayOutputs((current) => current.map((item) => item === mapping.sourceOutput ? nextOutput : item).filter((item, index, all) => item && all.indexOf(item) === index));
+                              setRelayMappings((current) => normalizeRelayMappingsForTarget(selectedRelayTarget.node, selectedRelayOutputs, current).map((item) => (
+                                item.sourceOutput === mapping.sourceOutput ? { ...item, sourceOutput: nextOutput } : item
+                              )));
+                            }}
+                          >
+                            {sourceOutputNames.map((name) => <option key={name} value={name}>{name}</option>)}
+                          </select>
                           <span>{"->"}</span>
                           <select
                             value={mapping.targetInput || ""}
@@ -4340,6 +4363,7 @@ function NodeRunDetailPage({
                     {!relayMappingRows.length ? <Empty text="先选择至少一个上游输出，再配置它映射到目标节点的哪个输入。" /> : null}
                   </div>
                 ) : null}
+                </div>
                 <div className="node-relay-footer">
                   <div>
                     <strong>{selectedRelayTarget?.node.title || selectedRelayTarget?.node.nodeId || "未选择目标节点"}</strong>
@@ -10445,6 +10469,7 @@ function NodesWorkspace({
           runtime={runtime}
           instance={instance}
           schema={nodeDraftSchemaQuery.data}
+          workflowNodes={nodes}
           input={definitionEditInput}
           setInput={(next) => { setDefinitionEditError(""); setDefinitionEditInput(next); }}
           confirmRealDraft={confirmDefinitionEdit}
@@ -10716,11 +10741,441 @@ function NodeDraftDrawer({
   );
 }
 
+type DefinitionJsonField = "inputs" | "optionalInputs" | "outputs" | "capabilities" | "executor";
+
+type DefinitionContractRow = {
+  name: string;
+  required: boolean;
+  spec: unknown;
+};
+
+const NODE_DEFINITION_MODE_OPTIONS = ["blocking", "sidecar", "manual", "webhook", "agent"] as const;
+const NODE_CONTRACT_KIND_OPTIONS = ["scalar", "file", "files", "directory", "artifact_set", "auto"] as const;
+const NODE_CONTRACT_VALUE_TYPE_OPTIONS = ["url", "text", "markdown", "json", "html", "binary", "auto"] as const;
+const NODE_CONTRACT_ACCEPT_OPTIONS = ["scalar:url", "scalar:text", "file:text", "file:markdown", "file:json", "directory", "artifact_set"] as const;
+const NODE_CONTRACT_RESOLVER_OPTIONS = ["direct", "json_path", "regex", "manifest_item", "auto"] as const;
+const NODE_OUTPUT_ROLE_OPTIONS = ["wiki-source", "transcript", "metadata", "index", "relay-output", "debug"] as const;
+
+function parseDefinitionEditorObject(value: string): Record<string, unknown> {
+  try {
+    return parseEditorObject("Definition JSON", value);
+  } catch {
+    return {};
+  }
+}
+
+function writeDefinitionJsonField(input: NodeDefinitionEditInput, field: DefinitionJsonField, value: Record<string, unknown>) {
+  return { ...input, [field]: formatJsonForEditor(value) };
+}
+
+function definitionStringList(value: unknown) {
+  if (Array.isArray(value)) return value.map((item) => String(item).trim()).filter(Boolean);
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
+function definitionResolverIds(value: unknown) {
+  if (!Array.isArray(value)) return definitionStringList(value);
+  return value.map((item) => {
+    if (typeof item === "string") return item.trim();
+    const record = contractRecord(item);
+    return String(record.id || record.kind || record.type || record.name || "").trim();
+  }).filter(Boolean);
+}
+
+function definitionCsv(value: unknown) {
+  return definitionStringList(value).join(", ");
+}
+
+function parseDefinitionCsv(value: string) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function toggleDefinitionListItem(items: string[], value: string) {
+  return items.includes(value) ? items.filter((item) => item !== value) : [...items, value];
+}
+
+function definitionSpecRecord(spec: unknown, fallbackKey: "from" | "path" = "from") {
+  if (spec && typeof spec === "object" && !Array.isArray(spec)) return { ...(spec as Record<string, unknown>) };
+  if (typeof spec === "string" && spec.trim()) return { [fallbackKey]: spec };
+  return {};
+}
+
+function definitionInputKind(spec: unknown) {
+  const record = contractRecord(spec);
+  return String(record.kind || record.type || "");
+}
+
+function updateDefinitionSpecField(spec: unknown, key: string, value: unknown, fallbackKey: "from" | "path" = "from") {
+  const next = definitionSpecRecord(spec, fallbackKey);
+  if (value === "" || (Array.isArray(value) && !value.length)) delete next[key];
+  else next[key] = value;
+  return next;
+}
+
+function renameObjectKey(record: Record<string, unknown>, from: string, to: string) {
+  const next = { ...record };
+  const clean = to.trim();
+  if (!clean || clean === from || Object.prototype.hasOwnProperty.call(next, clean)) return next;
+  next[clean] = next[from];
+  delete next[from];
+  return next;
+}
+
+function DefinitionAdvancedJson({
+  label,
+  value,
+  onChange,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <details className="definition-advanced-json">
+      <summary><span>{label}</span><ChevronDown size={14} /></summary>
+      <textarea className={`definition-json-editor ${compact ? "compact" : ""}`} value={value} onChange={(event) => onChange(event.target.value)} spellCheck={false} />
+    </details>
+  );
+}
+
+function DefinitionChipPicker({
+  value,
+  options,
+  onChange,
+}: {
+  value: string[];
+  options: readonly string[];
+  onChange: (value: string[]) => void;
+}) {
+  return (
+    <div className="definition-chip-picker">
+      {options.map((item) => (
+        <button
+          key={item}
+          type="button"
+          className={value.includes(item) ? "active" : ""}
+          onClick={() => onChange(toggleDefinitionListItem(value, item))}
+        >
+          {item}
+        </button>
+      ))}
+      {value.filter((item) => !options.includes(item)).map((item) => (
+        <button
+          key={item}
+          type="button"
+          className="active custom"
+          onClick={() => onChange(value.filter((next) => next !== item))}
+        >
+          {item}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function NodeDefinitionModeSelector({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const normalized = value || "blocking";
+  const custom = normalized && !NODE_DEFINITION_MODE_OPTIONS.includes(normalized as typeof NODE_DEFINITION_MODE_OPTIONS[number]);
+  return (
+    <div className="definition-mode-selector">
+      <div className="segmented compact" aria-label="节点模式">
+        {NODE_DEFINITION_MODE_OPTIONS.slice(0, 3).map((item) => (
+          <button key={item} type="button" className={normalized === item ? "active" : ""} onClick={() => onChange(item)}>
+            {item === "blocking" ? "阻塞" : item === "sidecar" ? "旁路" : item === "manual" ? "手动" : item}
+          </button>
+        ))}
+      </div>
+      <select value={custom ? normalized : normalized} onChange={(event) => onChange(event.target.value)}>
+        {NODE_DEFINITION_MODE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+        {custom ? <option value={normalized}>{normalized}</option> : null}
+      </select>
+    </div>
+  );
+}
+
+function NodeDefinitionNeedsPicker({
+  currentNodeId,
+  value,
+  nodes,
+  onChange,
+}: {
+  currentNodeId: string;
+  value: string;
+  nodes: NodeRegistryItem[];
+  onChange: (value: string) => void;
+}) {
+  const selected = value.split(",").map((item) => item.trim()).filter(Boolean);
+  const selectedSet = new Set(selected);
+  const candidates = nodes.filter((node) => node.nodeId !== currentNodeId);
+  function toggle(nodeId: string) {
+    const next = selectedSet.has(nodeId) ? selected.filter((item) => item !== nodeId) : [...selected, nodeId];
+    onChange(next.join(", "));
+  }
+  return (
+    <div className="definition-needs-picker">
+      {candidates.map((node) => (
+        <label key={node.nodeId} className={selectedSet.has(node.nodeId) ? "active" : ""}>
+          <input type="checkbox" checked={selectedSet.has(node.nodeId)} onChange={() => toggle(node.nodeId)} />
+          <span>
+            <strong>{node.title || node.nodeId}</strong>
+            <code>{node.nodeId}</code>
+          </span>
+        </label>
+      ))}
+      {!candidates.length ? <Empty text="当前 workflow 没有可选上游节点" /> : null}
+    </div>
+  );
+}
+
+function NodeDefinitionInputsEditor({
+  input,
+  setInput,
+}: {
+  input: NodeDefinitionEditInput;
+  setInput: (input: NodeDefinitionEditInput) => void;
+}) {
+  const inputs = parseDefinitionEditorObject(input.inputs);
+  const optionalInputs = parseDefinitionEditorObject(input.optionalInputs);
+  const rows: DefinitionContractRow[] = [
+    ...Object.entries(inputs).map(([name, spec]) => ({ name, spec, required: true })),
+    ...Object.entries(optionalInputs).map(([name, spec]) => ({ name, spec, required: false })),
+  ];
+  function writeRows(nextRows: DefinitionContractRow[]) {
+    const nextInputs: Record<string, unknown> = {};
+    const nextOptional: Record<string, unknown> = {};
+    nextRows.forEach((row) => {
+      if (!row.name.trim()) return;
+      const target = row.required ? nextInputs : nextOptional;
+      target[row.name.trim()] = row.spec;
+    });
+    setInput({
+      ...input,
+      inputs: formatJsonForEditor(nextInputs),
+      optionalInputs: formatJsonForEditor(nextOptional),
+    });
+  }
+  function updateRow(name: string, patch: Partial<DefinitionContractRow>) {
+    writeRows(rows.map((row) => row.name === name ? { ...row, ...patch } : row));
+  }
+  function renameRow(name: string, nextName: string) {
+    if (!nextName.trim() || rows.some((row) => row.name === nextName.trim())) return;
+    writeRows(rows.map((row) => row.name === name ? { ...row, name: nextName.trim() } : row));
+  }
+  return (
+    <div className="definition-contract-editor">
+      <div className="definition-contract-grid input-grid">
+        <span>name</span>
+        <span>required</span>
+        <span>kind</span>
+        <span>value_type</span>
+        <span>accepts</span>
+        <span>resolvers</span>
+        <span />
+      </div>
+      {rows.map((row) => {
+        const record = definitionSpecRecord(row.spec, "from");
+        const kindValue = definitionInputKind(row.spec);
+        const valueType = String(record.value_type || record.valueType || "");
+        const accepts = definitionStringList(record.accepts);
+        const resolvers = definitionResolverIds(record.resolvers);
+        return (
+          <article key={row.name} className="definition-contract-row input-grid">
+            <input value={row.name} onChange={(event) => renameRow(row.name, event.target.value)} />
+            <label className="mini-check"><input type="checkbox" checked={row.required} onChange={(event) => updateRow(row.name, { required: event.target.checked })} /><span>{row.required ? "必填" : "可选"}</span></label>
+            <select value={kindValue} onChange={(event) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, record.kind ? "kind" : "type", event.target.value) })}>
+              <option value="">未设置</option>
+              {NODE_CONTRACT_KIND_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              {kindValue && !NODE_CONTRACT_KIND_OPTIONS.includes(kindValue as typeof NODE_CONTRACT_KIND_OPTIONS[number]) ? <option value={kindValue}>{kindValue}</option> : null}
+            </select>
+            <select value={valueType} onChange={(event) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, record.valueType ? "valueType" : "value_type", event.target.value) })}>
+              <option value="">未设置</option>
+              {NODE_CONTRACT_VALUE_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              {valueType && !NODE_CONTRACT_VALUE_TYPE_OPTIONS.includes(valueType as typeof NODE_CONTRACT_VALUE_TYPE_OPTIONS[number]) ? <option value={valueType}>{valueType}</option> : null}
+            </select>
+            <DefinitionChipPicker value={accepts} options={NODE_CONTRACT_ACCEPT_OPTIONS} onChange={(items) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, "accepts", items) })} />
+            <DefinitionChipPicker value={resolvers} options={NODE_CONTRACT_RESOLVER_OPTIONS} onChange={(items) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, "resolvers", items) })} />
+            <button type="button" className="icon-btn danger-mini" title="删除输入" onClick={() => writeRows(rows.filter((item) => item.name !== row.name))}><Trash2 size={14} /></button>
+            <details className="definition-row-json">
+              <summary><span>高级 JSON</span><ChevronDown size={13} /></summary>
+              <textarea value={formatJsonForEditor(row.spec)} onChange={(event) => {
+                try {
+                  updateRow(row.name, { spec: parseEditorObject(row.name, event.target.value) });
+                } catch {
+                  updateRow(row.name, { spec: event.target.value });
+                }
+              }} spellCheck={false} />
+            </details>
+          </article>
+        );
+      })}
+      {!rows.length ? <Empty text="还没有输入契约" /> : null}
+      <button type="button" className="btn" onClick={() => writeRows([...rows, { name: `input_${rows.length + 1}`, required: true, spec: { kind: "file" } }])}>新增输入</button>
+      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Inputs JSON" value={input.inputs} onChange={(value) => setInput({ ...input, inputs: value })} compact />
+      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Optional Inputs JSON" value={input.optionalInputs} onChange={(value) => setInput({ ...input, optionalInputs: value })} compact />
+    </div>
+  );
+}
+
+function NodeDefinitionOutputsEditor({
+  input,
+  setInput,
+}: {
+  input: NodeDefinitionEditInput;
+  setInput: (input: NodeDefinitionEditInput) => void;
+}) {
+  const outputs = parseDefinitionEditorObject(input.outputs);
+  const rows = Object.entries(outputs);
+  function updateOutputs(next: Record<string, unknown>) {
+    setInput(writeDefinitionJsonField(input, "outputs", next));
+  }
+  function updateSpec(name: string, spec: unknown) {
+    updateOutputs({ ...outputs, [name]: spec });
+  }
+  return (
+    <div className="definition-contract-editor">
+      <div className="definition-contract-grid output-grid">
+        <span>name</span>
+        <span>kind/type</span>
+        <span>value_type</span>
+        <span>relayable</span>
+        <span>role</span>
+        <span>path</span>
+      </div>
+      {rows.map(([name, spec]) => {
+        const record = definitionSpecRecord(spec, "path");
+        const kindValue = String(record.kind || record.type || "");
+        const valueType = String(record.value_type || record.valueType || "");
+        const roleValue = String(record.role || "");
+        return (
+          <article key={name} className="definition-contract-row output-grid">
+            <input value={name} onChange={(event) => updateOutputs(renameObjectKey(outputs, name, event.target.value))} />
+            <select value={kindValue} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, record.kind ? "kind" : "type", event.target.value, "path"))}>
+              <option value="">未设置</option>
+              {NODE_CONTRACT_KIND_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              {kindValue && !NODE_CONTRACT_KIND_OPTIONS.includes(kindValue as typeof NODE_CONTRACT_KIND_OPTIONS[number]) ? <option value={kindValue}>{kindValue}</option> : null}
+            </select>
+            <select value={valueType} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, record.valueType ? "valueType" : "value_type", event.target.value, "path"))}>
+              <option value="">未设置</option>
+              {NODE_CONTRACT_VALUE_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              {valueType && !NODE_CONTRACT_VALUE_TYPE_OPTIONS.includes(valueType as typeof NODE_CONTRACT_VALUE_TYPE_OPTIONS[number]) ? <option value={valueType}>{valueType}</option> : null}
+            </select>
+            <label className="mini-check"><input type="checkbox" checked={record.relayable !== false} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, "relayable", event.target.checked, "path"))} /><span>{record.relayable === false ? "关闭" : "可接力"}</span></label>
+            <select value={roleValue} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, "role", event.target.value, "path"))}>
+              <option value="">未设置</option>
+              {NODE_OUTPUT_ROLE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              {roleValue && !NODE_OUTPUT_ROLE_OPTIONS.includes(roleValue as typeof NODE_OUTPUT_ROLE_OPTIONS[number]) ? <option value={roleValue}>{roleValue}</option> : null}
+            </select>
+            <input value={String(record.path || record.from || "")} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, record.from ? "from" : "path", event.target.value, "path"))} placeholder="raw/... 或 context..." />
+            <button type="button" className="icon-btn danger-mini" title="删除输出" onClick={() => {
+              const next = { ...outputs };
+              delete next[name];
+              updateOutputs(next);
+            }}><Trash2 size={14} /></button>
+            <details className="definition-row-json">
+              <summary><span>高级 JSON</span><ChevronDown size={13} /></summary>
+              <textarea value={formatJsonForEditor(spec)} onChange={(event) => {
+                try {
+                  updateSpec(name, parseEditorObject(name, event.target.value));
+                } catch {
+                  updateSpec(name, event.target.value);
+                }
+              }} spellCheck={false} />
+            </details>
+          </article>
+        );
+      })}
+      {!rows.length ? <Empty text="还没有输出契约" /> : null}
+      <button type="button" className="btn" onClick={() => updateOutputs({ ...outputs, [`output_${rows.length + 1}`]: { path: "", type: "file", relayable: true } })}>新增输出</button>
+      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Outputs JSON" value={input.outputs} onChange={(value) => setInput({ ...input, outputs: value })} compact />
+    </div>
+  );
+}
+
+function capabilitySummary(value: unknown) {
+  const record = contractRecord(value);
+  const parts = [
+    Array.isArray(record.paths) ? record.paths.join(", ") : "",
+    record.path,
+    record.output_path,
+    record.repo_path,
+    record.trigger,
+    record.webhook_route,
+    record.role,
+  ].map((item) => String(item || "").trim()).filter(Boolean);
+  return parts.join(" · ");
+}
+
+function capabilityPathValue(record: Record<string, unknown>) {
+  if (Array.isArray(record.paths)) return record.paths.map(String).join(", ");
+  return String(record.path || record.output_path || record.repo_path || "");
+}
+
+function capabilityTriggerValue(record: Record<string, unknown>) {
+  if (Array.isArray(record.triggers)) return record.triggers.map(String).join(", ");
+  return String(record.trigger || record.webhook_route || record.role || "");
+}
+
+function capabilityPathPatch(key: string, record: Record<string, unknown>, value: string) {
+  if (Array.isArray(record.paths) || key === "github") return { paths: parseDefinitionCsv(value) };
+  if ("output_path" in record) return { output_path: value };
+  if ("repo_path" in record) return { repo_path: value };
+  return { path: value };
+}
+
+function capabilityTriggerPatch(record: Record<string, unknown>, value: string) {
+  if (Array.isArray(record.triggers)) return { triggers: parseDefinitionCsv(value) };
+  if ("webhook_route" in record) return { webhook_route: value };
+  if ("role" in record) return { role: value };
+  return { trigger: value };
+}
+
+function NodeDefinitionCapabilitiesEditor({
+  input,
+  setInput,
+}: {
+  input: NodeDefinitionEditInput;
+  setInput: (input: NodeDefinitionEditInput) => void;
+}) {
+  const capabilities = parseDefinitionEditorObject(input.capabilities);
+  const keys = Array.from(new Set(["github", "telegram", "sse", "http_action", ...Object.keys(capabilities)]));
+  function updateCapability(key: string, patch: Record<string, unknown>) {
+    const current = capabilities[key];
+    const base = current && typeof current === "object" && !Array.isArray(current) ? current as Record<string, unknown> : { enabled: capabilityEnabled(current) };
+    setInput(writeDefinitionJsonField(input, "capabilities", { ...capabilities, [key]: { ...base, ...patch } }));
+  }
+  return (
+    <div className="definition-capability-editor">
+      {keys.map((key) => {
+        const current = capabilities[key];
+        const record = contractRecord(current);
+        const enabled = capabilityEnabled(current);
+        return (
+          <article key={key} className={enabled ? "active" : ""}>
+            <label className="mini-check">
+              <input type="checkbox" checked={enabled} onChange={(event) => updateCapability(key, { enabled: event.target.checked })} />
+              <span>{key === "github" ? "GitHub 持久化" : key === "telegram" ? "Telegram 通知" : key === "sse" ? "SSE 事件" : key}</span>
+              <code>{key}</code>
+            </label>
+            <input value={capabilityPathValue(record)} onChange={(event) => updateCapability(key, capabilityPathPatch(key, record, event.target.value))} placeholder="路径摘要，例如 raw/... 或 wiki/**" />
+            <input value={capabilityTriggerValue(record)} onChange={(event) => updateCapability(key, capabilityTriggerPatch(record, event.target.value))} placeholder="触发器 / role 摘要" />
+            <small>{capabilitySummary(current) || (enabled ? "已启用，未填写路径或触发器摘要" : "未启用")}</small>
+          </article>
+        );
+      })}
+      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Capabilities JSON" value={input.capabilities} onChange={(value) => setInput({ ...input, capabilities: value })} compact />
+    </div>
+  );
+}
+
 function NodeDefinitionEditorDrawer({
   mode,
   runtime,
   instance,
   schema,
+  workflowNodes = [],
   input,
   setInput,
   confirmRealDraft,
@@ -10735,6 +11190,7 @@ function NodeDefinitionEditorDrawer({
   runtime: Runtime;
   instance: Instance;
   schema: NodeDraftSchema | undefined;
+  workflowNodes?: NodeRegistryItem[];
   input: NodeDefinitionEditInput;
   setInput: (input: NodeDefinitionEditInput) => void;
   confirmRealDraft: boolean;
@@ -10763,28 +11219,32 @@ function NodeDefinitionEditorDrawer({
             <strong>保存边界</strong>
             <span>这里只生成 definition draft/change request，不直接修改 Runtime 或生产 workflow。正式应用必须走 agent-brain-plugins repo-first 流程。</span>
           </div>
-          <div className="schema-note">
+          <div className="schema-note definition-draft-summary">
             <span>{schema?.schemaId || "node-draft-schema"}</span>
-            <span>draft_type: edit_node_definition</span>
-            <span>target: agent-brain-plugins</span>
-            <span>publish disabled</span>
+            <span>只创建草稿</span>
+            <span>不发布生产 DAG</span>
           </div>
-          <section className="definition-editor-targets">
-            <div className="section-title"><span>保存目标</span><span>draft only</span></div>
+          <details className="definition-editor-targets definition-advanced-json">
+            <summary><span>高级：保存目标与草稿路径</span><ChevronDown size={14} /></summary>
             <KeyValues data={{
-              runtime_sop_file: targets.runtime_sop_file || "runtime sop.yaml 不直接修改",
-              project_skill_node_yaml: targets.project_skill_node_yaml || `agent-brain-plugins/youtube-wiki/skills/sop-${input.nodeId}/node.yaml`,
-              project_template_sop_yaml: targets.project_template_sop_yaml || "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml",
-              draft_workspace: latestDraft?.draftPath || "raw/node-drafts/{draft_id}",
-            }} />
-          </section>
+                runtime_sop_file: targets.runtime_sop_file || "runtime sop.yaml 不直接修改",
+                project_skill_node_yaml: targets.project_skill_node_yaml || `agent-brain-plugins/youtube-wiki/skills/sop-${input.nodeId}/node.yaml`,
+                project_template_sop_yaml: targets.project_template_sop_yaml || "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml",
+                draft_workspace: latestDraft?.draftPath || "raw/node-drafts/{draft_id}",
+              }} />
+          </details>
           <section className="definition-editor-section">
             <div className="section-title"><span>Identity</span><span>definition</span></div>
             <div className="draft-grid">
               <label>Node ID<input value={input.nodeId} disabled /></label>
               <label>Title<input value={input.title} onChange={(event) => setInput({ ...input, title: event.target.value })} /></label>
-              <label>Mode<input value={input.mode} onChange={(event) => setInput({ ...input, mode: event.target.value })} /></label>
-              <label>Needs<input value={input.needs} onChange={(event) => setInput({ ...input, needs: event.target.value })} placeholder="youtube-fetch, notebooklm-research" /></label>
+            </div>
+            <div className="definition-identity-controls">
+              <label>Mode<NodeDefinitionModeSelector value={input.mode} onChange={(value) => setInput({ ...input, mode: value })} /></label>
+              <div className="definition-needs-field">
+                <div className="field-label">Needs</div>
+                <NodeDefinitionNeedsPicker currentNodeId={input.nodeId} value={input.needs} nodes={workflowNodes} onChange={(value) => setInput({ ...input, needs: value })} />
+              </div>
             </div>
             <label>Description<textarea value={input.description} onChange={(event) => setInput({ ...input, description: event.target.value })} /></label>
           </section>
@@ -10796,24 +11256,20 @@ function NodeDefinitionEditorDrawer({
               <label>Agent<input value={input.agent} onChange={(event) => setInput({ ...input, agent: event.target.value })} placeholder="hermes" /></label>
               <label>Webhook Route<input value={input.webhookRoute} onChange={(event) => setInput({ ...input, webhookRoute: event.target.value })} placeholder="sop-wiki-build" /></label>
             </div>
-            <textarea className="definition-json-editor compact" value={input.executor} onChange={(event) => setInput({ ...input, executor: event.target.value })} spellCheck={false} />
+            <DefinitionAdvancedJson label="查看 / 直接编辑 Executor JSON" value={input.executor} onChange={(value) => setInput({ ...input, executor: value })} compact />
             <small className="field-hint">这些字段属于节点定义草稿，保存目标是 agent-brain-plugins，不是 Runtime 运行配置。</small>
           </section>
           <section className="definition-editor-section">
-            <div className="section-title"><span>Inputs Contract</span><span>required / accepts / resolvers</span></div>
-            <textarea className="definition-json-editor" value={input.inputs} onChange={(event) => setInput({ ...input, inputs: event.target.value })} spellCheck={false} />
+            <div className="section-title"><span>输入契约</span><span>name / required / resolver</span></div>
+            <NodeDefinitionInputsEditor input={input} setInput={setInput} />
           </section>
           <section className="definition-editor-section">
-            <div className="section-title"><span>Optional Inputs</span><span>non-blocking</span></div>
-            <textarea className="definition-json-editor" value={input.optionalInputs} onChange={(event) => setInput({ ...input, optionalInputs: event.target.value })} spellCheck={false} />
+            <div className="section-title"><span>输出契约</span><span>path / relayable / role</span></div>
+            <NodeDefinitionOutputsEditor input={input} setInput={setInput} />
           </section>
           <section className="definition-editor-section">
-            <div className="section-title"><span>Outputs Contract</span><span>path / relayable / role</span></div>
-            <textarea className="definition-json-editor" value={input.outputs} onChange={(event) => setInput({ ...input, outputs: event.target.value })} spellCheck={false} />
-          </section>
-          <section className="definition-editor-section">
-            <div className="section-title"><span>Capabilities</span><span>GitHub / Telegram / SSE</span></div>
-            <textarea className="definition-json-editor compact" value={input.capabilities} onChange={(event) => setInput({ ...input, capabilities: event.target.value })} spellCheck={false} />
+            <div className="section-title"><span>能力开关</span><span>GitHub / Telegram / SSE</span></div>
+            <NodeDefinitionCapabilitiesEditor input={input} setInput={setInput} />
           </section>
           {latestDraft ? (
             <section className="definition-editor-review">
