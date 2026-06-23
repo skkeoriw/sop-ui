@@ -7004,6 +7004,7 @@ pre {
 }
 
 .workflow-draft-flow-node {
+  position: relative;
   width: 236px;
   min-height: 138px;
   display: grid;
@@ -7078,6 +7079,28 @@ pre {
   height: 9px;
   border-color: #fff;
   background: var(--blue);
+}
+
+.workflow-draft-node-plus {
+  position: absolute;
+  top: 50%;
+  right: -16px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--blue);
+  border-radius: 999px;
+  background: #ffffff;
+  color: var(--blue);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, .14);
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.workflow-draft-node-plus:hover {
+  background: #eff6ff;
 }
 
 .react-flow__edge.workflow-draft-flow-edge path {
@@ -7213,6 +7236,75 @@ pre {
   border-radius: 8px;
   background: var(--surface);
   padding: 10px;
+}
+
+.workflow-draft-next-panel {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.workflow-draft-next-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-draft-next-panel p,
+.workflow-draft-next-group small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workflow-draft-next-group {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-draft-next-group > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.workflow-draft-next-group button {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-draft-next-group button:hover {
+  border-color: var(--blue);
+  background: #f8fbff;
+}
+
+.workflow-draft-next-group button strong,
+.workflow-draft-next-group button small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-draft-next-group button strong {
+  color: var(--text);
+  font-size: 12px;
 }
 
 .workflow-draft-inspector-head {
