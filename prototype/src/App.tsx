@@ -195,6 +195,7 @@ type EdgeDraftApplyPlan = {
   runtimeSopFile: string;
   projectTemplateSopYaml: string;
   projectWorkflowId: string;
+  targetValidationIssues: string[];
   targetsText: string;
   proposedText: string;
   changeRequestText: string;
@@ -9176,6 +9177,14 @@ function WorkflowCatalog({
                               project_workflow_id: selectedDraftEdgeSaveState.applyPlan.projectWorkflowId,
                               targets: selectedDraftEdgeSaveState.applyPlan.targetsText,
                             }} />
+                            {selectedDraftEdgeSaveState.applyPlan.targetValidationIssues.length ? (
+                              <div className="field-hint" style={{ color: "#b91c1c" }}>
+                                <strong>change_request.targets 缺失风险</strong>
+                                {selectedDraftEdgeSaveState.applyPlan.targetValidationIssues.map((item) => (
+                                  <div key={item}>- {item}</div>
+                                ))}
+                              </div>
+                            ) : null}
                             <div className="field-hint" style={{ marginBottom: 8 }}>
                               说明：草稿仅落在 Runtime 的 `raw/workflow-drafts`；生产 `sop.yaml` 仍需本地 repo-first 更新。
                             </div>
@@ -9648,6 +9657,10 @@ function safeRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function hasOwnObjectKey(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function safeToString(value: unknown, fallback = "") {
   if (value === undefined || value === null) return fallback;
   return String(value).trim() || fallback;
@@ -9677,6 +9690,14 @@ function edgeDraftBuildApplyPlan(input: {
 }): EdgeDraftApplyPlan {
   const { draftId, draftPath, workflowId, edgeId, edgeFrom, edgeTo, changeRequest } = input;
   const targets = safeRecord(changeRequest.targets);
+  const requiredTargetFields = [
+    { key: "runtime_sop_file", fallback: "runtime/sop.yaml" },
+    { key: "project_template_sop_yaml", fallback: "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml" },
+    { key: "workflow_id", fallback: workflowId },
+  ];
+  const targetValidationIssues = requiredTargetFields
+    .filter((item) => !hasOwnObjectKey(targets, item.key) || !safeToString(targets[item.key]).trim())
+    .map((item) => `change_request.targets.${item.key} missing, expected: ${item.fallback}`);
   const saveTarget = safeToString(changeRequest.save_target, "agent-brain-plugins");
   const saveOwner = safeToString(changeRequest.save_owner, "agent-brain-plugins");
   const runtimeSopFile = safeToString(targets.runtime_sop_file, "runtime/sop.yaml");
@@ -9696,6 +9717,7 @@ function edgeDraftBuildApplyPlan(input: {
     projectTemplateSopYaml,
     projectWorkflowId,
     saveOwner,
+    targetValidationIssues,
   });
   return {
     draftId,
@@ -9709,6 +9731,7 @@ function edgeDraftBuildApplyPlan(input: {
     runtimeSopFile,
     projectTemplateSopYaml,
     projectWorkflowId,
+    targetValidationIssues,
     targetsText,
     proposedText: proposedText || "{}",
     changeRequestText,
@@ -9748,6 +9771,7 @@ function buildEdgeDraftApplyScript(input: {
   projectTemplateSopYaml: string;
   projectWorkflowId: string;
   saveOwner: string;
+  targetValidationIssues: string[];
 }) {
   const {
     draftId,
@@ -9760,10 +9784,12 @@ function buildEdgeDraftApplyScript(input: {
     projectTemplateSopYaml,
     projectWorkflowId,
     saveOwner,
+    targetValidationIssues,
   } = input;
   const quote = (value: string) => `"${value.replace(/"/g, "\\\"")}"`;
   const repoRoot = safeToString(saveOwner, "~/agent-brain-plugins").replace(/\/+/g, "/").replace(/\/$/, "");
   const branch = `chore/apply-edge-${edgeFrom}-to-${edgeTo}-${draftId}`;
+  const issueBlock = JSON.stringify(targetValidationIssues);
   const normalizedDraftPath = draftPath.startsWith("/") || draftPath.startsWith("~")
     ? draftPath
     : `${repoRoot}/${draftPath}`;
@@ -9789,6 +9815,7 @@ function buildEdgeDraftApplyScript(input: {
     `TO=${quote(edgeTo)}`,
     `DRAFT_PATH=${quote(normalizedDraftPath)}`,
     `TARGET_FILE=${quote(normalizedTemplatePath)}`,
+    `TARGET_VALIDATION_ISSUES=${quote(issueBlock)}`,
     "",
     "if ! command -v git >/dev/null 2>&1; then",
     "  echo \"missing: git\"",
@@ -9820,6 +9847,22 @@ function buildEdgeDraftApplyScript(input: {
     "fi",
     "if [ ! -f \"$TARGET_FILE\" ]; then",
     "  echo \"missing target file: $TARGET_FILE\"",
+    "  exit 2",
+    "fi",
+    "if [ \"${TARGET_VALIDATION_ISSUES}\" != \"[]\" ]; then",
+    "  echo \"change_request.targets check failed\"",
+    "  echo \"Detected missing required target metadata:\"",
+    "  python3 - <<'PY'",
+    "import json",
+    "import os",
+    "issues = json.loads(os.environ.get('TARGET_VALIDATION_ISSUES', '[]'))",
+    "if not issues:",
+    "  print('  - (no issue details)')",
+    "for item in issues:",
+    "  print(f\"  - {item}\")",
+    "PY",
+    "  echo \"Hint: update backend-generated change_request.targets to include runtime_sop_file / project_template_sop_yaml / workflow_id.\"",
+    "  echo \"Hint: regenerate edge draft after backend returns complete change_request.targets.\"",
     "  exit 2",
     "fi",
     "",
@@ -9997,9 +10040,11 @@ function buildEdgeDraftApplyScript(input: {
   ].join("\n");
 }
 
-
 function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
   if (!plan) return "";
+  const targetValidation = plan.targetValidationIssues.length
+    ? `\nissues:\n${plan.targetValidationIssues.map((item) => `  - ${item}`).join("\n")}`
+    : "";
   return [
     `Edge 落库计划 (${plan.edgeId})`,
     `workflow: ${plan.workflowId}`,
@@ -10010,6 +10055,7 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     `project_template_sop_yaml: ${plan.projectTemplateSopYaml}`,
     `project_workflow_id: ${plan.projectWorkflowId}`,
     `targets:\n${plan.targetsText}`,
+    `change_request.targets 校验${targetValidation || "\n  (none)"}`,
     "",
     "commands:",
     ...plan.applyCommands.map((command, index) => `${index + 1}. ${command}`),
