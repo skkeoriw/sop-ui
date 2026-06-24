@@ -9695,14 +9695,45 @@ function edgeDraftBuildApplyPlan(input: {
     { key: "project_template_sop_yaml", fallback: "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml" },
     { key: "workflow_id", fallback: workflowId },
   ];
-  const targetValidationIssues = requiredTargetFields
-    .filter((item) => !hasOwnObjectKey(targets, item.key) || !safeToString(targets[item.key]).trim())
-    .map((item) => `change_request.targets.${item.key} missing, expected: ${item.fallback}`);
+  const targetValidationIssues: string[] = [];
+  requiredTargetFields.forEach((item) => {
+    if (!hasOwnObjectKey(targets, item.key) || !safeToString(targets[item.key]).trim()) {
+      targetValidationIssues.push(`change_request.targets.${item.key} missing, expected: ${item.fallback}`);
+    }
+  });
+
+  const runtimeSopFile = safeToString(targets.runtime_sop_file, "runtime/sop.yaml");
+  const projectTemplateSopYaml = safeToString(
+    targets.project_template_sop_yaml,
+    "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml",
+  );
+  const projectWorkflowId = safeToString(targets.workflow_id, workflowId);
+
+  if (projectWorkflowId !== workflowId) {
+    targetValidationIssues.push(`change_request.targets.workflow_id mismatch: '${projectWorkflowId}' (runtime draft) vs '${workflowId}' (current workflow)`);
+  }
+  if (runtimeSopFile.includes("..")) {
+    targetValidationIssues.push(`change_request.targets.runtime_sop_file contains path traversal: ${runtimeSopFile}`);
+  }
+  if (projectTemplateSopYaml.includes("..")) {
+    targetValidationIssues.push(`change_request.targets.project_template_sop_yaml contains path traversal: ${projectTemplateSopYaml}`);
+  }
+  if (!projectTemplateSopYaml.trim()) {
+    targetValidationIssues.push("change_request.targets.project_template_sop_yaml must be a non-empty path");
+  }
+
+  if (!runtimeSopFile.trim() || !projectTemplateSopYaml.trim() || !projectWorkflowId.trim()) {
+    targetValidationIssues.push("change_request.targets resolved value cannot be empty; check backend generation and regenerate edge draft");
+  }
+  if (!/\.ya?ml$/i.test(runtimeSopFile)) {
+    targetValidationIssues.push(`change_request.targets.runtime_sop_file should be yaml path: ${runtimeSopFile}`);
+  }
+  if (!/\.ya?ml$/i.test(projectTemplateSopYaml)) {
+    targetValidationIssues.push(`change_request.targets.project_template_sop_yaml should be yaml path: ${projectTemplateSopYaml}`);
+  }
+
   const saveTarget = safeToString(changeRequest.save_target, "agent-brain-plugins");
   const saveOwner = safeToString(changeRequest.save_owner, "agent-brain-plugins");
-  const runtimeSopFile = safeToString(targets.runtime_sop_file, "runtime/sop.yaml");
-  const projectTemplateSopYaml = safeToString(targets.project_template_sop_yaml, "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml");
-  const projectWorkflowId = safeToString(targets.workflow_id, workflowId);
   const targetsText = stringifyTargets(targets);
   const proposedText = pickChangeRequestText(changeRequest.proposed_text || changeRequest.proposedText || changeRequest.proposal || "");
   const changeRequestText = pickChangeRequestText(changeRequest);
@@ -9851,7 +9882,7 @@ function buildEdgeDraftApplyScript(input: {
     "fi",
     "if [ \"${TARGET_VALIDATION_ISSUES}\" != \"[]\" ]; then",
     "  echo \"change_request.targets check failed\"",
-    "  echo \"Detected missing required target metadata:\"",
+    "  echo \"Detected invalid target metadata:\"",
     "  python3 - <<'PY'",
     "import json",
     "import os",
