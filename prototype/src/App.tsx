@@ -9194,6 +9194,13 @@ function WorkflowCatalog({
                                 ))}
                               </div>
                             ) : null}
+                            <div className="field-hint" style={{ marginTop: 6 }}>
+                              <strong>执行清单（建议）</strong>
+                              <div>1) 复制落库脚本到 /tmp/apply-edge.sh</div>
+                              <div>2) bash /tmp/apply-edge.sh --dry-run --auto-confirm</div>
+                              <div>3) 确认草稿上下文通过后，执行 bash /tmp/apply-edge.sh --auto-confirm</div>
+                              <div>4) 脚本成功后在本地 repo-first 分支提交并 pull 到运行机器更新</div>
+                            </div>
                             <div className="field-hint" style={{ marginBottom: 8 }}>
                               说明：草稿仅落在 Runtime 的 `raw/workflow-drafts`；生产 `sop.yaml` 仍需本地 repo-first 更新。
                             </div>
@@ -10137,6 +10144,21 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
   const targetValidationWarnings = plan.targetValidationWarnings.length
     ? `\nwarning:\n${plan.targetValidationWarnings.map((item) => `  - ${item}`).join("\n")}`
     : "\n  (none)";
+  const executeGuide = [
+    "执行手册：",
+    "1) 保存脚本到 /tmp/apply-edge.sh",
+    "2) 先做 dry-run 只检查上下文，不推送",
+    "3) 确认草稿应用到 target file 后，执行正式命令",
+    "4) 目标是仅修改 target sop.yaml，产生一个本地分支提交",
+    "",
+    "dry-run 预期：",
+    "- 会输出草稿上下文检查结果；无阻断问题时展示 [DRY-RUN]。",
+    "- 若有阻断问题，会在脚本内显示具体失败项并退出码非0。",
+    "",
+    "正式执行预期：",
+    "- 脚本在当前分支提交并推送到 HEAD（git push skipped 由 dry-run 决定）。",
+    "- 推送后记录需回推到 repo-first 分支。",
+  ].join("\n");
   return [
     `Edge 落库计划 (${plan.edgeId})`,
     `workflow: ${plan.workflowId}`,
@@ -10160,6 +10182,8 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     "# 保存为 /tmp/apply-edge.sh",
     "bash /tmp/apply-edge.sh --dry-run --auto-confirm",
     "bash /tmp/apply-edge.sh --auto-confirm",
+    "",
+    executeGuide,
     "",
     "change_request:",
     plan.changeRequestText,
