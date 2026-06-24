@@ -386,6 +386,7 @@ function readRoute(): AppRoute {
   const empty = { nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
   if (parts[0] === "runtimes") {
     if (parts[2] === "workflows") return { view: "workflows", ...empty };
+    if (parts[2] === "instances" && parts[4] === "workflows" && !parts[5]) return { view: "workflows", ...empty };
     if (parts[2] === "instances" && parts[4] === "workflows") {
       const executionIndex = parts.indexOf("executions");
       const runsIndex = parts.indexOf("runs");
