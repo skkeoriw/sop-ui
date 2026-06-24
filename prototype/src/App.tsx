@@ -8614,6 +8614,9 @@ function WorkflowCatalog({
     setActiveDraftHandoffNodeId("");
     setDraftAgentEvaluations({});
     setDraftEdgeSaveStates({});
+    if (workflows.some((workflow) => workflow.workflowId === "youtube-research-wiki")) {
+      setSelectedWorkflowId("youtube-research-wiki");
+    }
   }
   function connectDraftNodes(connection: Connection) {
     addDraftEdgeBetween(connection.source || "", connection.target || "");
