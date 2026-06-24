@@ -7620,6 +7620,50 @@ pre {
   gap: 4px;
 }
 
+.workflow-draft-agent-save {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+
+.workflow-draft-agent-save > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-draft-agent-save strong,
+.workflow-draft-agent-saved strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-agent-save span,
+.workflow-draft-agent-saved span,
+.workflow-draft-agent-saved small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-agent-saved {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f7fee7;
+}
+
 .workflow-draft-agent-guide summary {
   display: flex;
   align-items: center;

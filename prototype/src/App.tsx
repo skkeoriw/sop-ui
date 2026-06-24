@@ -175,6 +175,13 @@ type EdgeHandoffAgentState = {
   evaluation?: EdgeHandoffAgentEvaluation;
   raw?: Record<string, unknown>;
 };
+type EdgeDraftSaveState = {
+  loading?: boolean;
+  error?: string;
+  draftId?: string;
+  draftPath?: string;
+  changeRequest?: Record<string, unknown>;
+};
 
 interface StageNodeData extends Record<string, unknown> {
   stage: DagNode;
@@ -7981,6 +7988,7 @@ function WorkflowCatalog({
   const [draftCanvasMessage, setDraftCanvasMessage] = useState("从节点右侧 handle 拖到另一个节点左侧 handle，可直接创建接力连接。");
   const [draftNodePositions, setDraftNodePositions] = useState<Record<string, { x: number; y: number }>>(() => draft.positions || {});
   const [draftAgentEvaluations, setDraftAgentEvaluations] = useState<Record<string, EdgeHandoffAgentState>>({});
+  const [draftEdgeSaveStates, setDraftEdgeSaveStates] = useState<Record<string, EdgeDraftSaveState>>({});
   const filteredWorkflows = useMemo(() => {
     const query = workflowSearch.trim().toLowerCase();
     return workflows.filter((item) => {
@@ -8050,6 +8058,8 @@ function WorkflowCatalog({
   const selectedDraftAgentState = selectedDraftEdge ? draftAgentEvaluations[selectedDraftEdge.id] : undefined;
   const selectedDraftAgentEvaluation = selectedDraftAgentState?.evaluation;
   const selectedDraftAgentGuidePrompt = edgeHandoffAgentGuidePrompt(selectedDraftAgentEvaluation);
+  const selectedDraftEdgeSaveState = selectedDraftEdge ? draftEdgeSaveStates[selectedDraftEdge.id] : undefined;
+  const selectedDraftAgentCanSave = edgeHandoffAgentCanSave(selectedDraftAgentEvaluation);
   const activeDraftHandoffNode = activeDraftHandoffNodeId ? nodesById.get(activeDraftHandoffNodeId) : undefined;
   const activeDraftTargets = activeDraftHandoffNode
     ? draftNodes.filter((target) => target.nodeId !== activeDraftHandoffNode.nodeId && !draft.edges.some((edge) => edge.from === activeDraftHandoffNode.nodeId && edge.to === target.nodeId))
@@ -8237,10 +8247,21 @@ function WorkflowCatalog({
       delete next[edgeId];
       return next;
     });
+    setDraftEdgeSaveStates((current) => {
+      const next = { ...current };
+      delete next[edgeId];
+      return next;
+    });
     if (selectedDraftEdgeId === edgeId) setSelectedDraftEdgeId("");
   }
   function clearDraftAgentEvaluation(edgeId: string) {
     setDraftAgentEvaluations((current) => {
+      if (!current[edgeId]) return current;
+      const next = { ...current };
+      delete next[edgeId];
+      return next;
+    });
+    setDraftEdgeSaveStates((current) => {
       if (!current[edgeId]) return current;
       const next = { ...current };
       delete next[edgeId];
@@ -8324,6 +8345,100 @@ function WorkflowCatalog({
       }));
     } catch (error) {
       setDraftAgentEvaluations((current) => ({
+        ...current,
+        [edgeId]: {
+          ...(current[edgeId] || {}),
+          loading: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    }
+  }
+  async function saveDraftEdgeDefinition(edgeId: string) {
+    const edge = draft.edges.find((item) => item.id === edgeId);
+    const agentState = draftAgentEvaluations[edgeId];
+    const evaluation = agentState?.evaluation;
+    const workflowId = selectedWorkflow?.workflowId || "workflow";
+    const instanceId = defaultInstance?.instanceId || "";
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtime));
+    if (!edge || !evaluation) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { error: "请先运行 Edge Handoff Agent 评估。" },
+      }));
+      return;
+    }
+    if (!edgeHandoffAgentCanSave(evaluation)) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { error: "只有 ready/trial_ready 且 used_ai=true、包含 Node Execution Guide 的评估结果才能保存。" },
+      }));
+      return;
+    }
+    if (!runtime || !spiBase || !instanceId) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { error: "缺少 Runtime 或 Instance，不能保存 Edge 草稿。" },
+      }));
+      return;
+    }
+    const mappings = workflowDraftBuildRelayMappings(
+      nodesById.get(edge.to),
+      edge.relayMode === "selected_outputs"
+        ? (edge.relayMappings || []).map((item) => item.sourceOutput).filter(Boolean)
+        : nodeOutputContractRows(nodesById.get(edge.from)).map((item) => item.name),
+      edge.relayMappings || [],
+    );
+    const payload = {
+      edge_id: edge.id,
+      workflow_id: workflowId,
+      workflow_goal: draft.goal,
+      draft_name: draft.name,
+      upstream_node_id: edge.from,
+      downstream_node_id: edge.to,
+      edge_handoff_instruction: edge.instruction || "",
+      relay_mode: edge.relayMode || "auto_by_target_inputs",
+      relay_mappings: mappings,
+      edge,
+      evaluation,
+    };
+    setDraftEdgeSaveStates((current) => ({
+      ...current,
+      [edgeId]: { ...(current[edgeId] || {}), loading: true, error: "" },
+    }));
+    try {
+      const response = await fetch(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/drafts`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const text = await response.text();
+      let raw: Record<string, unknown> = {};
+      try {
+        raw = text ? JSON.parse(text) as Record<string, unknown> : {};
+      } catch {
+        raw = { detail: text };
+      }
+      if (!response.ok) {
+        const detail = String(raw.detail || raw.message || raw.error || text || `HTTP ${response.status}`);
+        throw new Error(detail);
+      }
+      const changeRequest = raw.change_request && typeof raw.change_request === "object" ? raw.change_request as Record<string, unknown> : {};
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: {
+          loading: false,
+          draftId: String(raw.draft_id || ""),
+          draftPath: String(raw.draft_path || ""),
+          changeRequest,
+        },
+      }));
+      setDraftCanvasMessage(`已保存 Edge Definition Draft：${String(raw.draft_id || edgeId)}`);
+    } catch (error) {
+      setDraftEdgeSaveStates((current) => ({
         ...current,
         [edgeId]: {
           ...(current[edgeId] || {}),
@@ -8453,6 +8568,8 @@ function WorkflowCatalog({
     setSelectedDraftEdgeId("");
     setActiveDraftHandoffNodeId("");
     setDraftNodePositions({});
+    setDraftAgentEvaluations({});
+    setDraftEdgeSaveStates({});
   }
   function seedYoutubeWikiDraft() {
     const seedNodes = WORKFLOW_DRAFT_NODE_PRIORITY
@@ -8494,6 +8611,8 @@ function WorkflowCatalog({
     setSelectedDraftNodeId(nextNodes[0]?.nodeId || "");
     setSelectedDraftEdgeId("");
     setActiveDraftHandoffNodeId("");
+    setDraftAgentEvaluations({});
+    setDraftEdgeSaveStates({});
   }
   function connectDraftNodes(connection: Connection) {
     addDraftEdgeBetween(connection.source || "", connection.target || "");
@@ -8935,6 +9054,35 @@ function WorkflowCatalog({
                           <pre>{selectedDraftAgentGuidePrompt}</pre>
                         </details>
                       ) : null}
+                      <div className="workflow-draft-agent-save">
+                        <div>
+                          <strong>保存为 Edge Definition Draft</strong>
+                          <span>只写入当前 Instance 的 `raw/workflow-drafts` 变更草稿；不会直接修改生产 sop.yaml，最终仍需 repo-first 改 agent-brain-plugins。</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="ghost-btn compact"
+                          disabled={!selectedDraftAgentCanSave || selectedDraftEdgeSaveState?.loading}
+                          title={selectedDraftAgentCanSave ? "保存已评估 Edge 草稿" : "需要 ready/trial_ready、used_ai=true 且包含 Node Execution Guide"}
+                          onClick={() => saveDraftEdgeDefinition(selectedDraftEdge.id)}
+                        >
+                          {selectedDraftEdgeSaveState?.loading ? <Loader2 size={13} /> : <CheckCircle2 size={13} />}
+                          保存 Edge 草稿
+                        </button>
+                      </div>
+                      {selectedDraftEdgeSaveState?.error ? (
+                        <div className="workflow-draft-agent-error">
+                          <AlertTriangle size={14} />
+                          <span>{selectedDraftEdgeSaveState.error}</span>
+                        </div>
+                      ) : null}
+                      {selectedDraftEdgeSaveState?.draftId ? (
+                        <div className="workflow-draft-agent-saved">
+                          <strong>{selectedDraftEdgeSaveState.draftId}</strong>
+                          <span>{selectedDraftEdgeSaveState.draftPath || "raw/workflow-drafts/{draft_id}"}</span>
+                          <small>save_target: {String(selectedDraftEdgeSaveState.changeRequest?.save_target || "agent-brain-plugins")}</small>
+                        </div>
+                      ) : null}
                       {selectedDraftAgentEvaluation.resolved_handoff && Object.keys(selectedDraftAgentEvaluation.resolved_handoff).length ? (
                         <details className="workflow-draft-runtime-brief">
                           <summary><span>Agent 解析出的交接结构</span><ChevronDown size={14} /></summary>
@@ -9356,6 +9504,14 @@ function edgeHandoffAgentStatusTone(status?: string) {
 function edgeHandoffAgentGuidePrompt(evaluation?: EdgeHandoffAgentEvaluation) {
   const guide = evaluation?.node_execution_guide;
   return typeof guide?.prompt === "string" ? guide.prompt : "";
+}
+
+function edgeHandoffAgentCanSave(evaluation?: EdgeHandoffAgentEvaluation) {
+  if (!evaluation) return false;
+  const status = String(evaluation.status || "");
+  if (status !== "ready" && status !== "trial_ready") return false;
+  if (!evaluation.agent?.used_ai) return false;
+  return !!edgeHandoffAgentGuidePrompt(evaluation);
 }
 
 function edgeHandoffAgentListText(value: unknown) {
