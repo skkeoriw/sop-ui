@@ -1523,6 +1523,7 @@ export const sopProvider: SopDataProvider = {
         target_input: item.targetInput || "",
         resolver: item.resolver || "",
       })),
+      relay_instruction: input.relayInstruction || "",
       manual_inputs: input.manualInputs || {},
       overrides: input.overrides || {},
       capability_overrides: input.capabilityOverrides || {},

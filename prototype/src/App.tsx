@@ -44,6 +44,7 @@ import type {
   Artifact,
   Dag,
   DagNode,
+  DagEdge,
   DataMode,
   Instance,
   NodeDraft,
@@ -1174,6 +1175,7 @@ type NodeRelayOptions = {
   relayMode?: NodeRunRelayMode | string;
   selectedOutputs?: string[];
   relayMappings?: NodeRunRelayMapping[];
+  relayInstruction?: string;
 };
 
 function nodeRelayReason(node: NodeRegistryItem, currentNodeId: string) {
@@ -1220,15 +1222,15 @@ function nodeRunInputSourceHelp(inputSource?: string) {
 }
 
 function nodeRunRelayModeLabel(mode?: string) {
-  if (mode === "selected_outputs") return "手动选择输出";
-  if (mode === "all_outputs") return "传递整个输出包";
-  return "按目标输入自动匹配";
+  if (mode === "selected_outputs") return "只传选中输出";
+  if (mode === "all_outputs") return "整包交给下游";
+  return "按下游需要传递";
 }
 
 function nodeRunRelayModeHelp(mode?: string) {
-  if (mode === "selected_outputs") return "只传递勾选的上游输出。适合下游只需要 source_url、analysis_file 等单个输出。";
-  if (mode === "all_outputs") return "传递上游所有 relayable outputs。适合下游自己遍历整个输出包。";
-  return "默认模式。根据目标节点 inputs 和当前 workflow 默认绑定自动选择匹配输出。";
+  if (mode === "selected_outputs") return "从上游声明的输出口中勾选一个或多个，再绑定到下游输入口。适合明确知道下游只需要某个产物时使用。";
+  if (mode === "all_outputs") return "把上游所有可接力产物作为一个包交给下游 Agent。必须补充连接说明，让下游知道该怎么用。";
+  return "优先使用 SOP Edge 中定义的绑定；没有绑定时再按下游输入需求评估，不会把 manifest 当业务产物。";
 }
 
 function contractRecord(spec: unknown): Record<string, unknown> {
@@ -1330,6 +1332,14 @@ function nodeOutputContractRows(node: NodeRegistryItem | undefined, fallback?: N
     path: item.relativePath || item.path,
     relayable: true,
   })).filter((item) => item.name);
+}
+
+function inferNodeFromNodeRunId(nodeRunId: string, nodes: NodeRegistryItem[]) {
+  const text = String(nodeRunId || "");
+  if (!text.startsWith("node-run-")) return undefined;
+  return [...nodes]
+    .sort((left, right) => right.nodeId.length - left.nodeId.length)
+    .find((node) => text.startsWith(`node-run-${node.nodeId}-`));
 }
 
 function outputContractPath(spec: unknown) {
@@ -3172,6 +3182,7 @@ function useNodeRunController({
   instance,
   workflowId,
   node,
+  nodes = [],
   runs,
   mode,
   selectedNodeRunId,
@@ -3182,6 +3193,7 @@ function useNodeRunController({
   instance: Instance | undefined;
   workflowId: string;
   node: NodeRegistryItem | undefined;
+  nodes?: NodeRegistryItem[];
   runs: Run[];
   mode: DataMode;
   selectedNodeRunId: string;
@@ -3195,6 +3207,7 @@ function useNodeRunController({
   const [relayMode, setRelayMode] = useState<NodeRunRelayMode>("auto_by_target_inputs");
   const [selectedOutputs, setSelectedOutputs] = useState<string[]>([]);
   const [relayMappings, setRelayMappings] = useState<NodeRunRelayMapping[]>([]);
+  const [relayInstruction, setRelayInstruction] = useState("");
   const [manualInputs, setManualInputs] = useState<Record<string, string>>({});
   const [runtimeOverrides, setRuntimeOverrides] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
@@ -3232,6 +3245,7 @@ function useNodeRunController({
       const outputs = (params.get("relay_outputs") || "").split(",").map((item) => item.trim()).filter(Boolean);
       setSelectedOutputs(outputs.length ? outputs : decodedMappings.map((item) => item.sourceOutput).filter(Boolean));
       setRelayMappings(decodedMappings);
+      setRelayInstruction(params.get("relay_instruction") || "");
     }
   }, [nodeId]);
 
@@ -3280,6 +3294,7 @@ function useNodeRunController({
       relayMode: inputSource === "existing-node-run" ? relayMode : undefined,
       selectedOutputs: inputSource === "existing-node-run" ? selectedOutputs : undefined,
       relayMappings: inputSource === "existing-node-run" ? effectiveRelayMappings : undefined,
+      relayInstruction: inputSource === "existing-node-run" ? relayInstruction : undefined,
       manualInputs,
       overrides: runtimeOverrides,
       capabilityOverrides: nodeRunCapabilityOverridePayload({
@@ -3315,6 +3330,7 @@ function useNodeRunController({
     instance,
     workflowId,
     node,
+    nodes,
     runs,
     mode,
     nodeId,
@@ -3333,6 +3349,8 @@ function useNodeRunController({
     setSelectedOutputs,
     relayMappings,
     setRelayMappings,
+    relayInstruction,
+    setRelayInstruction,
     manualInputs,
     setManualInputs,
     runtimeOverrides,
@@ -3422,6 +3440,8 @@ function NodeRunStartPanel({
     setSelectedOutputs,
     relayMappings,
     setRelayMappings,
+    relayInstruction,
+    setRelayInstruction,
     manualInputs,
     setManualInputs,
     gitEnabled,
@@ -3441,6 +3461,32 @@ function NodeRunStartPanel({
   } = controller;
   const [showInheritedConfig, setShowInheritedConfig] = useState(false);
   if (!node || !instance || !runtime) return <div className="node-run-empty">选择 Runtime、Instance 和 Node 后才能创建 Node Run。</div>;
+  const inferredSourceNode = inputSource === "existing-node-run" ? inferNodeFromNodeRunId(sourceNodeRunId, controller.nodes || []) : undefined;
+  const sourceOutputRows = nodeOutputContractRows(inferredSourceNode);
+  const targetInputRows = nodeInputContractRows(node);
+  const startDisabledReason = (() => {
+    if (createMutation.isPending) return "正在创建 Node Run";
+    if (inputSource === "existing-run" && !seedRunId) return "先选择历史 Workflow Run";
+    if (inputSource === "existing-node-run" && !sourceNodeRunId) return "先指定上游 Node Run";
+    if (inputSource === "existing-node-run" && relayMode === "selected_outputs") {
+      const mappingRows = normalizeRelayMappingsForTarget(node, selectedOutputs, relayMappings);
+      if (!selectedOutputs.length) return "先选择至少一个上游输出";
+      if (!targetInputRows.length) return "目标节点没有输入契约，不能手动映射";
+      if (mappingRows.some((item) => !item.targetInput)) return "还有输出没有绑定到目标输入";
+    }
+    if (inputSource === "existing-node-run" && relayMode === "all_outputs" && !relayInstruction.trim()) {
+      return "整包接力需要填写接续说明";
+    }
+    return "";
+  })();
+  function toggleSelectedSourceOutput(outputName: string) {
+    if (!outputName) return;
+    const next = selectedOutputs.includes(outputName)
+      ? selectedOutputs.filter((item) => item !== outputName)
+      : [...selectedOutputs, outputName];
+    setSelectedOutputs(next);
+    setRelayMappings(normalizeRelayMappingsForTarget(node, next, relayMappings));
+  }
   return (
     <section className={`node-run-start-panel ${compact ? "compact" : ""}`}>
       <div className="node-run-start-head">
@@ -3451,12 +3497,14 @@ function NodeRunStartPanel({
         <button
           type="button"
           className="btn primary"
-          disabled={createMutation.isPending || (inputSource === "existing-run" && !seedRunId) || (inputSource === "existing-node-run" && !sourceNodeRunId)}
+          disabled={Boolean(startDisabledReason)}
+          title={startDisabledReason || "创建并运行 Node Run"}
           onClick={() => startNodeRun()}
         >
           {createMutation.isPending ? <Loader2 size={14} className="spin" /> : <Play size={14} />} 运行节点
         </button>
       </div>
+      {startDisabledReason ? <small className="field-hint bad">{startDisabledReason}</small> : null}
       <div className="node-run-context-grid">
         <article>
           <strong>Runtime Context</strong>
@@ -3527,34 +3575,39 @@ function NodeRunStartPanel({
             </label>
             <label>接力模式
               <select value={relayMode} onChange={(event) => setRelayMode(event.target.value as NodeRunRelayMode)}>
-                <option value="auto_by_target_inputs">按目标输入自动匹配</option>
-                <option value="selected_outputs">手动选择输出</option>
-                <option value="all_outputs">传递整个输出包</option>
+                <option value="auto_by_target_inputs">按下游需要传递</option>
+                <option value="selected_outputs">只传选中输出</option>
+                <option value="all_outputs">整包交给下游</option>
               </select>
             </label>
             {relayMode === "selected_outputs" ? (
               <>
-                <label>选择输出
-                  <input
-                    value={selectedOutputs.join(",")}
-                    onChange={(event) => {
-                      const outputs = event.target.value.split(",").map((item) => item.trim()).filter(Boolean);
-                      setSelectedOutputs(outputs);
-                      setRelayMappings(normalizeRelayMappingsForTarget(node, outputs, relayMappings));
-                    }}
-                    placeholder="source_url, analysis_file"
-                    autoComplete="off"
-                  />
-                </label>
+                <div className="node-relay-outputs-panel node-run-source-output-picker">
+                  <div className="section-title">
+                    <span>选择上游输出</span>
+                    <span>{inferredSourceNode ? inferredSourceNode.nodeId : "等待识别上游节点"}</span>
+                  </div>
+                  <div className="node-relay-output-list">
+                    {sourceOutputRows.map((output) => (
+                      <label key={output.name} className={`node-relay-output-row ${selectedOutputs.includes(output.name) ? "active" : ""}`}>
+                        <input type="checkbox" checked={selectedOutputs.includes(output.name)} onChange={() => toggleSelectedSourceOutput(output.name)} />
+                        <span>
+                          <strong>{output.name}</strong>
+                          <small>{contractContentLabel(contractRecord(output.spec), output.type)} · {output.path || "运行时生成"}</small>
+                        </span>
+                      </label>
+                    ))}
+                    {!sourceOutputRows.length ? <Empty text={sourceNodeRunId ? "无法从 Node Run ID 推断上游节点，建议从上游运行详情页点击“接力到节点”。" : "先填写或通过接力按钮带入上游 Node Run。"} /> : null}
+                  </div>
+                </div>
                 {selectedOutputs.length ? (
                   <div className="node-relay-inline-mapping">
                     {normalizeRelayMappingsForTarget(node, selectedOutputs, relayMappings).map((mapping) => {
-                      const targetRows = nodeInputContractRows(node);
-                      const targetSpec = targetRows.find((row) => row.name === mapping.targetInput)?.spec;
+                      const targetSpec = targetInputRows.find((row) => row.name === mapping.targetInput)?.spec;
                       const resolvers = contractResolvers(targetSpec);
                       return (
                         <article key={mapping.sourceOutput}>
-                          <code>{mapping.sourceOutput}</code>
+                          <strong>{mapping.sourceOutput}</strong>
                           <span>→</span>
                           <select
                             value={mapping.targetInput || ""}
@@ -3562,7 +3615,7 @@ function NodeRunStartPanel({
                               item.sourceOutput === mapping.sourceOutput ? { ...item, targetInput: event.target.value, resolver: "" } : item
                             )))}
                           >
-                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · 必填" : " · 可选"}</option>)}
+                            {targetInputRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · 必填" : " · 可选"}</option>)}
                           </select>
                           <select
                             value={mapping.resolver || ""}
@@ -3580,6 +3633,16 @@ function NodeRunStartPanel({
                 ) : null}
               </>
             ) : null}
+            <label className="node-run-relay-instruction">接续说明
+              <textarea
+                value={relayInstruction}
+                onChange={(event) => setRelayInstruction(event.target.value)}
+                placeholder="说明这次要让下游 Agent 如何理解上游产物。例如：只使用 analysis_file 作为深度研究材料，忽略字幕。"
+              />
+              {inputSource === "existing-node-run" && relayMode === "all_outputs" && !relayInstruction.trim()
+                ? <small className="field-hint bad">整包接力必须说明下游应该使用哪些产物、忽略哪些产物。</small>
+                : null}
+            </label>
           </>
         ) : null}
         {inputSource === "manual" ? inputFields.map(([name, spec]) => (
@@ -4109,6 +4172,7 @@ function NodeRunsIndexPage({
   instance,
   workflowId,
   node,
+  nodes,
   runs,
   mode,
   onOpenNode,
@@ -4119,12 +4183,13 @@ function NodeRunsIndexPage({
   instance: Instance | undefined;
   workflowId: string;
   node: NodeRegistryItem | undefined;
+  nodes: NodeRegistryItem[];
   runs: Run[];
   mode: DataMode;
   onOpenNode: (nodeId: string) => void;
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
 }) {
-  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId: "", onOpenNodeRun });
+  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, nodes, runs, mode, selectedNodeRunId: "", onOpenNodeRun });
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -4201,6 +4266,7 @@ function NodeRunDetailPage({
   instance,
   workflowId,
   node,
+  nodes,
   runs,
   mode,
   selectedNodeRunId,
@@ -4216,6 +4282,7 @@ function NodeRunDetailPage({
   instance: Instance | undefined;
   workflowId: string;
   node: NodeRegistryItem | undefined;
+  nodes: NodeRegistryItem[];
   runs: Run[];
   mode: DataMode;
   selectedNodeRunId: string;
@@ -4226,7 +4293,7 @@ function NodeRunDetailPage({
   onRelayNodeRun: (nodeId: string, sourceNodeRunId: string, options?: NodeRelayOptions) => void;
   onOpenSettings: () => void;
 }) {
-  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, runs, mode, selectedNodeRunId, onOpenNodeRun });
+  const controller = useNodeRunController({ provider, runtime, instance, workflowId, node, nodes, runs, mode, selectedNodeRunId, onOpenNodeRun });
   const result = controller.current;
   const live = nodeRunIsLive(result);
   const localizedSteps = (result?.steps || []).map((step) => localizedNodeRunStep(step, result?.nodeId));
@@ -4238,6 +4305,7 @@ function NodeRunDetailPage({
   const [selectedRelayOutputs, setSelectedRelayOutputs] = useState<string[]>([]);
   const [selectedRelayTargetId, setSelectedRelayTargetId] = useState("");
   const [relayMappings, setRelayMappings] = useState<NodeRunRelayMapping[]>([]);
+  const [relayInstruction, setRelayInstruction] = useState("");
   const stepKey = (result?.steps || []).map((step) => step.id).join("|");
   const sourceOutputRows = useMemo(() => nodeOutputContractRows(node, result), [node?.nodeId, result?.nodeRunId, result?.relayPackage?.items?.length]);
   const sourceOutputNames = sourceOutputRows.map((item) => item.name).filter(Boolean);
@@ -4260,10 +4328,17 @@ function NodeRunDetailPage({
   const relayMappingRows = relayMode === "selected_outputs"
     ? normalizeRelayMappingsForTarget(selectedRelayTarget?.node, selectedRelayOutputs, relayMappings)
     : [];
-  const relayReady = Boolean(selectedRelayTarget) && (
-    relayMode !== "selected_outputs" ||
-    (selectedRelayOutputs.length > 0 && selectedTargetInputRows.length > 0 && relayMappingRows.every((item) => Boolean(item.targetInput)))
-  );
+  const relayDisabledReason = (() => {
+    if (!selectedRelayTarget) return "先选择目标节点";
+    if (relayMode === "selected_outputs") {
+      if (!selectedRelayOutputs.length) return "请选择至少一个上游输出";
+      if (!selectedTargetInputRows.length) return "目标节点没有输入契约，不能建立手动映射";
+      if (relayMappingRows.some((item) => !item.targetInput)) return "还有输出没有绑定到目标输入";
+    }
+    if (relayMode === "all_outputs" && !relayInstruction.trim()) return "整包接力需要填写接续说明";
+    return "";
+  })();
+  const relayReady = !relayDisabledReason;
   function toggleRelayOutput(name: string) {
     if (!name) return;
     setSelectedRelayOutputs((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
@@ -4486,22 +4561,33 @@ function NodeRunDetailPage({
                     {!relayMappingRows.length ? <Empty text="先选择至少一个上游输出，再配置它映射到目标节点的哪个输入。" /> : null}
                   </div>
                 ) : null}
+                <label className="workflow-draft-edge-instruction node-relay-instruction">
+                  <span>接续说明</span>
+                  <textarea
+                    value={relayInstruction}
+                    onChange={(event) => setRelayInstruction(event.target.value)}
+                    placeholder="说明这次要让下游 Agent 如何使用上游产物。例如：把 metadata_file 里的 title 作为 Telegram 正文。"
+                  />
+                  <small>这段说明会写入目标 Node Run 的 Relay Context Brief，并出现在 Agent Request 中。</small>
+                </label>
                 </div>
                 <div className="node-relay-footer">
                   <div>
                     <strong>{selectedRelayTarget?.node.title || selectedRelayTarget?.node.nodeId || "未选择目标节点"}</strong>
-                    <span>{relayMode === "selected_outputs" ? "手动映射会在运行前按目标输入契约校验。" : "运行时会按目标节点输入契约解析接力包。"}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn primary"
-                    disabled={!relayReady}
-                    onClick={() => {
+                  <span>{relayDisabledReason || (relayMode === "selected_outputs" ? "手动映射会在运行前按目标输入契约校验。" : "运行时会按目标节点输入契约解析接力包。")}</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn primary"
+                  disabled={!relayReady}
+                  title={relayDisabledReason || "打开目标运行工作台"}
+                  onClick={() => {
                       if (!selectedRelayTarget) return;
                       onRelayNodeRun(selectedRelayTarget.node.nodeId, result.nodeRunId, {
                         relayMode,
                         selectedOutputs: relayMode === "selected_outputs" ? selectedRelayOutputs : [],
                         relayMappings: relayMode === "selected_outputs" ? relayMappingRows : [],
+                        relayInstruction,
                       });
                       setRelayOpen(false);
                     }}
@@ -4666,8 +4752,8 @@ const WorkflowDraftFlowNode = memo(({ data }: NodeProps<Node<WorkflowDraftFlowNo
       <strong title={node.title || node.nodeId}>{node.title || node.nodeId}</strong>
       <code title={node.nodeId}>{node.nodeId}</code>
       <div className="workflow-draft-flow-node-metrics">
-        <span>{inputCount} inputs</span>
-        <span>{outputCount} outputs</span>
+        <span>{inputCount} 输入</span>
+        <span>{outputCount} 输出</span>
       </div>
       <p title={workflowDraftNodeAgentSummary(node)}>{workflowDraftNodeAgentSummary(node)}</p>
       <button
@@ -6014,6 +6100,8 @@ export default function App() {
     const relayMap = encodeRelayMappings(options?.relayMappings || []);
     if (relayMap) params.set("relay_map", relayMap);
     else params.delete("relay_map");
+    if (options?.relayInstruction?.trim()) params.set("relay_instruction", options.relayInstruction.trim());
+    else params.delete("relay_instruction");
     const nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}/nodes/${encodeURIComponent(nodeId)}/runs`;
     const query = params.toString();
     const nextUrl = `${nextPath}${query ? `?${query}` : ""}`;
@@ -7884,22 +7972,22 @@ function WorkflowCatalog({
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.nodeId, node])), [nodes]);
   const draftNodeIds = useMemo(() => new Set(draft.nodes.map((node) => node.nodeId)), [draft.nodes]);
   const draftNodes = draft.nodes.map((item) => nodesById.get(item.nodeId)).filter(Boolean) as NodeRegistryItem[];
+  const draftCandidatePool = useMemo(() => [...nodes]
+    .filter((node) => !draftNodeIds.has(node.nodeId))
+    .sort((left, right) => {
+      const leftPriority = WORKFLOW_DRAFT_NODE_PRIORITY.indexOf(left.nodeId);
+      const rightPriority = WORKFLOW_DRAFT_NODE_PRIORITY.indexOf(right.nodeId);
+      if (leftPriority !== rightPriority) return (leftPriority < 0 ? 99 : leftPriority) - (rightPriority < 0 ? 99 : rightPriority);
+      return nodeDefinitionOrder(left) - nodeDefinitionOrder(right);
+    }), [draftNodeIds, nodes]);
   const filteredDraftCandidates = useMemo(() => {
     const query = draftNodeSearch.trim().toLowerCase();
-    return [...nodes]
-      .filter((node) => !draftNodeIds.has(node.nodeId))
-      .filter((node) => {
-        if (!query) return true;
-        const searchable = [node.nodeId, node.title, node.description, node.case, node.ui?.category].filter(Boolean).join(" ").toLowerCase();
-        return searchable.includes(query);
-      })
-      .sort((left, right) => {
-        const leftPriority = WORKFLOW_DRAFT_NODE_PRIORITY.indexOf(left.nodeId);
-        const rightPriority = WORKFLOW_DRAFT_NODE_PRIORITY.indexOf(right.nodeId);
-        if (leftPriority !== rightPriority) return (leftPriority < 0 ? 99 : leftPriority) - (rightPriority < 0 ? 99 : rightPriority);
-        return nodeDefinitionOrder(left) - nodeDefinitionOrder(right);
-      });
-  }, [draftNodeIds, draftNodeSearch, nodes]);
+    if (!query) return draftCandidatePool;
+    return draftCandidatePool.filter((node) => {
+      const searchable = [node.nodeId, node.title, node.description, node.case, node.ui?.category].filter(Boolean).join(" ").toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [draftCandidatePool, draftNodeSearch]);
   const draftEdgeEvaluations = useMemo(() => {
     const evaluations = new Map<string, WorkflowDraftEvaluation>();
     draft.edges.forEach((edge) => evaluations.set(edge.id, evaluateWorkflowDraftEdge(edge, nodesById)));
@@ -8381,18 +8469,18 @@ function WorkflowCatalog({
       <section className="flow-panel workflow-draft-builder">
         <div className="panel-head">
           <div>
-            <strong>Workflow Draft Builder v1</strong>
-            <span>Draft only：只在浏览器本地编辑 agent handoff workflow 草稿，不发布生产 DAG 或 sop.yaml。</span>
+            <strong>Workflow Edge Builder</strong>
+            <span>在这里设计节点之间的 Edge：谁交付、谁接收、为什么能接、运行时如何交给下游 Agent。</span>
           </div>
           <div className="draft-builder-status">
-            <span className="status-pill waiting">draft only</span>
+            <span className="status-pill waiting">本地草稿</span>
             <span>{draft.nodes.length} nodes</span>
-            <span>{draft.edges.length} handoffs</span>
+            <span>{draft.edges.length} edges</span>
           </div>
         </div>
         <div className="workflow-draft-notice">
           <AlertTriangle size={16} />
-          <span>Apply / Publish 后续必须走 agent-brain-plugins repo-first 流程；此页面只生成设计草稿和本地兼容性评估。</span>
+          <span>发布 SOP 仍必须走 agent-brain-plugins repo-first 流程；当前页面只生成 Edge 设计草稿和连接评估。</span>
         </div>
         <div className="workflow-draft-toolbar">
           <button type="button" className="btn primary" disabled={!WORKFLOW_DRAFT_NODE_PRIORITY.every((nodeId) => nodesById.has(nodeId))} onClick={seedYoutubeWikiDraft}>
@@ -8438,7 +8526,7 @@ function WorkflowCatalog({
           </section>
 
           <section className="workflow-draft-canvas">
-            <div className="section-title"><span>Handoff Canvas</span><span>{draft.name || "unnamed"}</span></div>
+            <div className="section-title"><span>Edge Canvas</span><span>{draft.name || "unnamed"}</span></div>
             <div className="workflow-draft-react-flow">
               {draftNodes.length ? (
                 <ReactFlow
@@ -8507,12 +8595,14 @@ function WorkflowCatalog({
                   {draft.nodes.filter((item) => item.nodeId !== draftFromNode).map((item) => <option key={item.nodeId} value={item.nodeId}>{item.nodeId}</option>)}
                 </select>
               </label>
-              <button type="button" className="primary" disabled={!canAddEdge} onClick={addDraftEdge}>
+              <button type="button" className="primary" disabled={!canAddEdge} title={draftEdgeDisabledReason || "创建这条 Edge"} onClick={addDraftEdge}>
                 <GitBranch size={15} />
                 创建接力连接
               </button>
               <span className={`workflow-draft-edge-reason ${draftEdgeDisabledReason ? "disabled" : ""}`}>
-                {draftEdgeDisabledReason || "也可以直接在画布上拖线连接节点"}
+                {draftEdgeDisabledReason
+                  ? `${draftEdgeDisabledReason}。也可以点击节点右侧“接力”添加或选择下游节点。`
+                  : "也可以直接在画布上拖线连接节点"}
               </span>
             </div>
           </section>
@@ -8528,11 +8618,19 @@ function WorkflowCatalog({
                   <strong>{selectedDraftEdge.from} → {selectedDraftEdge.to}</strong>
                   <span className={`status-pill ${workflowDraftStatusTone(selectedDraftEdgeEvaluation.status)}`}>{workflowDraftStatusLabel(selectedDraftEdgeEvaluation.status)}</span>
                 </div>
-                <div className="workflow-draft-handoff-copy expanded">
-                  <span><b>上游说明 → 下游说明</b>{selectedDraftEdge.sourceIntent} → {selectedDraftEdge.targetIntent}</span>
-                  <span><b>上游交付</b>{selectedDraftEdgeEvaluation.delivers}</span>
-                  <span><b>下游需要</b>{selectedDraftEdgeEvaluation.needs}</span>
-                  <span><b>系统判断</b>{selectedDraftEdgeEvaluation.reason}</span>
+                <div className="workflow-draft-edge-report">
+                  <article>
+                    <span>上游交付</span>
+                    <strong>{selectedDraftEdgeEvaluation.delivers}</strong>
+                  </article>
+                  <article>
+                    <span>下游需要</span>
+                    <strong>{selectedDraftEdgeEvaluation.needs}</strong>
+                  </article>
+                  <article>
+                    <span>系统判断</span>
+                    <strong>{selectedDraftEdgeEvaluation.reason}</strong>
+                  </article>
                 </div>
                 <label className="workflow-draft-edge-instruction">
                   <span>接续说明</span>
@@ -8543,10 +8641,14 @@ function WorkflowCatalog({
                   />
                   <small>这段说明会成为 Edge Instruction，后续运行时会转成 Relay Context Brief 交给下游 Agent。</small>
                 </label>
+                <details className="workflow-draft-runtime-brief">
+                  <summary><span>运行时接续简报</span><ChevronDown size={14} /></summary>
+                  <pre>{workflowDraftEdgeBrief(selectedDraftEdge, selectedDraftEdgeEvaluation)}</pre>
+                </details>
 
                 <div className="node-relay-mode-panel">
                   <div>
-                    <strong>接力解析模式</strong>
+                    <strong>接力方式</strong>
                     <span>{nodeRunRelayModeHelp(selectedDraftEdgeMode)}</span>
                   </div>
                   <div className="segmented compact">
@@ -8555,27 +8657,27 @@ function WorkflowCatalog({
                       className={selectedDraftEdgeMode === "auto_by_target_inputs" ? "active" : ""}
                       onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "auto_by_target_inputs")}
                     >
-                      自动匹配
+                      按下游需要
                     </button>
                     <button
                       type="button"
                       className={selectedDraftEdgeMode === "selected_outputs" ? "active" : ""}
                       onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "selected_outputs")}
                     >
-                      手动选择
+                      只传选中
                     </button>
                     <button
                       type="button"
                       className={selectedDraftEdgeMode === "all_outputs" ? "active" : ""}
                       onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "all_outputs")}
                     >
-                      整包传递
+                      整包
                     </button>
                   </div>
                 </div>
 
                 <div className="node-relay-outputs-panel">
-                  <div className="section-title"><span>上游输出规范</span><span>{selectedDraftEdgeSourceOutputs.length}</span></div>
+                  <div className="section-title"><span>上游可交付内容</span><span>{selectedDraftEdgeSourceOutputs.length}</span></div>
                   <div className="node-relay-output-list">
                     {selectedDraftEdgeSourceOutputs.map((output) => (
                       <label key={output.name} className={`node-relay-output-row ${selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeSelectedOutputs.includes(output.name) ? "active" : ""}`}>
@@ -8588,7 +8690,7 @@ function WorkflowCatalog({
                         ) : <span className="dot done" />}
                         <span>
                           <strong>{output.name}</strong>
-                          <small>{output.type} · {output.path || "runtime value"}</small>
+                          <small>{contractContentLabel(contractRecord(output.spec), output.type)} · {output.path || "运行时生成"}</small>
                         </span>
                       </label>
                     ))}
@@ -8601,7 +8703,7 @@ function WorkflowCatalog({
 
                 {selectedDraftEdgeTargetInputs.length ? (
                   <div className="node-relay-mapping-panel">
-                    <div className="section-title"><span>目标输入契约</span><span>{selectedDraftEdgeTargetInputs.length}</span></div>
+                    <div className="section-title"><span>下游接收要求</span><span>{selectedDraftEdgeTargetInputs.length}</span></div>
                     <div className="node-run-input-preview-rows">
                       {selectedDraftEdgeTargetInputs.map((row) => {
                         const spec = contractRecord(row.spec);
@@ -8611,7 +8713,7 @@ function WorkflowCatalog({
                               <strong>{row.name}</strong>
                               <code>{contractContentLabel(spec, "自动")}{row.required ? " · 必填" : " · 可选"}</code>
                             </div>
-                            <small>{String(spec.from || "没有默认绑定")}</small>
+                            <small>{String(spec.description || spec.intent || spec.purpose || "没有补充说明")}</small>
                           </article>
                         );
                       })}
@@ -8621,11 +8723,11 @@ function WorkflowCatalog({
 
                 {selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeMappings.length ? (
                   <div className="node-relay-mapping-panel">
-                    <div className="section-title"><span>上游 output → 目标 input 映射</span><span>{selectedDraftEdgeMappings.length}</span></div>
+                    <div className="section-title"><span>选中输出如何交给下游</span><span>{selectedDraftEdgeMappings.length}</span></div>
                     <div className="node-relay-mapping-head">
-                      <span>上游输出</span>
+                      <span>上游交付</span>
                       <span />
-                      <span>目标输入</span>
+                      <span>下游接收</span>
                       <span>解析方式</span>
                     </div>
                     {selectedDraftEdgeMappings.map((mapping) => {
@@ -8701,7 +8803,7 @@ function WorkflowCatalog({
                     </div>
                     <div className="workflow-draft-next-group">
                       <span>添加并连接节点</span>
-                      {filteredDraftCandidates.length ? filteredDraftCandidates.slice(0, 6).map((target) => (
+                      {draftCandidatePool.length ? draftCandidatePool.slice(0, 6).map((target) => (
                         <button key={target.nodeId} type="button" onClick={() => addDraftNodeAndEdge(selectedDraftNode.nodeId, target.nodeId)}>
                           <strong>{target.title || target.nodeId}</strong>
                           <small>{target.nodeId} · {workflowDraftNodeInputIntent(target)}</small>
@@ -8851,6 +8953,17 @@ function workflowDraftHandoffSummary(entries: Array<[string, unknown]>, emptyTex
   }).join("; ");
 }
 
+function workflowDraftEdgeBrief(edge: WorkflowDraftEdge, evaluation: WorkflowDraftEvaluation | undefined) {
+  const parts = [
+    `Edge: ${edge.from} -> ${edge.to}`,
+    edge.instruction ? `接续说明: ${edge.instruction}` : "",
+    evaluation?.delivers ? `上游交付: ${evaluation.delivers}` : "",
+    evaluation?.needs ? `下游需要: ${evaluation.needs}` : "",
+    evaluation?.reason ? `系统判断: ${evaluation.reason}` : "",
+  ].filter(Boolean);
+  return parts.join("\n");
+}
+
 function workflowDraftNodeOutputIntent(node: NodeRegistryItem | undefined) {
   if (!node) return "missing upstream intent";
   return workflowDraftHandoffSummary(workflowDraftContractEntries(node.outputs), `${node.nodeId} has no declared handoff output`);
@@ -8869,9 +8982,9 @@ function workflowDraftInputContractRows(node: NodeRegistryItem | undefined) {
 }
 
 function workflowDraftRelayModeLabel(mode: string | undefined) {
-  if (mode === "selected_outputs") return "手动选择输出";
-  if (mode === "all_outputs") return "整包传递";
-  return "按目标输入自动匹配";
+  if (mode === "selected_outputs") return "只传选中输出";
+  if (mode === "all_outputs") return "整包交给下游";
+  return "按下游需要传递";
 }
 
 function workflowDraftBuildRelayMappings(
@@ -9945,6 +10058,7 @@ function WorkflowWorkspace({
   retryPending: boolean;
   cancelNodePending: boolean;
 }) {
+  const [selectedEdgeId, setSelectedEdgeId] = useState("");
   const gitEvents = runEvents.filter((event) => event.event.startsWith("git."));
   const tgEvents = runEvents.filter((event) => event.event.startsWith("telegram.") || event.event.startsWith("tg_notify"));
   const runningExecutionCount = runs.filter((run) => run.status === "running").length;
@@ -9954,6 +10068,11 @@ function WorkflowWorkspace({
     : topRuns;
   const selectedProgress = runProgressFromNodes(selectedRun, dag);
   const workflowBinding = instance?.workflowBinding;
+  const selectedEdge = (dag?.edges || []).find((edge) => dagEdgeId(edge) === selectedEdgeId);
+  const flowEdgesWithSelection = useMemo(() => flowEdges.map((edge) => ({
+    ...edge,
+    className: `${edge.className || "flow-edge"} ${edge.id === selectedEdgeId ? "selected" : ""}`,
+  })), [flowEdges, selectedEdgeId]);
   return (
     <section className="workflow-workspace">
       {selectedRunMissing && (
@@ -10107,7 +10226,22 @@ function WorkflowWorkspace({
           </div>
           <div className="flow-wrap workflow-flow-wrap">
             {dagLoading ? <Skeleton /> : dag?.nodes.length ? (
-              <ReactFlow nodes={flowNodes} edges={flowEdges} nodeTypes={nodeTypes} fitView fitViewOptions={{ padding: .22 }} minZoom={.35} maxZoom={1.7} nodesDraggable onNodeClick={(_, node) => onSelectNode(node.id)} defaultEdgeOptions={{ className: "flow-edge" }}>
+              <ReactFlow
+                nodes={flowNodes}
+                edges={flowEdgesWithSelection}
+                nodeTypes={nodeTypes}
+                fitView
+                fitViewOptions={{ padding: .22 }}
+                minZoom={.35}
+                maxZoom={1.7}
+                nodesDraggable={false}
+                onNodeClick={(_, node) => {
+                  setSelectedEdgeId("");
+                  onSelectNode(node.id);
+                }}
+                onEdgeClick={(_, edge) => setSelectedEdgeId(edge.id)}
+                defaultEdgeOptions={{ className: "flow-edge" }}
+              >
                 <Background color="#dfe4ec" gap={24} /><Controls showInteractive={false} /><MiniMap nodeStrokeWidth={3} zoomable pannable />
               </ReactFlow>
             ) : <Empty text="选择 Runtime 和 Instance 后加载 Workflow Definition DAG" />}
@@ -10117,12 +10251,13 @@ function WorkflowWorkspace({
         <aside className="workflow-node-inspector">
           <div className="panel-head compact">
             <div>
-              <strong>{selectedStage?.title || "Node Definition / Node Run"}</strong>
-              <span>{selectedStage ? `${selectedStage.mode} · ${selectedStage.id}` : "选择 DAG 节点"}</span>
+              <strong>{selectedEdge ? "Edge Inspector" : selectedStage?.title || "Node Definition / Node Run"}</strong>
+              <span>{selectedEdge ? `${selectedEdge.source} → ${selectedEdge.target}` : selectedStage ? `${selectedStage.mode} · ${selectedStage.id}` : "选择 DAG 节点或 Edge"}</span>
             </div>
             <div className="head-actions compact-actions">
-              {selectedStage && <span className={`status-pill ${selectedStatus}`}>{statusIcon(selectedStatus)}{statusLabel(selectedStatus)}</span>}
-              {selectedStage && (
+              {selectedEdge ? <span className={`status-pill ${dagEdgeStatus(selectedEdge) === "ready" ? "done" : dagEdgeStatus(selectedEdge) === "blocked" ? "failed" : "waiting"}`}>{dagEdgeStatusLabel(selectedEdge)}</span> : null}
+              {!selectedEdge && selectedStage && <span className={`status-pill ${selectedStatus}`}>{statusIcon(selectedStatus)}{statusLabel(selectedStatus)}</span>}
+              {!selectedEdge && selectedStage && (
                 <button type="button" className="icon-btn" title="查看节点配置" onClick={() => openNodeConfig(selectedStage.id)}>
                   <Info size={15} />
                 </button>
@@ -10130,6 +10265,11 @@ function WorkflowWorkspace({
             </div>
           </div>
 
+          {selectedEdge ? (
+            <div className="workflow-inspector-body">
+              <DagEdgeInspector edge={selectedEdge} />
+            </div>
+          ) : <>
           <div className="tabs">
             {(["config", "run", "artifacts", "logs"] as InspectorTab[]).map((tab) => (
               <button key={tab} type="button" className={inspectorTab === tab ? "active" : ""} onClick={() => setInspectorTab(tab)}>{inspectorTabLabel(tab)}</button>
@@ -10310,6 +10450,7 @@ function WorkflowWorkspace({
               </>
             )}
           </div>
+          </>}
         </aside>
       </div>
     </section>
@@ -11602,6 +11743,7 @@ function NodesWorkspace({
           instance={instance}
           workflowId={workflowId}
           node={selectedNode}
+          nodes={nodes}
           runs={runs}
           mode={mode}
           selectedNodeRunId={selectedNodeRunId}
@@ -11619,6 +11761,7 @@ function NodesWorkspace({
           instance={instance}
           workflowId={workflowId}
           node={selectedNode}
+          nodes={nodes}
           runs={runs}
           mode={mode}
           onOpenNode={onSelectNode}
@@ -11969,10 +12112,6 @@ type DefinitionContractRow = {
 };
 
 const NODE_DEFINITION_MODE_OPTIONS = ["blocking", "sidecar", "manual", "webhook", "agent"] as const;
-const NODE_CONTRACT_KIND_OPTIONS = ["scalar", "file", "files", "directory", "artifact_set", "auto"] as const;
-const NODE_CONTRACT_VALUE_TYPE_OPTIONS = ["url", "text", "markdown", "json", "html", "binary", "auto"] as const;
-const NODE_CONTRACT_ACCEPT_OPTIONS = ["scalar:url", "scalar:text", "file:text", "file:markdown", "file:json", "directory", "artifact_set"] as const;
-const NODE_CONTRACT_RESOLVER_OPTIONS = ["direct", "json_path", "regex", "manifest_item", "auto"] as const;
 const NODE_OUTPUT_ROLE_OPTIONS = ["wiki-source", "transcript", "metadata", "index", "relay-output", "debug"] as const;
 const NODE_INPUT_CONTENT_PRESETS = [
   { value: "url", label: "URL 文本" },
@@ -11996,6 +12135,18 @@ const NODE_OUTPUT_CONTENT_PRESETS = [
   { value: "directory", label: "文件夹" },
   { value: "text", label: "文本值" },
 ] as const;
+
+function definitionOutputRoleLabel(value: string) {
+  const labels: Record<string, string> = {
+    "wiki-source": "Wiki 内容来源",
+    transcript: "字幕 / 转写",
+    metadata: "元数据",
+    index: "索引入口",
+    "relay-output": "通用接力产物",
+    debug: "调试产物",
+  };
+  return labels[value] || value;
+}
 
 function parseDefinitionEditorObject(value: string): Record<string, unknown> {
   try {
@@ -12139,10 +12290,30 @@ function DefinitionAdvancedJson({
   onChange: (value: string) => void;
   compact?: boolean;
 }) {
+  const [editing, setEditing] = useState(false);
+  let parseError = "";
+  try {
+    parseEditorObject(label, value);
+  } catch (error) {
+    parseError = error instanceof Error ? error.message : "JSON 解析失败";
+  }
   return (
     <details className="definition-advanced-json">
       <summary><span>{label}</span><ChevronDown size={14} /></summary>
-      <textarea className={`definition-json-editor ${compact ? "compact" : ""}`} value={value} onChange={(event) => onChange(event.target.value)} spellCheck={false} />
+      <div className="definition-json-toolbar">
+        <span>{editing ? "Developer edit enabled" : "只读预览，主路径请使用上方结构化表单"}</span>
+        <button type="button" className="ghost-btn compact" onClick={() => setEditing((current) => !current)}>
+          {editing ? "锁定预览" : "Developer 编辑"}
+        </button>
+      </div>
+      <textarea
+        className={`definition-json-editor ${compact ? "compact" : ""}`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck={false}
+        readOnly={!editing}
+      />
+      {editing && parseError ? <small className="field-hint bad">{parseError}</small> : null}
     </details>
   );
 }
@@ -12276,7 +12447,6 @@ function NodeDefinitionInputsEditor({
         <span>输入口</span>
         <span>是否必填</span>
         <span>期望内容</span>
-        <span>默认来源</span>
         <span>解析方式</span>
         <span />
       </div>
@@ -12292,28 +12462,22 @@ function NodeDefinitionInputsEditor({
               <option value="">运行时判断</option>
               {NODE_INPUT_CONTENT_PRESETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
-            <input value={String(record.from || "")} onChange={(event) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, "from", event.target.value) })} placeholder="上游节点.outputs.输出名 或 context.xxx" />
             <select value={resolverPreset} onChange={(event) => updateRow(row.name, { spec: applyDefinitionResolverPreset(row.spec, event.target.value) })}>
               {NODE_INPUT_RESOLVER_PRESETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
             <button type="button" className="icon-btn danger-mini" title="删除输入" onClick={() => writeRows(rows.filter((item) => item.name !== row.name))}><Trash2 size={14} /></button>
+            {record.from ? <small className="definition-row-note">当前 SOP 仍有旧绑定：{String(record.from)}。新的连接关系请在 Edge 中配置。</small> : null}
             <details className="definition-row-json">
               <summary><span>高级 JSON</span><ChevronDown size={13} /></summary>
-              <textarea value={formatJsonForEditor(row.spec)} onChange={(event) => {
-                try {
-                  updateRow(row.name, { spec: parseEditorObject(row.name, event.target.value) });
-                } catch {
-                  updateRow(row.name, { spec: event.target.value });
-                }
-              }} spellCheck={false} />
+              <pre>{formatJsonForEditor(row.spec)}</pre>
             </details>
           </article>
         );
       })}
       {!rows.length ? <Empty text="还没有输入契约" /> : null}
-      <button type="button" className="btn" onClick={() => writeRows([...rows, { name: `input_${rows.length + 1}`, required: true, spec: { kind: "file" } }])}>新增输入</button>
-      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Inputs JSON" value={input.inputs} onChange={(value) => setInput({ ...input, inputs: value })} compact />
-      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Optional Inputs JSON" value={input.optionalInputs} onChange={(value) => setInput({ ...input, optionalInputs: value })} compact />
+      <button type="button" className="btn" onClick={() => writeRows([...rows, { name: `input_${rows.length + 1}`, required: true, spec: { kind: "file" } }])}>新增输入口</button>
+      <DefinitionAdvancedJson label="高级：底层 Inputs 定义预览" value={input.inputs} onChange={(value) => setInput({ ...input, inputs: value })} compact />
+      <DefinitionAdvancedJson label="高级：底层 Optional Inputs 定义预览" value={input.optionalInputs} onChange={(value) => setInput({ ...input, optionalInputs: value })} compact />
     </div>
   );
 }
@@ -12357,7 +12521,7 @@ function NodeDefinitionOutputsEditor({
             <label className="mini-check"><input type="checkbox" checked={record.relayable !== false} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, "relayable", event.target.checked, "path"))} /><span>{record.relayable === false ? "关闭" : "可接力"}</span></label>
             <select value={roleValue} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, "role", event.target.value, "path"))}>
               <option value="">未设置</option>
-              {NODE_OUTPUT_ROLE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+              {NODE_OUTPUT_ROLE_OPTIONS.map((item) => <option key={item} value={item}>{definitionOutputRoleLabel(item)}</option>)}
               {roleValue && !NODE_OUTPUT_ROLE_OPTIONS.includes(roleValue as typeof NODE_OUTPUT_ROLE_OPTIONS[number]) ? <option value={roleValue}>{roleValue}</option> : null}
             </select>
             <button type="button" className="icon-btn danger-mini" title="删除输出" onClick={() => {
@@ -12367,20 +12531,14 @@ function NodeDefinitionOutputsEditor({
             }}><Trash2 size={14} /></button>
             <details className="definition-row-json">
               <summary><span>高级 JSON</span><ChevronDown size={13} /></summary>
-              <textarea value={formatJsonForEditor(spec)} onChange={(event) => {
-                try {
-                  updateSpec(name, parseEditorObject(name, event.target.value));
-                } catch {
-                  updateSpec(name, event.target.value);
-                }
-              }} spellCheck={false} />
+              <pre>{formatJsonForEditor(spec)}</pre>
             </details>
           </article>
         );
       })}
       {!rows.length ? <Empty text="还没有输出契约" /> : null}
-      <button type="button" className="btn" onClick={() => updateOutputs({ ...outputs, [`output_${rows.length + 1}`]: { path: "", type: "file", relayable: true } })}>新增输出</button>
-      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Outputs JSON" value={input.outputs} onChange={(value) => setInput({ ...input, outputs: value })} compact />
+      <button type="button" className="btn" onClick={() => updateOutputs({ ...outputs, [`output_${rows.length + 1}`]: { path: "", type: "file", relayable: true } })}>新增输出口</button>
+      <DefinitionAdvancedJson label="高级：底层 Outputs 定义预览" value={input.outputs} onChange={(value) => setInput({ ...input, outputs: value })} compact />
     </div>
   );
 }
@@ -12456,7 +12614,7 @@ function NodeDefinitionCapabilitiesEditor({
           </article>
         );
       })}
-      <DefinitionAdvancedJson label="查看 / 直接编辑原始 Capabilities JSON" value={input.capabilities} onChange={(value) => setInput({ ...input, capabilities: value })} compact />
+      <DefinitionAdvancedJson label="高级：底层 Capabilities 定义预览" value={input.capabilities} onChange={(value) => setInput({ ...input, capabilities: value })} compact />
     </div>
   );
 }
@@ -12547,7 +12705,7 @@ function NodeDefinitionEditorDrawer({
               <label>Agent<input value={input.agent} onChange={(event) => setInput({ ...input, agent: event.target.value })} placeholder="hermes" /></label>
               <label>Webhook Route<input value={input.webhookRoute} onChange={(event) => setInput({ ...input, webhookRoute: event.target.value })} placeholder="sop-wiki-build" /></label>
             </div>
-            <DefinitionAdvancedJson label="查看 / 直接编辑 Executor JSON" value={input.executor} onChange={(value) => setInput({ ...input, executor: value })} compact />
+            <DefinitionAdvancedJson label="高级：底层 Executor 定义预览" value={input.executor} onChange={(value) => setInput({ ...input, executor: value })} compact />
             <small className="field-hint">这些字段属于节点定义草稿，保存目标是 agent-brain-plugins，不是 Runtime 运行配置。</small>
           </section>
           <section className="definition-editor-section">
@@ -13752,11 +13910,111 @@ function buildFlowEdges(dag: Dag | undefined, run: Run | undefined): Edge[] {
     edgeIds.add(id);
     return true;
   }).map((edge) => ({
-    id: `${edge.source}-${edge.target}`,
+    id: dagEdgeId(edge),
     source: edge.source,
     target: edge.target,
-    animated: run?.nodes[edge.target] === "running"
+    label: dagEdgeStatusLabel(edge),
+    animated: run?.nodes[edge.target] === "running",
+    className: `flow-edge ${dagEdgeStatusClass(edge)}`
   }));
+}
+
+function dagEdgeId(edge: DagEdge) {
+  return String(edge.id || `${edge.source}-${edge.target}`);
+}
+
+function dagEdgeIntent(edge: DagEdge) {
+  const relay = detailRecord(edge.relay);
+  const intent = detailRecord(edge.intent || relay.intent);
+  return {
+    title: String(intent.title || `${edge.source} -> ${edge.target}`),
+    brief: String(intent.brief || intent.description || ""),
+  };
+}
+
+function dagEdgeBindings(edge: DagEdge) {
+  const relay = detailRecord(edge.relay);
+  const raw = Array.isArray(edge.bindings) ? edge.bindings : Array.isArray(relay.bindings) ? relay.bindings : [];
+  return raw
+    .map((item: unknown, index: number): Record<string, unknown> => {
+      if (item && typeof item === "object") {
+        return item as Record<string, unknown>;
+      }
+      return { key: `binding-${index}`, output: `binding-${index}` };
+    })
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+}
+
+function dagEdgeStatus(edge: DagEdge) {
+  const validation = detailRecord(edge.validation || detailRecord(edge.relay).validation);
+  const values = Object.values(validation).map(String);
+  if (values.some((value) => value === "block" || value === "blocked" || value === "failed")) return "blocked";
+  if (values.some((value) => value === "needs_review")) return "needs_review";
+  return dagEdgeBindings(edge).length ? "ready" : edge.derivedFrom ? "derived" : "needs_review";
+}
+
+function dagEdgeStatusLabel(edge: DagEdge) {
+  const status = dagEdgeStatus(edge);
+  if (status === "ready") return "Edge ready";
+  if (status === "blocked") return "Blocked";
+  if (status === "derived") return "Derived";
+  return "Review";
+}
+
+function dagEdgeStatusClass(edge: DagEdge) {
+  const status = dagEdgeStatus(edge);
+  if (status === "ready") return "compatible";
+  if (status === "blocked") return "blocked";
+  if (status === "derived") return "derived";
+  return "needs_review";
+}
+
+function DagEdgeInspector({ edge }: { edge: DagEdge }) {
+  const intent = dagEdgeIntent(edge);
+  const bindings = dagEdgeBindings(edge);
+  const validation = detailRecord(edge.validation || detailRecord(edge.relay).validation);
+  return (
+    <div className="workflow-edge-inspector">
+      <div className="workflow-edge-inspector-head">
+        <span className={`status-pill ${dagEdgeStatus(edge) === "ready" ? "done" : dagEdgeStatus(edge) === "blocked" ? "failed" : "waiting"}`}>
+          {dagEdgeStatusLabel(edge)}
+        </span>
+        <strong>{intent.title}</strong>
+        <small>{edge.source} → {edge.target}</small>
+      </div>
+      {intent.brief ? <p>{intent.brief}</p> : <p>这条 Edge 没有业务说明。建议在 SOP edge 中补充 relay.intent.brief。</p>}
+      <div className="workflow-edge-binding-list">
+        {bindings.map((binding: Record<string, unknown>, index: number) => {
+          const source = detailRecord(binding.source);
+          const extractor = detailRecord(source.extractor);
+          return (
+            <article key={`${String(binding.target_input || index)}-${index}`}>
+              <strong>{String(source.output || binding.source_output || "上游输出")} → {String(binding.target_input || binding.input || "下游输入")}</strong>
+              <small>{String(source.node || edge.source)} · {String(extractor.id || extractor.kind || "直接使用")}</small>
+              {extractor.path ? <code>{String(extractor.path)}</code> : null}
+            </article>
+          );
+        })}
+        {!bindings.length ? <Empty text="这条 Edge 没有显式 binding；当前可能来自 needs 兼容边。" /> : null}
+      </div>
+      <DetailBlock title="运行时接续简报">
+        <pre className="workflow-edge-brief">{[
+          `Edge: ${edge.source} -> ${edge.target}`,
+          intent.brief ? `Instruction: ${intent.brief}` : "",
+          ...bindings.map((binding: Record<string, unknown>) => {
+            const source = detailRecord(binding.source);
+            return `- ${String(source.output || binding.source_output || "output")} -> ${String(binding.target_input || binding.input || "input")}`;
+          }),
+        ].filter(Boolean).join("\n")}</pre>
+      </DetailBlock>
+      {Object.keys(validation).length ? (
+        <details className="node-run-step-raw">
+          <summary><span>验证策略</span><ChevronDown size={14} /></summary>
+          <code>{formatValue(validation)}</code>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 function Metric({ label, value, subtext }: { label: string; value: string | number; subtext: string }) {

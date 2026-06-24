@@ -617,6 +617,7 @@ export interface NodeRunCreateInput {
   relayMode?: NodeRunRelayMode | string;
   selectedOutputs?: string[];
   relayMappings?: NodeRunRelayMapping[];
+  relayInstruction?: string;
   manualInputs?: Record<string, unknown>;
   overrides?: Record<string, unknown>;
   capabilityOverrides?: Record<string, unknown>;
