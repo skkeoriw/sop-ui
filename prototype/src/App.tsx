@@ -10248,6 +10248,7 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
   const targetValidation = plan.targetValidationIssues.length
     ? `\nissues:\n${plan.targetValidationIssues.map((item) => `  - ${item}`).join("\n")}`
     : "";
+  const exitPreflightCode = getEdgeDraftApplyExitCode("preflight");
   const targetValidationWarnings = plan.targetValidationWarnings.length
     ? `\nwarning:\n${plan.targetValidationWarnings.map((item) => `  - ${item}`).join("\n")}`
     : "\n  (none)";
@@ -10269,7 +10270,7 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     "Dry-Run 阻塞示例：",
     "  [error] change_request.targets has 1 issue(s)",
     "  [error] target file not found: /abs/path/runtime-xxx/agent-brain-plugins-xxx/sop.yaml",
-    "  [exit] 2",
+    `  [exit] ${exitPreflightCode}`,
     "  [next] 1) 用 apply plan 中 change_request.targets 校验的路径修复文件",
     "  [next] 2) 重新回填草稿，确保 draft 变更已同步到目标 sop.yaml",
     "  [next] 3) rerun: bash /tmp/apply-edge.sh --dry-run --auto-confirm",
