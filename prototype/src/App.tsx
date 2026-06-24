@@ -4821,7 +4821,7 @@ export default function App() {
   }) : undefined, [initialEndpoint]);
   const [manualRuntime, setManualRuntime] = useState<Runtime | undefined>(initialManualRuntime);
   const [manualEndpoint, setManualEndpoint] = useState(initialEndpoint);
-  const [runtimeId, setRuntimeId] = useState(initialManualRuntime?.id || "");
+  const [runtimeId, setRuntimeId] = useState(initialManualRuntime?.id || routeContext.runtimeId || "");
   const [runtimeSwitcherOpen, setRuntimeSwitcherOpen] = useState(false);
   const [runtimeSwitchSearch, setRuntimeSwitchSearch] = useState("");
   const [instanceSwitcherOpen, setInstanceSwitcherOpen] = useState(false);
@@ -4829,7 +4829,7 @@ export default function App() {
   const [runtimeDirectorySearch, setRuntimeDirectorySearch] = useState("");
   const [runtimeDirectoryStatus, setRuntimeDirectoryStatus] = useState("active");
   const [runtimeDirectoryPage, setRuntimeDirectoryPage] = useState(1);
-  const [instanceId, setInstanceId] = useState("");
+  const [instanceId, setInstanceId] = useState(routeContext.instanceId || "");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [selectedStageId, setSelectedStageId] = useState("");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("config");
@@ -5791,7 +5791,11 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   useEffect(() => { if (runtimes.length && !runtimes.some((item) => item.id === runtimeId)) setRuntimeId(runtimes[0].id); }, [runtimeId, runtimes]);
-  useEffect(() => { if (instances.length && !instances.some((item) => item.instanceId === instanceId)) setInstanceId(instances[0].instanceId); }, [instanceId, instances]);
+  useEffect(() => {
+    if (!routeContext.instanceId && instances.length && !instances.some((item) => item.instanceId === instanceId)) {
+      setInstanceId(instances[0].instanceId);
+    }
+  }, [instanceId, instances, routeContext.instanceId]);
   useEffect(() => {
     if (routeContext.runtimeId && runtimes.some((item) => item.id === routeContext.runtimeId) && runtimeId !== routeContext.runtimeId) {
       setRuntimeId(routeContext.runtimeId);
