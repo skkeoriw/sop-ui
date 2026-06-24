@@ -199,6 +199,7 @@ type EdgeDraftApplyPlan = {
   proposedText: string;
   changeRequestText: string;
   applyCommands: string[];
+  applyScript: string;
 };
 
 interface StageNodeData extends Record<string, unknown> {
@@ -9178,6 +9179,25 @@ function WorkflowCatalog({
                             <div className="field-hint" style={{ marginBottom: 8 }}>
                               说明：草稿仅落在 Runtime 的 `raw/workflow-drafts`；生产 `sop.yaml` 仍需本地 repo-first 更新。
                             </div>
+                            {selectedDraftEdgeSaveState.applyPlan.applyScript ? (
+                              <details className="workflow-draft-advanced-json workflow-draft-apply-script">
+                                <summary>落库执行脚本</summary>
+                                <div className="workflow-draft-apply-script-actions">
+                                  <button
+                                    type="button"
+                                    className="ghost-btn compact"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      navigator.clipboard?.writeText(selectedDraftEdgeSaveState.applyPlan?.applyScript || "");
+                                      setDraftCanvasMessage("已复制 Edge 落库脚本");
+                                    }}
+                                  >
+                                    <Copy size={13} />复制脚本
+                                  </button>
+                                </div>
+                                <pre>{selectedDraftEdgeSaveState.applyPlan.applyScript}</pre>
+                              </details>
+                            ) : null}
                             <div className="workflow-draft-apply-commands">
                               <div className="section-title"><span>落库命令（按顺序）</span><span>{selectedDraftEdgeSaveState.applyPlan.applyCommands.length}</span></div>
                               {(selectedDraftEdgeSaveState.applyPlan.applyCommands.length ? selectedDraftEdgeSaveState.applyPlan.applyCommands : ["No commands"]).map((command, index) => (
@@ -9665,6 +9685,18 @@ function edgeDraftBuildApplyPlan(input: {
   const targetsText = stringifyTargets(targets);
   const proposedText = pickChangeRequestText(changeRequest.proposed_text || changeRequest.proposedText || changeRequest.proposal || "");
   const changeRequestText = pickChangeRequestText(changeRequest);
+  const applyScript = buildEdgeDraftApplyScript({
+    draftId,
+    draftPath,
+    workflowId,
+    edgeId,
+    edgeFrom,
+    edgeTo,
+    runtimeSopFile,
+    projectTemplateSopYaml,
+    projectWorkflowId,
+    saveOwner,
+  });
   return {
     draftId,
     draftPath,
@@ -9680,8 +9712,9 @@ function edgeDraftBuildApplyPlan(input: {
     targetsText,
     proposedText: proposedText || "{}",
     changeRequestText,
+    applyScript,
     applyCommands: [
-      "cd ~/agent-brain-plugins",
+      `cd ${safeToString(saveOwner, "~/agent-brain-plugins")}`,
       `git checkout -b chore/apply-edge-${draftId}`,
       "# 按照 change_request.targets 里的目标文件确认 workflow id 与 edge 归属",
       `# runtime_sop_file: ${runtimeSopFile}`,
@@ -9694,9 +9727,66 @@ function edgeDraftBuildApplyPlan(input: {
       "git status --short",
       `git add ${projectTemplateSopYaml}`,
       `git commit -m "chore: apply workflow edge ${edgeFrom}-to-${edgeTo}-draft"`,
-      "# 如果是主分支流程，继续 git push 并提交 PR/合并" ,
+      "# 如果是主分支流程，继续 git push 并提交 PR/合并",
     ],
   };
+}
+
+function buildEdgeDraftApplyScript(input: {
+  draftId: string;
+  draftPath: string;
+  workflowId: string;
+  edgeId: string;
+  edgeFrom: string;
+  edgeTo: string;
+  runtimeSopFile: string;
+  projectTemplateSopYaml: string;
+  projectWorkflowId: string;
+  saveOwner: string;
+}) {
+  const {
+    draftId,
+    draftPath,
+    workflowId,
+    edgeId,
+    edgeFrom,
+    edgeTo,
+    runtimeSopFile,
+    projectTemplateSopYaml,
+    projectWorkflowId,
+    saveOwner,
+  } = input;
+  const quote = (value: string) => `"${value.replace(/"/g, "\\\"")}"`;
+  const repoRoot = safeToString(saveOwner, "~/agent-brain-plugins").replace(/\/+/g, "/");
+  const branch = `chore/apply-edge-${edgeFrom}-to-${edgeTo}-${draftId}`;
+  return [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "",
+    "# Edge 落库脚本（repo-first）",
+    "# 说明：仅作为人工可执行脚本模板，请先确认变更再 push。",
+    `REPO_ROOT=${quote(repoRoot)}`,
+    `BRANCH=${quote(branch)}`,
+    `WORKFLOW_ID=${quote(workflowId)}`,
+    `EDGE_ID=${quote(edgeId)}`,
+    `FROM=${quote(edgeFrom)}`,
+    `TO=${quote(edgeTo)}`,
+    "",
+    `cd ${quote(repoRoot)}`,
+    `git checkout -b ${quote(branch)}`,
+    `echo "Draft file: ${draftPath}"`,
+    `echo "runtime_sop_file: ${runtimeSopFile}"`,
+    `echo "project_template_sop_yaml: ${projectTemplateSopYaml}"`,
+    `echo "project_workflow_id: ${projectWorkflowId}"`,
+    `echo "edge: ${edgeFrom} -> ${edgeTo}"`,
+    "",
+    "# TODO: review and edit template sop.yaml manually before commit",
+    `# expected_file=${projectTemplateSopYaml}`,
+    `git status --short ${projectTemplateSopYaml}`,
+    `git add ${projectTemplateSopYaml}`,
+    `git commit -m ${quote(`chore: apply workflow edge ${edgeFrom}-to-${edgeTo}-${workflowId}`)}`,
+    "git push -u origin HEAD",
+  ].join("\n");
 }
 
 function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
@@ -9714,6 +9804,9 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     "",
     "commands:",
     ...plan.applyCommands.map((command, index) => `${index + 1}. ${command}`),
+    "",
+    "apply_script:",
+    plan.applyScript,
     "",
     "change_request:",
     plan.changeRequestText,
