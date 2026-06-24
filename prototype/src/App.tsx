@@ -9816,6 +9816,73 @@ function edgeDraftBuildApplyPlan(input: {
   };
 }
 
+type EdgeDraftApplyFailureRecord = {
+  code: number | string;
+  reason: string;
+  quickFix: string[];
+};
+
+const EDGE_DRAFT_APPLY_FAILURE_RECORDS: EdgeDraftApplyFailureRecord[] = [
+  {
+    code: 0,
+    reason: "成功（dry-run 或正式模式）",
+    quickFix: [],
+  },
+  {
+    code: 1,
+    reason: "用户取消（未选择确认继续）",
+    quickFix: [
+      "bash /tmp/apply-edge.sh --auto-confirm",
+    ],
+  },
+  {
+    code: 2,
+    reason: "前置阻塞（常见：target file 不存在 / 草稿与 target 不一致 / 目标文件无 diff / invalid workflow context）",
+    quickFix: [
+      "bash /tmp/apply-edge.sh --dry-run --auto-confirm",
+      "# 按 dry-run 输出逐项补齐 target/template/targets 后再重复执行",
+    ],
+  },
+  {
+    code: 3,
+    reason: "Git 提交失败（查看上方 git commit 错误行）",
+    quickFix: [
+      "git -C \"$(dirname \"$TARGET_FILE\")\" status -sb",
+      "git -C \"$(dirname \"$TARGET_FILE\")\" diff -- \"$TARGET_FILE\" | sed -n '1,200p'",
+      "# 确认 git 可提交性后，修正后重跑 dry-run",
+    ],
+  },
+  {
+    code: 4,
+    reason: "Git 推送失败（无远程权限、网络失败或认证问题）",
+    quickFix: [
+      "git -C \"$(dirname \"$TARGET_FILE\")\" remote -v",
+      "git -C \"$(dirname \"$TARGET_FILE\")\" log --oneline -1",
+      "# 修复凭据 / 网络后重跑：bash /tmp/apply-edge.sh --auto-confirm",
+    ],
+  },
+];
+
+function buildEdgeDraftApplyFailureGuide() {
+  const lines: string[] = ["失败排查字典（按消息定位）：", "快速修复动作："];
+  const quickLines: string[] = [];
+  for (const item of EDGE_DRAFT_APPLY_FAILURE_RECORDS) {
+    lines.push(`  ${item.code}    -> ${item.reason}`);
+    quickLines.push(`  code ${item.code}：`);
+    if (item.quickFix.length) {
+      quickLines.push(...item.quickFix.map((line) => `    ${line}`));
+    } else {
+      quickLines.push("    无需额外处理。");
+    }
+    quickLines.push("");
+  }
+  quickLines.push("  其它非0 -> 执行异常（如环境依赖异常，查看日志末尾 error 提示）");
+  quickLines.push("  关键定位命令:");
+  quickLines.push("    bash /tmp/apply-edge.sh --dry-run --auto-confirm");
+  quickLines.push("    bash /tmp/apply-edge.sh --dry-run --auto-confirm 2>&1 | tee /tmp/apply-edge-dryrun.log");
+  return [...lines, ...quickLines];
+}
+
 function buildEdgeDraftApplyScript(input: {
   draftId: string;
   draftPath: string;
@@ -10180,31 +10247,7 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     "  [info] done. pull-request: use commit from <branch>",
     "  [success] all done",
     "",
-    "失败排查字典（按消息定位）：",
-    "  0    -> 成功（dry-run 或正式模式）",
-    "  1    -> 用户取消（未选择确认继续）",
-    "  2    -> 前置阻塞（常见：target file 不存在 / 草稿与 target 不一致 / 目标文件无 diff / invalid workflow context）",
-    "  3    -> Git 提交失败（查看上方 git commit 错误行）",
-    "  4    -> Git 推送失败（无远程权限、网络失败或认证问题）",
-    "  其它非0 -> 执行异常（如环境依赖异常，查看日志末尾 error 提示）",
-    "",
-    "快速修复动作：",
-    "  code 1：重新确认并执行后续命令",
-    "    bash /tmp/apply-edge.sh --auto-confirm",
-    "  code 2：",
-    "    bash /tmp/apply-edge.sh --dry-run --auto-confirm",
-    "    # 按 dry-run 输出逐项补齐 target/template/targets 后再重复执行",
-    "  code 3：",
-    "    git -C \"$(dirname \"$TARGET_FILE\")\" status -sb",
-    "    git -C \"$(dirname \"$TARGET_FILE\")\" diff -- \"$TARGET_FILE\" | sed -n '1,200p'",
-    "    # 确认 git 可提交性后，修正后重跑 dry-run",
-    "  code 4：",
-    "    git -C \"$(dirname \"$TARGET_FILE\")\" remote -v",
-    "    git -C \"$(dirname \"$TARGET_FILE\")\" log --oneline -1",
-    "    # 修复凭据 / 网络后重跑：bash /tmp/apply-edge.sh --auto-confirm",
-    "  关键定位命令:",
-    "    bash /tmp/apply-edge.sh --dry-run --auto-confirm",
-    "    bash /tmp/apply-edge.sh --dry-run --auto-confirm 2>&1 | tee /tmp/apply-edge-dryrun.log",
+    ...buildEdgeDraftApplyFailureGuide(),
   ].join("\n");
   return [
     `Edge 落库计划 (${plan.edgeId})`,
