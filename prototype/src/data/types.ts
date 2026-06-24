@@ -234,14 +234,23 @@ export interface DagNode {
 }
 
 export interface DagEdge {
+  id?: string;
   source: string;
   target: string;
+  from?: string;
+  to?: string;
+  relay?: Record<string, unknown>;
+  intent?: Record<string, unknown>;
+  bindings?: unknown[];
+  validation?: Record<string, unknown>;
+  derivedFrom?: string;
 }
 
 export interface Dag {
   instanceId: string;
   nodes: DagNode[];
   edges: DagEdge[];
+  workflowRevision?: Record<string, unknown>;
 }
 
 export interface Run {
@@ -718,6 +727,11 @@ export interface NodeRunResult {
   relayMappings?: NodeRunRelayMapping[];
   sourceNodeRunId?: string;
   relaySelection?: Record<string, unknown>;
+  edgeContract?: Record<string, unknown>;
+  workflowRevision?: Record<string, unknown>;
+  relayContext?: Record<string, unknown>;
+  relayContextBrief?: string;
+  resolutionTrace?: Array<Record<string, unknown>>;
   inputResolution?: Record<string, unknown>;
   pending?: boolean;
   startedAt?: string;

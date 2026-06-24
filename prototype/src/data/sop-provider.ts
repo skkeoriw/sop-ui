@@ -367,7 +367,19 @@ function mapDag(data: { nodes?: Array<Record<string, unknown>>; edges?: Array<Re
       capabilities: (node.capabilities as Record<string, unknown>) || {},
       ui: mapUi(node.ui),
     })),
-    edges: (data.edges || []).map((edge) => ({ source: String(edge.source || ""), target: String(edge.target || "") }))
+    edges: (data.edges || []).map((edge) => ({
+      id: edge.id ? String(edge.id) : undefined,
+      source: String(edge.source || edge.from || ""),
+      target: String(edge.target || edge.to || ""),
+      from: edge.from ? String(edge.from) : edge.source ? String(edge.source) : undefined,
+      to: edge.to ? String(edge.to) : edge.target ? String(edge.target) : undefined,
+      relay: (edge.relay as Record<string, unknown>) || {},
+      intent: (edge.intent as Record<string, unknown>) || {},
+      bindings: Array.isArray(edge.bindings) ? edge.bindings : [],
+      validation: (edge.validation as Record<string, unknown>) || {},
+      derivedFrom: edge.derived_from ? String(edge.derived_from) : edge.derivedFrom ? String(edge.derivedFrom) : undefined,
+    })),
+    workflowRevision: (data as Record<string, unknown>).workflow_revision as Record<string, unknown> || (data as Record<string, unknown>).workflowRevision as Record<string, unknown> || {},
   };
 }
 
@@ -852,6 +864,15 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
       : [],
     sourceNodeRunId: raw.source_node_run_id ? String(raw.source_node_run_id) : raw.sourceNodeRunId ? String(raw.sourceNodeRunId) : undefined,
     relaySelection: (raw.relay_selection as Record<string, unknown>) || (raw.relaySelection as Record<string, unknown>) || {},
+    edgeContract: (raw.edge_contract as Record<string, unknown>) || (raw.edgeContract as Record<string, unknown>) || {},
+    workflowRevision: (raw.workflow_revision as Record<string, unknown>) || (raw.workflowRevision as Record<string, unknown>) || {},
+    relayContext: (raw.relay_context as Record<string, unknown>) || (raw.relayContext as Record<string, unknown>) || {},
+    relayContextBrief: raw.relay_context_brief ? String(raw.relay_context_brief) : raw.relayContextBrief ? String(raw.relayContextBrief) : undefined,
+    resolutionTrace: Array.isArray(raw.resolution_trace)
+      ? raw.resolution_trace as Array<Record<string, unknown>>
+      : Array.isArray(raw.resolutionTrace)
+      ? raw.resolutionTrace as Array<Record<string, unknown>>
+      : [],
     inputResolution: (raw.input_resolution as Record<string, unknown>) || (raw.inputResolution as Record<string, unknown>) || {},
     pending: Boolean(raw.pending),
     startedAt: raw.started_at ? String(raw.started_at) : undefined,

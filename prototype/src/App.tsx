@@ -116,7 +116,7 @@ type RuntimeProbeResult = {
   summary: string;
   checkedAt: string;
 };
-type WorkflowDraftEdgeStatus = "compatible" | "needs_review" | "incompatible" | "stale";
+type WorkflowDraftEdgeStatus = "compatible" | "needs_review" | "blocked" | "incompatible" | "stale";
 type WorkflowDraftNode = {
   nodeId: string;
   signature: string;
@@ -132,6 +132,7 @@ type WorkflowDraftEdge = {
   to: string;
   sourceIntent: string;
   targetIntent: string;
+  instruction?: string;
   fromSignature: string;
   toSignature: string;
   relayMode?: NodeRunRelayMode | string;
@@ -2520,6 +2521,50 @@ function nodeRunInputArtifacts(result: NodeRunResult | undefined, step: NodeTest
   return detailList(stepDetail.materialized_inputs).map(artifactFromRecord);
 }
 
+function relayResolutionStatusLabel(status: unknown) {
+  const text = String(status || "").toLowerCase();
+  if (["resolved", "passed", "done"].includes(text)) return "已解析";
+  if (text === "matched") return "已匹配";
+  if (["failed", "blocked"].includes(text)) return "已阻断";
+  if (text === "needs_review") return "需确认";
+  return text || "待解析";
+}
+
+function relayResolutionStatusClass(status: unknown) {
+  const text = String(status || "").toLowerCase();
+  if (["resolved", "passed", "done", "matched"].includes(text)) return "done";
+  if (["failed", "blocked"].includes(text)) return "failed";
+  if (text === "needs_review") return "warning";
+  return "waiting";
+}
+
+function relayResolverLabel(resolver: unknown) {
+  const text = String(resolver || "").trim();
+  const labels: Record<string, string> = {
+    direct: "直接使用",
+    "direct-url": "直接使用 URL",
+    "direct-text": "直接使用文本",
+    "metadata-source-url": "从 metadata.source_url 提取",
+    "metadata-youtube-url": "从 metadata.youtube_url 提取",
+    "metadata-title": "从 metadata.title 提取",
+    "metadata-description": "从 metadata.description 提取",
+    "text-url": "从文本中提取 URL",
+  };
+  return labels[text] || text || "自动";
+}
+
+function contractContentLabel(spec: Record<string, unknown>, fallback = "内容") {
+  const kind = String(spec.kind || spec.type || "").toLowerCase();
+  const valueType = String(spec.value_type || spec.format || "").toLowerCase();
+  if (kind.includes("files")) return "多文件";
+  if (kind.includes("file")) return "文件";
+  if (kind.includes("scalar") || kind.includes("string") || kind.includes("text")) return "文本";
+  if (valueType === "url") return "URL";
+  if (valueType === "markdown") return "Markdown";
+  if (valueType === "json") return "JSON";
+  return fallback;
+}
+
 function NodeRunInputArtifactsSummary({
   result,
   step,
@@ -2531,6 +2576,12 @@ function NodeRunInputArtifactsSummary({
   const stepDetail = detailRecord(step?.detail);
   const inputResolution = detailRecord(stepDetail.input_resolution || result?.inputResolution);
   const manifestItems = detailList(inputResolution.items);
+  const relayContext = detailRecord(inputResolution.relay_context || result?.relayContext);
+  const edgeContract = detailRecord(inputResolution.edge_contract || result?.edgeContract);
+  const edgeIntent = detailRecord(edgeContract.intent);
+  const workflowRevision = detailRecord(inputResolution.workflow_revision || result?.workflowRevision);
+  const resolutionTrace = detailList(inputResolution.resolution_trace || result?.resolutionTrace || relayContext.items);
+  const relayBrief = String(inputResolution.relay_context_brief || result?.relayContextBrief || relayContext.brief || "");
   const inputManifest = String(stepDetail.input_manifest || result?.detail?.input_manifest || "");
   const inputDirectory = String(stepDetail.input_directory || result?.detail?.input_directory || "");
   const resolvedInputs = detailList(stepDetail.resolved_inputs).length
@@ -2546,29 +2597,62 @@ function NodeRunInputArtifactsSummary({
     <div className="node-run-input-artifacts">
       {Object.keys(inputResolution).length ? (
         <div className="node-run-input-resolution">
-          <div className="section-title"><span>接力解析</span><span>{nodeRunRelayModeLabel(String(inputResolution.relay_mode || result?.relayMode || "auto_by_target_inputs"))}</span></div>
+          <div className="section-title"><span>接续解析</span><span>{relayResolutionStatusLabel(relayContext.status || detailRecord(inputResolution.input_validation).status)}</span></div>
           <div className="node-run-step-meta-grid">
             <span><b>来源 Node Run</b>{String(inputResolution.source_node_run_id || result?.sourceNodeRunId || "-")}</span>
-            <span><b>Relay Mode</b>{nodeRunRelayModeLabel(String(inputResolution.relay_mode || result?.relayMode || "auto_by_target_inputs"))}</span>
-            <span><b>Selected</b>{nodeRunStringArray(inputResolution.selected_outputs).join(", ") || "-"}</span>
-            <span><b>Matched</b>{nodeRunStringArray(inputResolution.matched_outputs).join(", ") || "-"}</span>
+            <span><b>接续方式</b>{nodeRunRelayModeLabel(String(inputResolution.relay_mode || result?.relayMode || "auto_by_target_inputs"))}</span>
+            <span><b>Edge</b>{String(edgeContract.id || relayContext.edge_id || "-")}</span>
+            <span><b>Workflow Revision</b>{String(workflowRevision.hash || "-")}</span>
           </div>
-          {manifestItems.length ? (
+          {edgeIntent.title || edgeIntent.brief || relayBrief ? (
+            <div className="node-run-relay-brief">
+              {edgeIntent.title ? <strong>{String(edgeIntent.title)}</strong> : null}
+              <p>{String(edgeIntent.brief || relayBrief)}</p>
+            </div>
+          ) : null}
+          {resolutionTrace.length ? (
             <div className="node-run-relay-resolution-list">
-              {manifestItems.map((item, index) => {
+              {resolutionTrace.map((item, index) => {
                 const materializedPath = String(item.materialized_path || item.path || "");
                 const sourcePath = String(item.source_path || "");
+                const errors = detailList(item.errors);
                 return (
                   <article key={`${materializedPath || String(item.path || index)}-${String(item.source_output || "")}`}>
-                    <strong>{String(item.source_output || item.output || "output")} → {String(item.target_input || item.input_name || "input")}</strong>
-                    <code>{materializedPath}</code>
+                    <div>
+                      <strong>{String(item.source_output || item.output || "上游输出")} → {String(item.target_input || item.input_name || "目标输入")}</strong>
+                      <span className={`status-pill ${relayResolutionStatusClass(item.status)}`}>{relayResolutionStatusLabel(item.status)}</span>
+                    </div>
+                    <small>解析方式：{relayResolverLabel(item.resolver)}</small>
+                    {materializedPath ? <code>{materializedPath}</code> : null}
                     {sourcePath ? <small>来源文件：{sourcePath}</small> : null}
                     {item.value_preview ? <pre>{String(item.value_preview)}</pre> : null}
+                    {errors.map((error, errorIndex) => (
+                      <small key={errorIndex} className="field-hint bad">{String(error.reason || error.error || "解析失败")}</small>
+                    ))}
                   </article>
                 );
               })}
             </div>
+          ) : manifestItems.length ? (
+            <div className="node-run-relay-resolution-list">
+              {manifestItems.map((item, index) => (
+                <article key={`${String(item.path || index)}-${String(item.source_output || "")}`}>
+                  <strong>{String(item.source_output || item.output || "上游输出")} → {String(item.target_input || item.input_name || "目标输入")}</strong>
+                  {item.value_preview ? <pre>{String(item.value_preview)}</pre> : null}
+                </article>
+              ))}
+            </div>
           ) : null}
+          <details className="node-run-step-raw">
+            <summary><span>高级解析数据</span><ChevronDown size={14} /></summary>
+            <code>{formatValue({
+              relay_mode: inputResolution.relay_mode || result?.relayMode,
+              selected_outputs: inputResolution.selected_outputs || result?.selectedOutputs || [],
+              matched_outputs: inputResolution.matched_outputs || [],
+              relay_mappings: inputResolution.relay_mappings || result?.relayMappings || [],
+              manifest: inputManifest,
+            })}</code>
+          </details>
         </div>
       ) : null}
       {pendingInputs.length ? (
@@ -3471,7 +3555,7 @@ function NodeRunStartPanel({
                       return (
                         <article key={mapping.sourceOutput}>
                           <code>{mapping.sourceOutput}</code>
-                          <span>{"->"}</span>
+                          <span>→</span>
                           <select
                             value={mapping.targetInput || ""}
                             onChange={(event) => setRelayMappings((current) => normalizeRelayMappingsForTarget(node, selectedOutputs, current).map((item) => (
@@ -3486,8 +3570,8 @@ function NodeRunStartPanel({
                               item.sourceOutput === mapping.sourceOutput ? { ...item, resolver: event.target.value } : item
                             )))}
                           >
-                            <option value="">自动 resolver</option>
-                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{resolver.label}</option>)}
+                            <option value="">自动选择</option>
+                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{relayResolverLabel(resolver.id)}</option>)}
                           </select>
                         </article>
                       );
@@ -3871,7 +3955,6 @@ function NodeInputContractPanel({ node, payload }: { node: NodeRegistryItem; pay
           {rows.map((row) => {
             const source = nodeInputSourceExpression(row.spec);
             const spec = contractRecord(row.spec);
-            const accepts = Array.isArray(spec.accepts) ? spec.accepts.map(String).join(", ") : "-";
             const resolvers = contractResolvers(row.spec);
             return (
               <article key={row.name} className="node-contract-card">
@@ -3880,11 +3963,9 @@ function NodeInputContractPanel({ node, payload }: { node: NodeRegistryItem; pay
                   <strong>{row.name}</strong>
                 </div>
                 <div className="node-run-step-meta-grid">
-                  <span><b>kind</b>{String(spec.kind || spec.type || "auto")}</span>
-                  <span><b>value_type</b>{String(spec.value_type || spec.format || spec.type || "-")}</span>
-                  <span><b>accepts</b>{accepts}</span>
-                  <span><b>source hint</b>{source || "-"}</span>
-                  <span><b>resolvers</b>{resolvers.length ? resolvers.map((item) => item.id).join(", ") : "-"}</span>
+                  <span><b>需要内容</b>{contractContentLabel(spec, "自动")}</span>
+                  <span><b>默认来源</b>{source || "运行时选择"}</span>
+                  <span><b>解析方式</b>{resolvers.length ? resolvers.map((item) => relayResolverLabel(item.id)).join("、") : "直接使用"}</span>
                 </div>
               </article>
             );
@@ -3930,14 +4011,13 @@ function NodeOutputContractPanel({ node, payload }: { node: NodeRegistryItem; pa
           {outputs.map((output) => (
             <article key={output.name} className="node-contract-card">
               <div>
-                <span className="status-pill done">relayable</span>
+                <span className="status-pill done">{contractRecord(output.spec).relayable === false ? "不可接续" : "可接续"}</span>
                 <strong>{output.name}</strong>
               </div>
               <div className="node-run-step-meta-grid">
-                <span><b>kind</b>{String(contractRecord(output.spec).kind || output.type)}</span>
-                <span><b>value_type</b>{String(contractRecord(output.spec).value_type || contractRecord(output.spec).format || output.type || "-")}</span>
-                <span><b>default path</b>{output.path || "runtime value"}</span>
-                <span><b>role</b>{String(contractRecord(output.spec).role || "relay-output")}</span>
+                <span><b>产物类型</b>{contractContentLabel(contractRecord(output.spec), output.type || "文件")}</span>
+                <span><b>默认位置</b>{output.path || "运行时生成"}</span>
+                <span><b>接续用途</b>{String(contractRecord(output.spec).role || "普通产物")}</span>
               </div>
             </article>
           ))}
@@ -3946,9 +4026,9 @@ function NodeOutputContractPanel({ node, payload }: { node: NodeRegistryItem; pa
       </DetailBlock>
       <DetailBlock title="接力规则">
         <div className="node-relay-rules">
-          <article><strong>自动匹配</strong><span>根据目标节点输入契约和 workflow 默认绑定选择 source output。</span></article>
-          <article><strong>手动选择</strong><span>用户在接力弹窗中选择一个或多个 output，例如 source_url、analysis_file。</span></article>
-          <article><strong>整包传递</strong><span>显式把所有 relayable outputs 物化为下游输入；manifest 只作为索引。</span></article>
+          <article><strong>按目标节点需要自动接续</strong><span>系统根据下游输入说明选择最确定的上游产物。</span></article>
+          <article><strong>手动指定接续内容</strong><span>用户选择一个或多个上游输出，并说明要交给下游哪个输入。</span></article>
+          <article><strong>整包交给下游判断</strong><span>显式传递所有可接续输出；索引文件只负责说明包内有什么。</span></article>
         </div>
       </DetailBlock>
       <details className="node-run-step-raw">
@@ -4344,10 +4424,10 @@ function NodeRunDetailPage({
                           <article key={row.name}>
                             <div>
                               <strong>{row.name}</strong>
-                              <code>{String(spec.type || spec.kind || "auto")}{row.required ? " · required" : " · optional"}</code>
+                              <code>{contractContentLabel(spec, "自动")}{row.required ? " · 必填" : " · 可选"}</code>
                             </div>
                             <small>{String(spec.from || "没有默认 workflow binding")}</small>
-                            {contractResolvers(row.spec).length ? <small>resolvers: {contractResolvers(row.spec).map((resolver) => resolver.label).join(", ")}</small> : <small>resolvers: auto/direct</small>}
+                            {contractResolvers(row.spec).length ? <small>解析方式：{contractResolvers(row.spec).map((resolver) => relayResolverLabel(resolver.id)).join("、")}</small> : <small>解析方式：直接使用</small>}
                           </article>
                         );
                       })}
@@ -4359,10 +4439,10 @@ function NodeRunDetailPage({
                   <div className="node-relay-mapping-panel">
                     <div className="section-title"><span>输出到目标输入映射</span><span>{relayMappingRows.length}</span></div>
                     <div className="node-relay-mapping-head">
-                      <span>source output</span>
+                      <span>上游输出</span>
                       <span />
-                      <span>target input</span>
-                      <span>resolver</span>
+                      <span>目标输入</span>
+                      <span>解析方式</span>
                     </div>
                     {relayMappingRows.map((mapping) => {
                       const targetRows = selectedTargetInputRows;
@@ -4397,8 +4477,8 @@ function NodeRunDetailPage({
                               item.sourceOutput === mapping.sourceOutput ? { ...item, resolver: event.target.value } : item
                             )))}
                           >
-                            <option value="">自动 resolver</option>
-                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{resolver.label}</option>)}
+                            <option value="">自动选择</option>
+                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{relayResolverLabel(resolver.id)}</option>)}
                           </select>
                         </article>
                       );
@@ -7945,6 +8025,7 @@ function WorkflowCatalog({
         to: toNodeId,
         sourceIntent: workflowDraftNodeOutputIntent(from),
         targetIntent: workflowDraftNodeInputIntent(to),
+        instruction: "",
         fromSignature: workflowDraftNodeSignature(from),
         toSignature: workflowDraftNodeSignature(to),
         relayMode: "auto_by_target_inputs",
@@ -7980,6 +8061,7 @@ function WorkflowCatalog({
         to: toNodeId,
         sourceIntent: workflowDraftNodeOutputIntent(from),
         targetIntent: workflowDraftNodeInputIntent(to),
+        instruction: "",
         fromSignature: workflowDraftNodeSignature(from),
         toSignature: workflowDraftNodeSignature(to),
         relayMode: "auto_by_target_inputs",
@@ -8023,6 +8105,7 @@ function WorkflowCatalog({
           ...edge,
           sourceIntent: workflowDraftNodeOutputIntent(nodesById.get(edge.from)),
           targetIntent: workflowDraftNodeInputIntent(nodesById.get(edge.to)),
+          instruction: edge.instruction || "",
           fromSignature: workflowDraftNodeSignature(nodesById.get(edge.from)),
           toSignature: workflowDraftNodeSignature(nodesById.get(edge.to)),
           relayMode: edge.relayMode || "auto_by_target_inputs",
@@ -8044,6 +8127,12 @@ function WorkflowCatalog({
             : [],
         };
       }),
+    }));
+  }
+  function updateDraftEdgeInstruction(edgeId: string, instruction: string) {
+    setDraft((current) => ({
+      ...current,
+      edges: current.edges.map((edge) => edge.id === edgeId ? { ...edge, instruction } : edge),
     }));
   }
   function toggleDraftEdgeSourceOutput(edgeId: string, sourceNodeId: string, targetNodeId: string, sourceOutput: string) {
@@ -8140,6 +8229,9 @@ function WorkflowCatalog({
         to: toId,
         sourceIntent: workflowDraftNodeOutputIntent(from),
         targetIntent: workflowDraftNodeInputIntent(to),
+        instruction: fromId === "youtube-fetch"
+          ? "把上游视频 URL 交给深度研究节点，metadata 只作为可选上下文。"
+          : "把深度研究生成的分析文档交给 wiki-build，作为补充研究材料。",
         fromSignature: workflowDraftNodeSignature(from),
         toSignature: workflowDraftNodeSignature(to),
         relayMode: "auto_by_target_inputs",
@@ -8428,7 +8520,7 @@ function WorkflowCatalog({
           <aside className="workflow-draft-inspector">
             <div className="section-title">
               <span>Inspector</span>
-              <span>{draftStatusCounts.compatible || 0} compatible · {draftStatusCounts.needs_review || 0} review · {draftStatusCounts.incompatible || 0} incompatible · {draftStatusCounts.stale || 0} stale</span>
+              <span>{draftStatusCounts.compatible || 0} 可连接 · {draftStatusCounts.needs_review || 0} 需确认 · {draftStatusCounts.blocked || 0} 阻断 · {draftStatusCounts.stale || 0} 变更</span>
             </div>
             {selectedDraftEdge && selectedDraftEdgeEvaluation ? (
               <article className={`workflow-draft-edge-card selected ${selectedDraftEdgeEvaluation.status}`}>
@@ -8437,11 +8529,20 @@ function WorkflowCatalog({
                   <span className={`status-pill ${workflowDraftStatusTone(selectedDraftEdgeEvaluation.status)}`}>{workflowDraftStatusLabel(selectedDraftEdgeEvaluation.status)}</span>
                 </div>
                 <div className="workflow-draft-handoff-copy expanded">
-                  <span><b>sourceIntent → targetIntent</b>{selectedDraftEdge.sourceIntent} → {selectedDraftEdge.targetIntent}</span>
+                  <span><b>上游说明 → 下游说明</b>{selectedDraftEdge.sourceIntent} → {selectedDraftEdge.targetIntent}</span>
                   <span><b>上游交付</b>{selectedDraftEdgeEvaluation.delivers}</span>
                   <span><b>下游需要</b>{selectedDraftEdgeEvaluation.needs}</span>
                   <span><b>系统判断</b>{selectedDraftEdgeEvaluation.reason}</span>
                 </div>
+                <label className="workflow-draft-edge-instruction">
+                  <span>接续说明</span>
+                  <textarea
+                    value={selectedDraftEdge.instruction || ""}
+                    onChange={(event) => updateDraftEdgeInstruction(selectedDraftEdge.id, event.target.value)}
+                    placeholder="说明这条边要让下游 Agent 如何理解上游产物，例如：把 metadata_file 里的 title 作为 Telegram 消息正文。"
+                  />
+                  <small>这段说明会成为 Edge Instruction，后续运行时会转成 Relay Context Brief 交给下游 Agent。</small>
+                </label>
 
                 <div className="node-relay-mode-panel">
                   <div>
@@ -8508,9 +8609,9 @@ function WorkflowCatalog({
                           <article key={row.name}>
                             <div>
                               <strong>{row.name}</strong>
-                              <code>{String(spec.type || spec.kind || "auto")}{row.required ? " · required" : " · optional"}</code>
+                              <code>{contractContentLabel(spec, "自动")}{row.required ? " · 必填" : " · 可选"}</code>
                             </div>
-                            <small>{String(spec.from || "no default binding")}</small>
+                            <small>{String(spec.from || "没有默认绑定")}</small>
                           </article>
                         );
                       })}
@@ -8522,10 +8623,10 @@ function WorkflowCatalog({
                   <div className="node-relay-mapping-panel">
                     <div className="section-title"><span>上游 output → 目标 input 映射</span><span>{selectedDraftEdgeMappings.length}</span></div>
                     <div className="node-relay-mapping-head">
-                      <span>source output</span>
+                      <span>上游输出</span>
                       <span />
-                      <span>target input</span>
-                      <span>resolver</span>
+                      <span>目标输入</span>
+                      <span>解析方式</span>
                     </div>
                     {selectedDraftEdgeMappings.map((mapping) => {
                       const targetRows = selectedDraftEdgeTargetInputs;
@@ -8541,14 +8642,14 @@ function WorkflowCatalog({
                             disabled={!targetRows.length}
                           >
                             <option value="">选择目标输入</option>
-                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · required" : " · optional"}</option>)}
+                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · 必填" : " · 可选"}</option>)}
                           </select>
                           <select
                             value={mapping.resolver || ""}
                             onChange={(event) => setDraftEdgeResolver(selectedDraftEdge.id, mapping.sourceOutput, event.target.value)}
                           >
-                            <option value="">自动 resolver</option>
-                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{resolver.label}</option>)}
+                            <option value="">自动选择</option>
+                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{relayResolverLabel(resolver.id)}</option>)}
                           </select>
                         </article>
                       );
@@ -8690,6 +8791,7 @@ function readWorkflowDraftFromStorage(): WorkflowDraftState {
             to: item.to,
             sourceIntent: typeof item.sourceIntent === "string" ? item.sourceIntent : "",
             targetIntent: typeof item.targetIntent === "string" ? item.targetIntent : "",
+            instruction: typeof item.instruction === "string" ? item.instruction : "",
             fromSignature: typeof item.fromSignature === "string" ? item.fromSignature : "",
             toSignature: typeof item.toSignature === "string" ? item.toSignature : "",
             relayMode: typeof item.relayMode === "string" ? item.relayMode : undefined,
@@ -8829,9 +8931,9 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
   if (!upstream || !downstream) {
     return {
       status: "stale",
-      delivers: upstream ? workflowDraftHandoffSummary(workflowDraftContractEntries(upstream.outputs), "No declared outputs") : "Upstream definition is missing",
-      needs: downstream ? workflowDraftHandoffSummary(workflowDraftContractEntries(downstream.inputs), "No declared inputs") : "Downstream definition is missing",
-      reason: "Saved edge points at a node definition that is not in the current catalog.",
+      delivers: upstream ? workflowDraftHandoffSummary(workflowDraftContractEntries(upstream.outputs), "没有声明输出") : "上游节点定义缺失",
+      needs: downstream ? workflowDraftHandoffSummary(workflowDraftContractEntries(downstream.inputs), "没有声明输入") : "下游节点定义缺失",
+      reason: "这条 Edge 指向的节点定义已经不在当前目录中，请重新选择节点后再接续。",
     };
   }
   const outputs = workflowDraftContractEntries(upstream.outputs);
@@ -8842,24 +8944,25 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
   const needs = workflowDraftHandoffSummary(requiredInputs, "No declared inputs");
   const relayMode = typeof edge.relayMode === "string" && edge.relayMode ? edge.relayMode : "auto_by_target_inputs";
   const mappings = Array.isArray(edge.relayMappings) ? edge.relayMappings : [];
+  const hasInstruction = String(edge.instruction || "").trim().length >= 6;
   if (edge.fromSignature !== workflowDraftNodeSignature(upstream) || edge.toSignature !== workflowDraftNodeSignature(downstream)) {
     return {
       status: "stale",
       delivers,
       needs,
-      reason: "The saved from/to definition signature differs from the current node definition. Reconnect this handoff after review.",
+      reason: "这条 Edge 保存时的节点定义与当前节点定义不一致，请重新评估或重新连接后再执行。",
     };
   }
   if (!outputs.length || !inputs.length) {
     return {
-      status: "incompatible",
+      status: "blocked",
       delivers,
       needs,
       reason: !outputs.length && !inputs.length
-        ? "The upstream node has no declared outputs and the downstream node has no declared inputs."
+        ? "上游没有声明可交付内容，下游也没有声明接收内容。先补齐节点契约。"
         : !outputs.length
-          ? "The upstream node does not declare what it can hand off."
-          : "The downstream node does not declare what it needs.",
+          ? "上游节点没有声明可接续输出，不能创建可靠 Edge。"
+          : "下游节点没有声明输入需求，不能创建可靠 Edge。",
     };
   }
   if (relayMode === "selected_outputs") {
@@ -8878,7 +8981,7 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
     const missingTargetSummary = [...new Set(missingTarget.map((item) => `${edge.from}.${item.sourceOutput} -> ${item.targetInput || "-"}`))].join(", ");
     if (missingSource.length || missingTarget.length) {
       return {
-        status: "needs_review",
+        status: "blocked",
         delivers,
         needs,
         reason: missingSource.length
@@ -8895,10 +8998,12 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
   }
   if (relayMode === "all_outputs") {
     return {
-      status: "compatible",
+      status: "needs_review",
       delivers,
       needs,
-      reason: "已设置整包传递：运行时将上游所有 relayable outputs 传递给下游。",
+      reason: hasInstruction
+        ? "已设置整包传递，并提供了接续说明；运行前仍建议确认下游如何理解整包内容。"
+        : "整包传递需要补充接续说明，否则下游 Agent 很难知道应该使用哪些产物。",
     };
   }
   if (workflowDraftHasContractMatch(upstream, downstream, outputs, inputs)) {
@@ -8906,28 +9011,31 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
       status: "compatible",
       delivers,
       needs,
-      reason: "Declared needs, input references, or intent/name tokens line up between the two node contracts.",
+      reason: "上游输出与下游输入存在明确引用、依赖或语义匹配。",
     };
   }
   return {
     status: "needs_review",
     delivers,
     needs,
-    reason: "Both sides declare handoff contracts, but no clear intent/name/needs correspondence was found.",
+    reason: hasInstruction
+      ? "节点契约没有自动匹配，但已提供接续说明；需要人工确认后作为 Edge Instruction 交给运行时。"
+      : "两边都有契约，但系统没有找到明确对应关系。请补充接续说明或改为手动绑定。",
   };
 }
 
 function workflowDraftStatusLabel(status: WorkflowDraftEdgeStatus) {
-  if (status === "compatible") return "compatible";
-  if (status === "needs_review") return "needs review";
-  if (status === "incompatible") return "incompatible";
-  return "stale";
+  if (status === "compatible") return "可连接";
+  if (status === "needs_review") return "需确认";
+  if (status === "blocked") return "已阻断";
+  if (status === "incompatible") return "不可连接";
+  return "定义变更";
 }
 
 function workflowDraftStatusTone(status: WorkflowDraftEdgeStatus) {
   if (status === "compatible") return "done";
   if (status === "needs_review") return "waiting";
-  if (status === "incompatible") return "failed";
+  if (status === "blocked" || status === "incompatible") return "failed";
   return "stale";
 }
 
@@ -11526,7 +11634,7 @@ function NodesWorkspace({
                 <span>{runtime?.id || "Runtime"} · {instance?.instanceId || "Instance"} · {workflowId}</span>
               </div>
               <button type="button" className="btn primary" disabled={!selectedNode} onClick={() => openDefinitionEditor(selectedNode)}>
-                <Edit3 size={14} />Edit Definition
+                <Edit3 size={14} />编辑定义
               </button>
             </div>
             <section className="node-three-layer-grid">
@@ -11866,6 +11974,28 @@ const NODE_CONTRACT_VALUE_TYPE_OPTIONS = ["url", "text", "markdown", "json", "ht
 const NODE_CONTRACT_ACCEPT_OPTIONS = ["scalar:url", "scalar:text", "file:text", "file:markdown", "file:json", "directory", "artifact_set"] as const;
 const NODE_CONTRACT_RESOLVER_OPTIONS = ["direct", "json_path", "regex", "manifest_item", "auto"] as const;
 const NODE_OUTPUT_ROLE_OPTIONS = ["wiki-source", "transcript", "metadata", "index", "relay-output", "debug"] as const;
+const NODE_INPUT_CONTENT_PRESETS = [
+  { value: "url", label: "URL 文本" },
+  { value: "text", label: "普通文本" },
+  { value: "markdown_file", label: "Markdown 文件" },
+  { value: "json_file", label: "JSON 文件" },
+  { value: "files", label: "多文件" },
+  { value: "directory", label: "文件夹" },
+] as const;
+const NODE_INPUT_RESOLVER_PRESETS = [
+  { value: "direct", label: "直接使用" },
+  { value: "json_path", label: "从 JSON 字段读取" },
+  { value: "regex", label: "从文本提取" },
+  { value: "auto", label: "运行时自动判断" },
+] as const;
+const NODE_OUTPUT_CONTENT_PRESETS = [
+  { value: "markdown_file", label: "Markdown 文件" },
+  { value: "text_file", label: "文本文件" },
+  { value: "json_file", label: "JSON 文件" },
+  { value: "files", label: "多文件" },
+  { value: "directory", label: "文件夹" },
+  { value: "text", label: "文本值" },
+] as const;
 
 function parseDefinitionEditorObject(value: string): Record<string, unknown> {
   try {
@@ -11915,6 +12045,71 @@ function definitionSpecRecord(spec: unknown, fallbackKey: "from" | "path" = "fro
 function definitionInputKind(spec: unknown) {
   const record = contractRecord(spec);
   return String(record.kind || record.type || "");
+}
+
+function definitionInputPreset(spec: unknown) {
+  const record = contractRecord(spec);
+  const kind = String(record.kind || record.type || "").toLowerCase();
+  const valueType = String(record.value_type || record.valueType || "").toLowerCase();
+  if (valueType === "url") return "url";
+  if (kind === "directory") return "directory";
+  if (kind === "files" || kind === "artifact_set") return "files";
+  if (kind === "file" && valueType === "json") return "json_file";
+  if (kind === "file" && valueType === "markdown") return "markdown_file";
+  if (kind === "scalar" || kind === "string" || kind === "text") return "text";
+  return "";
+}
+
+function applyDefinitionInputPreset(spec: unknown, preset: string) {
+  const next = definitionSpecRecord(spec, "from");
+  if (preset === "url") Object.assign(next, { kind: "scalar", type: "string", value_type: "url", accepts: ["scalar:url", "file:text", "file:json"] });
+  else if (preset === "text") Object.assign(next, { kind: "scalar", type: "string", value_type: "text", accepts: ["scalar:text", "file:text"] });
+  else if (preset === "markdown_file") Object.assign(next, { kind: "file", type: "file", value_type: "markdown", accepts: ["file:markdown", "file:text"] });
+  else if (preset === "json_file") Object.assign(next, { kind: "file", type: "file", value_type: "json", accepts: ["file:json"] });
+  else if (preset === "files") Object.assign(next, { kind: "files", type: "files", value_type: next.value_type || "auto", accepts: ["file:markdown", "file:text", "directory"] });
+  else if (preset === "directory") Object.assign(next, { kind: "directory", type: "directory", value_type: "auto", accepts: ["directory"] });
+  return next;
+}
+
+function definitionResolverPreset(spec: unknown) {
+  const ids = definitionResolverIds(contractRecord(spec).resolvers);
+  if (ids.some((item) => item.includes("json") || item.includes("metadata"))) return "json_path";
+  if (ids.some((item) => item.includes("regex") || item.includes("text-url"))) return "regex";
+  if (ids.some((item) => item.includes("auto"))) return "auto";
+  if (ids.length) return "direct";
+  return "direct";
+}
+
+function applyDefinitionResolverPreset(spec: unknown, preset: string) {
+  const next = definitionSpecRecord(spec, "from");
+  if (preset === "json_path") next.resolvers = [{ id: "json-path", kind: "json_path", path: "$.value" }];
+  else if (preset === "regex") next.resolvers = [{ id: "text-regex", kind: "regex", pattern: "" }];
+  else if (preset === "auto") next.resolvers = [{ id: "auto", kind: "auto" }];
+  else next.resolvers = [{ id: "direct", kind: "direct" }];
+  return next;
+}
+
+function definitionOutputPreset(spec: unknown) {
+  const record = contractRecord(spec);
+  const kind = String(record.kind || record.type || "").toLowerCase();
+  const valueType = String(record.value_type || record.valueType || "").toLowerCase();
+  if (kind === "directory") return "directory";
+  if (kind === "files" || kind === "artifact_set") return "files";
+  if (kind === "scalar" || kind === "string" || kind === "text") return "text";
+  if (valueType === "json") return "json_file";
+  if (valueType === "text") return "text_file";
+  return "markdown_file";
+}
+
+function applyDefinitionOutputPreset(spec: unknown, preset: string) {
+  const next = definitionSpecRecord(spec, "path");
+  if (preset === "markdown_file") Object.assign(next, { kind: "file", type: "file", value_type: "markdown" });
+  else if (preset === "text_file") Object.assign(next, { kind: "file", type: "file", value_type: "text" });
+  else if (preset === "json_file") Object.assign(next, { kind: "file", type: "file", value_type: "json" });
+  else if (preset === "files") Object.assign(next, { kind: "files", type: "files", value_type: next.value_type || "auto" });
+  else if (preset === "directory") Object.assign(next, { kind: "directory", type: "directory", value_type: "auto" });
+  else if (preset === "text") Object.assign(next, { kind: "scalar", type: "string", value_type: "text" });
+  return next;
 }
 
 function updateDefinitionSpecField(spec: unknown, key: string, value: unknown, fallbackKey: "from" | "path" = "from") {
@@ -12078,36 +12273,29 @@ function NodeDefinitionInputsEditor({
   return (
     <div className="definition-contract-editor">
       <div className="definition-contract-grid input-grid">
-        <span>name</span>
-        <span>required</span>
-        <span>kind</span>
-        <span>value_type</span>
-        <span>accepts</span>
-        <span>resolvers</span>
+        <span>输入口</span>
+        <span>是否必填</span>
+        <span>期望内容</span>
+        <span>默认来源</span>
+        <span>解析方式</span>
         <span />
       </div>
       {rows.map((row) => {
         const record = definitionSpecRecord(row.spec, "from");
-        const kindValue = definitionInputKind(row.spec);
-        const valueType = String(record.value_type || record.valueType || "");
-        const accepts = definitionStringList(record.accepts);
-        const resolvers = definitionResolverIds(record.resolvers);
+        const contentPreset = definitionInputPreset(row.spec);
+        const resolverPreset = definitionResolverPreset(row.spec);
         return (
           <article key={row.name} className="definition-contract-row input-grid">
             <input value={row.name} onChange={(event) => renameRow(row.name, event.target.value)} />
             <label className="mini-check"><input type="checkbox" checked={row.required} onChange={(event) => updateRow(row.name, { required: event.target.checked })} /><span>{row.required ? "必填" : "可选"}</span></label>
-            <select value={kindValue} onChange={(event) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, record.kind ? "kind" : "type", event.target.value) })}>
-              <option value="">未设置</option>
-              {NODE_CONTRACT_KIND_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-              {kindValue && !NODE_CONTRACT_KIND_OPTIONS.includes(kindValue as typeof NODE_CONTRACT_KIND_OPTIONS[number]) ? <option value={kindValue}>{kindValue}</option> : null}
+            <select value={contentPreset} onChange={(event) => updateRow(row.name, { spec: applyDefinitionInputPreset(row.spec, event.target.value) })}>
+              <option value="">运行时判断</option>
+              {NODE_INPUT_CONTENT_PRESETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
-            <select value={valueType} onChange={(event) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, record.valueType ? "valueType" : "value_type", event.target.value) })}>
-              <option value="">未设置</option>
-              {NODE_CONTRACT_VALUE_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-              {valueType && !NODE_CONTRACT_VALUE_TYPE_OPTIONS.includes(valueType as typeof NODE_CONTRACT_VALUE_TYPE_OPTIONS[number]) ? <option value={valueType}>{valueType}</option> : null}
+            <input value={String(record.from || "")} onChange={(event) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, "from", event.target.value) })} placeholder="上游节点.outputs.输出名 或 context.xxx" />
+            <select value={resolverPreset} onChange={(event) => updateRow(row.name, { spec: applyDefinitionResolverPreset(row.spec, event.target.value) })}>
+              {NODE_INPUT_RESOLVER_PRESETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
-            <DefinitionChipPicker value={accepts} options={NODE_CONTRACT_ACCEPT_OPTIONS} onChange={(items) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, "accepts", items) })} />
-            <DefinitionChipPicker value={resolvers} options={NODE_CONTRACT_RESOLVER_OPTIONS} onChange={(items) => updateRow(row.name, { spec: updateDefinitionSpecField(row.spec, "resolvers", items) })} />
             <button type="button" className="icon-btn danger-mini" title="删除输入" onClick={() => writeRows(rows.filter((item) => item.name !== row.name))}><Trash2 size={14} /></button>
             <details className="definition-row-json">
               <summary><span>高级 JSON</span><ChevronDown size={13} /></summary>
@@ -12148,38 +12336,30 @@ function NodeDefinitionOutputsEditor({
   return (
     <div className="definition-contract-editor">
       <div className="definition-contract-grid output-grid">
-        <span>name</span>
-        <span>kind/type</span>
-        <span>value_type</span>
-        <span>relayable</span>
-        <span>role</span>
-        <span>path</span>
+        <span>输出口</span>
+        <span>产物类型</span>
+        <span>默认位置</span>
+        <span>是否可接续</span>
+        <span>接续用途</span>
+        <span />
       </div>
       {rows.map(([name, spec]) => {
         const record = definitionSpecRecord(spec, "path");
-        const kindValue = String(record.kind || record.type || "");
-        const valueType = String(record.value_type || record.valueType || "");
+        const outputPreset = definitionOutputPreset(spec);
         const roleValue = String(record.role || "");
         return (
           <article key={name} className="definition-contract-row output-grid">
             <input value={name} onChange={(event) => updateOutputs(renameObjectKey(outputs, name, event.target.value))} />
-            <select value={kindValue} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, record.kind ? "kind" : "type", event.target.value, "path"))}>
-              <option value="">未设置</option>
-              {NODE_CONTRACT_KIND_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-              {kindValue && !NODE_CONTRACT_KIND_OPTIONS.includes(kindValue as typeof NODE_CONTRACT_KIND_OPTIONS[number]) ? <option value={kindValue}>{kindValue}</option> : null}
+            <select value={outputPreset} onChange={(event) => updateSpec(name, applyDefinitionOutputPreset(spec, event.target.value))}>
+              {NODE_OUTPUT_CONTENT_PRESETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
-            <select value={valueType} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, record.valueType ? "valueType" : "value_type", event.target.value, "path"))}>
-              <option value="">未设置</option>
-              {NODE_CONTRACT_VALUE_TYPE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-              {valueType && !NODE_CONTRACT_VALUE_TYPE_OPTIONS.includes(valueType as typeof NODE_CONTRACT_VALUE_TYPE_OPTIONS[number]) ? <option value={valueType}>{valueType}</option> : null}
-            </select>
+            <input value={String(record.path || record.from || "")} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, record.from ? "from" : "path", event.target.value, "path"))} placeholder="raw/... 或 context..." />
             <label className="mini-check"><input type="checkbox" checked={record.relayable !== false} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, "relayable", event.target.checked, "path"))} /><span>{record.relayable === false ? "关闭" : "可接力"}</span></label>
             <select value={roleValue} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, "role", event.target.value, "path"))}>
               <option value="">未设置</option>
               {NODE_OUTPUT_ROLE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
               {roleValue && !NODE_OUTPUT_ROLE_OPTIONS.includes(roleValue as typeof NODE_OUTPUT_ROLE_OPTIONS[number]) ? <option value={roleValue}>{roleValue}</option> : null}
             </select>
-            <input value={String(record.path || record.from || "")} onChange={(event) => updateSpec(name, updateDefinitionSpecField(spec, record.from ? "from" : "path", event.target.value, "path"))} placeholder="raw/... 或 context..." />
             <button type="button" className="icon-btn danger-mini" title="删除输出" onClick={() => {
               const next = { ...outputs };
               delete next[name];
@@ -12320,7 +12500,7 @@ function NodeDefinitionEditorDrawer({
       <form className="side-drawer node-definition-editor-drawer" onSubmit={onCreateDraft}>
         <div className="drawer-head">
           <div>
-            <h2>Edit Definition</h2>
+            <h2>编辑节点定义</h2>
             <span>{instance.instanceId} · {runtime.name} · {input.nodeId}</span>
           </div>
           <button type="button" className="icon-btn" title="关闭节点定义编辑器" onClick={onClose}><X size={16} /></button>
@@ -12345,22 +12525,22 @@ function NodeDefinitionEditorDrawer({
               }} />
           </details>
           <section className="definition-editor-section">
-            <div className="section-title"><span>Identity</span><span>definition</span></div>
+            <div className="section-title"><span>节点身份</span><span>definition draft</span></div>
             <div className="draft-grid">
               <label>Node ID<input value={input.nodeId} disabled /></label>
               <label>Title<input value={input.title} onChange={(event) => setInput({ ...input, title: event.target.value })} /></label>
             </div>
             <div className="definition-identity-controls">
-              <label>Mode<NodeDefinitionModeSelector value={input.mode} onChange={(value) => setInput({ ...input, mode: value })} /></label>
+              <label>执行模式<NodeDefinitionModeSelector value={input.mode} onChange={(value) => setInput({ ...input, mode: value })} /></label>
               <div className="definition-needs-field">
-                <div className="field-label">Needs</div>
+                <div className="field-label">前置节点</div>
                 <NodeDefinitionNeedsPicker currentNodeId={input.nodeId} value={input.needs} nodes={workflowNodes} onChange={(value) => setInput({ ...input, needs: value })} />
               </div>
             </div>
-            <label>Description<textarea value={input.description} onChange={(event) => setInput({ ...input, description: event.target.value })} /></label>
+            <label>节点说明<textarea value={input.description} onChange={(event) => setInput({ ...input, description: event.target.value })} /></label>
           </section>
           <section className="definition-editor-section">
-            <div className="section-title"><span>Executor / Skill Binding</span><span>agent-skill</span></div>
+            <div className="section-title"><span>执行器与 Skill</span><span>agent-skill</span></div>
             <div className="draft-grid">
               <label>Skill<input value={input.skill} onChange={(event) => setInput({ ...input, skill: event.target.value })} placeholder="sop-wiki-build" /></label>
               <label>Entry<input value={input.entry} onChange={(event) => setInput({ ...input, entry: event.target.value })} placeholder="scripts/run_wiki_build.sh" /></label>
@@ -12371,11 +12551,11 @@ function NodeDefinitionEditorDrawer({
             <small className="field-hint">这些字段属于节点定义草稿，保存目标是 agent-brain-plugins，不是 Runtime 运行配置。</small>
           </section>
           <section className="definition-editor-section">
-            <div className="section-title"><span>输入契约</span><span>name / required / resolver</span></div>
+            <div className="section-title"><span>输入契约</span><span>输入口 / 期望内容 / 解析方式</span></div>
             <NodeDefinitionInputsEditor input={input} setInput={setInput} />
           </section>
           <section className="definition-editor-section">
-            <div className="section-title"><span>输出契约</span><span>path / relayable / role</span></div>
+            <div className="section-title"><span>输出契约</span><span>输出口 / 产物类型 / 接续用途</span></div>
             <NodeDefinitionOutputsEditor input={input} setInput={setInput} />
           </section>
           <section className="definition-editor-section">
@@ -12384,7 +12564,7 @@ function NodeDefinitionEditorDrawer({
           </section>
           {latestDraft ? (
             <section className="definition-editor-review">
-              <div className="section-title"><span>Latest Draft Review</span><span>{latestDraft.validation?.status ? String(latestDraft.validation.status) : "created"}</span></div>
+              <div className="section-title"><span>最近草稿校验</span><span>{latestDraft.validation?.status ? String(latestDraft.validation.status) : "created"}</span></div>
               <KeyValues data={{
                 draft_id: latestDraft.draftId,
                 draft_type: latestDraft.draftType || "edit_node_definition",

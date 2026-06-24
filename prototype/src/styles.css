@@ -4496,8 +4496,11 @@ pre {
 
 .node-relay-mode-panel span,
 .field-hint {
+  min-width: 0;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .field-hint.bad {
@@ -4565,6 +4568,26 @@ pre {
 .node-contract-definition-view {
   display: grid;
   gap: 12px;
+}
+
+.node-run-relay-brief {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid rgba(37, 99, 235, .22);
+  border-radius: 8px;
+  background: var(--blue-soft);
+}
+
+.node-run-relay-brief strong {
+  font-size: 13px;
+}
+
+.node-run-relay-brief p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .node-contract-card > div:first-child {
@@ -4680,6 +4703,19 @@ pre {
   font-size: 11px;
   font-weight: 750;
   text-transform: uppercase;
+}
+
+.workflow-draft-inspector .node-relay-mapping-head {
+  display: none;
+}
+
+.workflow-draft-inspector .node-relay-mapping-row {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.workflow-draft-inspector .node-relay-mapping-row > span {
+  justify-self: start;
 }
 
 .node-relay-mapping-row code,
@@ -6959,7 +6995,33 @@ pre {
 }
 
 .workflow-draft-edge-reason.disabled {
-  color: var(--soft);
+  color: var(--danger);
+}
+
+.workflow-draft-edge-instruction {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.workflow-draft-edge-instruction span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.workflow-draft-edge-instruction textarea {
+  width: 100%;
+  min-height: 82px;
+  resize: vertical;
+}
+
+.workflow-draft-edge-instruction small {
+  color: var(--muted);
+  line-height: 1.4;
 }
 
 .workflow-draft-react-flow {
@@ -7117,6 +7179,7 @@ pre {
   stroke-dasharray: 6 4;
 }
 
+.react-flow__edge.workflow-draft-flow-edge.blocked path,
 .react-flow__edge.workflow-draft-flow-edge.incompatible path {
   stroke: var(--red);
   stroke-dasharray: 3 4;
@@ -7147,6 +7210,7 @@ pre {
   min-width: 0;
   display: grid;
   gap: 8px;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -7164,6 +7228,7 @@ pre {
   background: var(--amber-soft);
 }
 
+.workflow-draft-edge-card.blocked,
 .workflow-draft-edge-card.incompatible {
   border-color: rgba(220, 38, 38, .34);
   background: var(--red-soft);
@@ -7175,6 +7240,44 @@ pre {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.workflow-draft-edge-head strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-draft-inspector .node-relay-output-row span {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.workflow-draft-inspector .node-relay-output-row strong,
+.workflow-draft-inspector .node-relay-output-row small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-inspector .node-relay-mode-panel {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.workflow-draft-inspector .node-relay-mode-panel .segmented {
+  min-width: 0;
+  width: 100%;
+}
+
+.workflow-draft-inspector .node-run-input-preview-rows article {
+  grid-template-columns: 1fr;
+}
+
+.workflow-draft-inspector .node-run-input-preview-rows article > small {
+  grid-column: 1;
+  overflow-wrap: anywhere;
 }
 
 .workflow-draft-handoff-copy {
@@ -8358,7 +8461,8 @@ pre {
 }
 
 .node-definition-editor-drawer {
-  width: min(760px, calc(100vw - 28px));
+  width: min(900px, calc(100vw - 28px));
+  max-height: 100vh;
 }
 
 .definition-editor-targets,
@@ -8473,12 +8577,12 @@ pre {
 
 .definition-contract-grid.input-grid,
 .definition-contract-row.input-grid {
-  grid-template-columns: minmax(110px, .9fr) 78px minmax(92px, .7fr) minmax(104px, .8fr) minmax(150px, 1.2fr) minmax(130px, 1fr) 36px;
+  grid-template-columns: minmax(120px, .8fr) 82px minmax(150px, .9fr) minmax(220px, 1.4fr) minmax(160px, .9fr) 36px;
 }
 
 .definition-contract-grid.output-grid,
 .definition-contract-row.output-grid {
-  grid-template-columns: minmax(110px, .9fr) minmax(92px, .7fr) minmax(104px, .8fr) 82px minmax(116px, .8fr) minmax(150px, 1.1fr) 36px;
+  grid-template-columns: minmax(120px, .8fr) minmax(150px, .9fr) minmax(240px, 1.5fr) 96px minmax(150px, .9fr) 36px;
 }
 
 .definition-contract-row {
