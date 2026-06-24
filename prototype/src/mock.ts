@@ -79,25 +79,25 @@ export const baseRuns: RunMock[] = [
 export const stages: StageMock[] = [
   {
     id: "youtube-fetch",
-    title: "YouTube Fetch",
+    title: "YouTube 元数据获取",
     mode: "blocking",
-    summary: "Fetches source metadata and writes the pipeline context.",
+    summary: "获取 YouTube 源视频元数据，并写入 pipeline context。",
     inputs: { source_url: "context.source_url" },
     outputs: { metadata_file: "raw/youtube-metadata/{pipeline_id}.json", source_url: "context.source_url" }
   },
   {
     id: "notebooklm-research",
-    title: "NotebookLM Research",
+    title: "NotebookLM 研究",
     mode: "blocking",
-    summary: "Builds a structured research report from the source metadata.",
+    summary: "基于源视频元数据生成结构化研究报告。",
     inputs: { source_url: "youtube-fetch.outputs.source_url", metadata_file: "youtube-fetch.outputs.metadata_file" },
     outputs: { reports: "raw/notebooklm-analysis/*.md", mindmaps: "raw/notebooklm-mindmaps/*.json" }
   },
   {
     id: "youtube-deep-research",
-    title: "Deep Research",
+    title: "YouTube 深度研究",
     mode: "sidecar",
-    summary: "Runs sidecar transcript analysis without blocking the main chain.",
+    summary: "执行旁路字幕与深度分析，不阻塞主链路。",
     inputs: { source_url: "youtube-fetch.outputs.source_url" },
     outputs: {
       analysis_file: "raw/youtube-deep-research/{pipeline_id}/analysis.md",
@@ -106,17 +106,17 @@ export const stages: StageMock[] = [
   },
   {
     id: "wiki-build",
-    title: "Wiki Build",
+    title: "Wiki 知识图谱构建",
     mode: "blocking",
-    summary: "Uses Gemini / Vertex to synthesize wiki pages and index.",
+    summary: "综合研究报告生成 wiki 页面和索引。",
     inputs: { reports: "notebooklm-research.outputs.reports" },
     outputs: { index: "index.md", pages: "wiki/**" }
   },
   {
     id: "tg-notify",
-    title: "Telegram Notify",
+    title: "Telegram 通知",
     mode: "blocking",
-    summary: "Sends the completion summary and archives the run state.",
+    summary: "发送完成摘要并归档运行状态。",
     inputs: { index: "wiki-build.outputs.index" },
     outputs: { telegram_message: "logs/pipeline-runs/pipe-{run_id}.json" }
   }
