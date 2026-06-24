@@ -9764,8 +9764,13 @@ function buildEdgeDraftApplyScript(input: {
   const quote = (value: string) => `"${value.replace(/"/g, "\\\"")}"`;
   const repoRoot = safeToString(saveOwner, "~/agent-brain-plugins").replace(/\/+/g, "/").replace(/\/$/, "");
   const branch = `chore/apply-edge-${edgeFrom}-to-${edgeTo}-${draftId}`;
-  const normalizedDraftPath = draftPath.startsWith("/") ? draftPath : `${repoRoot}/${draftPath}`;
-  const normalizedTemplatePath = `${repoRoot}/${projectTemplateSopYaml.replace(/^\//, "")}`;
+  const normalizedDraftPath = draftPath.startsWith("/") || draftPath.startsWith("~")
+    ? draftPath
+    : `${repoRoot}/${draftPath}`;
+  const normalizedTemplatePath =
+    projectTemplateSopYaml.startsWith("/") || projectTemplateSopYaml.startsWith("~")
+      ? projectTemplateSopYaml
+      : `${repoRoot}/${projectTemplateSopYaml.replace(/^\//, "")}`;
   return [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
@@ -9799,6 +9804,8 @@ function buildEdgeDraftApplyScript(input: {
     "  echo \"missing repo root: $REPO_DIR\"",
     "  exit 2",
     "fi",
+    "DRAFT_PATH=\"${DRAFT_PATH/#\\~/$HOME}\"",
+    "TARGET_FILE=\"${TARGET_FILE/#\\~/$HOME}\"",
     "",
     "while [[ $# -gt 0 ]]; do",
     "  case \"$1\" in",
@@ -9841,6 +9848,10 @@ function buildEdgeDraftApplyScript(input: {
     `echo \"project_template_sop_yaml: ${projectTemplateSopYaml}\"`,
     `echo \"project_workflow_id: ${projectWorkflowId}\"`,
     `echo \"edge: ${edgeFrom} -> ${edgeTo}\"`,
+    "echo \"workflow_id: $WORKFLOW_ID\"",
+    "echo \"edge_id: $EDGE_ID\"",
+    "echo \"from: $FROM\"",
+    "echo \"to: $TO\"",
     "echo \"\"",
     "echo \"请先在编辑器手工应用草稿中的 edge 变更到 TARGET_FILE 后继续。\"",
     "echo \"执行模式: $( [[ \"$DRY_RUN\" -eq 1 ]] && echo DRY-RUN || echo COMMIT )\"",
