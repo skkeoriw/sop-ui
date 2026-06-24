@@ -7664,6 +7664,80 @@ pre {
   background: #f7fee7;
 }
 
+.workflow-draft-apply-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.workflow-draft-apply-card.applied,
+.workflow-draft-apply-card.patch_ready,
+.workflow-draft-apply-card.unchanged {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.workflow-draft-apply-card.failed {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.workflow-draft-apply-card > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.workflow-draft-apply-card > button {
+  justify-self: start;
+  min-width: 104px;
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.workflow-draft-apply-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-apply-card span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-apply-message,
+.workflow-draft-apply-result {
+  grid-column: 1 / -1;
+}
+
+.workflow-draft-apply-result {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.workflow-draft-apply-result .kv {
+  margin: 0;
+}
+
+.workflow-draft-apply-result pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .workflow-draft-agent-plan summary {
   display: flex;
   align-items: center;

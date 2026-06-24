@@ -843,6 +843,14 @@ export interface NodeDraft {
   validation: Record<string, unknown>;
 }
 
+export interface WorkflowEdgeRequest {
+  [key: string]: unknown;
+}
+
+export interface WorkflowEdgeResult {
+  [key: string]: unknown;
+}
+
 export interface TriggerInput {
   [key: string]: unknown;
   repo?: string;
@@ -919,6 +927,9 @@ export interface SopDataProvider {
   listNodeDrafts(runtime: Runtime, instanceId: string): Promise<NodeDraft[]>;
   getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
+  evaluateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
+  createWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
+  applyWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   getRuntimeInheritance(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   getRuntimeManagementConfig(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   saveRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview>;

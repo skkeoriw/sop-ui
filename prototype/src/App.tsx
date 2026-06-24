@@ -182,6 +182,29 @@ type EdgeDraftSaveState = {
   draftPath?: string;
   changeRequest?: Record<string, unknown>;
   applyPlan?: EdgeDraftApplyPlan;
+  applying?: boolean;
+  applyError?: string;
+  applyResult?: EdgeDraftApplyResult;
+};
+type EdgeDraftApplyResult = {
+  status?: string;
+  workflowId?: string;
+  draftId?: string;
+  draftPath?: string;
+  edge?: Record<string, unknown>;
+  targets?: Record<string, unknown>;
+  before?: unknown[];
+  after?: unknown[];
+  hashBefore?: string;
+  hashAfter?: string;
+  changeCount?: number;
+  repoFirstRequired?: boolean;
+  productionDagChanged?: boolean;
+  candidateSopPath?: string;
+  patchPath?: string;
+  patch?: string;
+  errors?: Array<Record<string, unknown>>;
+  reason?: string;
 };
 type EdgeDraftApplyPlan = {
   draftId: string;
@@ -6362,6 +6385,7 @@ export default function App() {
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
         {viewMode === "workflows" ? (
           <WorkflowCatalog
+            provider={provider}
             workflows={workflowDefinitions}
             nodes={managedNodes}
             runtimes={runtimes}
@@ -7999,6 +8023,7 @@ function RuntimeDirectory({
 }
 
 function WorkflowCatalog({
+  provider,
   workflows,
   nodes,
   runtimes,
@@ -8012,6 +8037,7 @@ function WorkflowCatalog({
   onOpenExecutions,
   onOpenManagement,
 }: {
+  provider: SopDataProvider;
   workflows: WorkflowDefinition[];
   nodes: NodeRegistryItem[];
   runtimes: Runtime[];
@@ -8370,26 +8396,10 @@ function WorkflowCatalog({
       [edgeId]: { ...(current[edgeId] || {}), loading: true, error: "" },
     }));
     try {
-      const response = await fetch(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/evaluate`, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      const text = await response.text();
-      let raw: Record<string, unknown> = {};
-      try {
-        raw = text ? JSON.parse(text) as Record<string, unknown> : {};
-      } catch {
-        raw = { detail: text };
-      }
+      const raw = provider.evaluateWorkflowEdge
+        ? await provider.evaluateWorkflowEdge(runtime, instanceId, workflowId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/evaluate`, payload);
       const evaluation = (raw.evaluation && typeof raw.evaluation === "object" ? raw.evaluation : raw) as EdgeHandoffAgentEvaluation;
-      if (!response.ok) {
-        const detail = String(raw.detail || raw.message || raw.error || text || `HTTP ${response.status}`);
-        throw new Error(detail);
-      }
       setDraftAgentEvaluations((current) => ({
         ...current,
         [edgeId]: { loading: false, evaluation, raw },
@@ -8458,25 +8468,9 @@ function WorkflowCatalog({
       [edgeId]: { ...(current[edgeId] || {}), loading: true, error: "" },
     }));
     try {
-      const response = await fetch(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/drafts`, {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      const text = await response.text();
-      let raw: Record<string, unknown> = {};
-      try {
-        raw = text ? JSON.parse(text) as Record<string, unknown> : {};
-      } catch {
-        raw = { detail: text };
-      }
-      if (!response.ok) {
-        const detail = String(raw.detail || raw.message || raw.error || text || `HTTP ${response.status}`);
-        throw new Error(detail);
-      }
+      const raw = provider.createWorkflowEdgeDraft
+        ? await provider.createWorkflowEdgeDraft(runtime, instanceId, workflowId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/drafts`, payload);
       const changeRequest = raw.change_request && typeof raw.change_request === "object" ? raw.change_request as Record<string, unknown> : {};
       const draftId = String(raw.draft_id || edge.id);
       const draftPath = String(raw.draft_path || "raw/workflow-drafts/{draft_id}");
@@ -8507,6 +8501,63 @@ function WorkflowCatalog({
           ...(current[edgeId] || {}),
           loading: false,
           error: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    }
+  }
+  async function applySavedDraftEdge(edgeId: string) {
+    const edge = draft.edges.find((item) => item.id === edgeId);
+    const saved = draftEdgeSaveStates[edgeId];
+    const workflowId = selectedWorkflow?.workflowId || "workflow";
+    const instanceId = activeInstanceId;
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtime));
+    if (!edge || !saved?.draftId) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { ...(current[edgeId] || {}), applyError: "请先保存 Edge Draft，再生成 SOP Patch。" },
+      }));
+      return;
+    }
+    if (!runtime || !spiBase || !instanceId) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { ...(current[edgeId] || {}), applyError: "缺少 Runtime 或 Instance，不能应用 Edge Draft。" },
+      }));
+      return;
+    }
+    setDraftEdgeSaveStates((current) => ({
+      ...current,
+      [edgeId]: { ...(current[edgeId] || {}), applying: true, applyError: "" },
+    }));
+    try {
+      const payload = {
+        draft_id: saved.draftId,
+        draft_path: saved.draftPath || "",
+      };
+      const raw = provider.applyWorkflowEdgeDraft
+        ? await provider.applyWorkflowEdgeDraft(runtime, instanceId, workflowId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/apply`, payload);
+      const result = mapEdgeDraftApplyResult(raw);
+      if (result.status === "failed") throw new Error(edgeDraftApplyErrorText(result, raw, "", 422));
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: {
+          ...(current[edgeId] || {}),
+          applying: false,
+          applyError: "",
+          applyResult: result,
+        },
+      }));
+      setDraftCanvasMessage(result.status === "unchanged"
+        ? `Edge 已经在 SOP 中：${edge.from} -> ${edge.to}`
+        : `已生成 SOP Patch：${edge.from} -> ${edge.to}`);
+    } catch (error) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: {
+          ...(current[edgeId] || {}),
+          applying: false,
+          applyError: error instanceof Error ? error.message : String(error),
         },
       }));
     }
@@ -9123,7 +9174,7 @@ function WorkflowCatalog({
                       <div className="workflow-draft-agent-save">
                         <div>
                           <strong>保存为 Edge Definition Draft</strong>
-                          <span>只写入当前 Instance 的 `raw/workflow-drafts` 变更草稿；不会直接修改生产 sop.yaml，最终仍需 repo-first 改 agent-brain-plugins。</span>
+                          <span>先写入当前 Instance 的 `raw/workflow-drafts`，通过校验后生成 repo-first SOP Patch。</span>
                         </div>
                         <button
                           type="button"
@@ -9149,10 +9200,59 @@ function WorkflowCatalog({
                           <small>save_target: {String(selectedDraftEdgeSaveState.changeRequest?.save_target || "agent-brain-plugins")}</small>
                         </div>
                       ) : null}
+                      {selectedDraftEdgeSaveState?.draftId ? (
+                        <div className={`workflow-draft-apply-card ${selectedDraftEdgeSaveState.applyResult?.status || ""}`}>
+                          <div>
+                            <strong>生成 SOP Patch</strong>
+                            <span>只生成 `candidate_sop.yaml` 和 diff，不直接修改 runtime 机器上的源码；后续在开发机 repo-first 提交。</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn primary compact"
+                            disabled={selectedDraftEdgeSaveState.applying}
+                            onClick={() => applySavedDraftEdge(selectedDraftEdge.id)}
+                          >
+                            {selectedDraftEdgeSaveState.applying ? <Loader2 size={13} className="spin" /> : <GitBranch size={13} />}
+                            {selectedDraftEdgeSaveState.applyResult ? "重新生成 Patch" : "生成 Patch"}
+                          </button>
+                          {selectedDraftEdgeSaveState.applyError ? (
+                            <div className="workflow-draft-agent-error workflow-draft-apply-message">
+                              <AlertTriangle size={14} />
+                              <span>{selectedDraftEdgeSaveState.applyError}</span>
+                            </div>
+                          ) : null}
+                          {selectedDraftEdgeSaveState.applyResult ? (
+                            <div className="workflow-draft-apply-result">
+                              <span className={`status-pill ${edgeDraftApplyStatusTone(selectedDraftEdgeSaveState.applyResult.status)}`}>
+                                {edgeDraftApplyStatusLabel(selectedDraftEdgeSaveState.applyResult.status)}
+                              </span>
+                              <KeyValues data={{
+                                edge: `${String(selectedDraftEdgeSaveState.applyResult.edge?.from || selectedDraftEdge.from)} -> ${String(selectedDraftEdgeSaveState.applyResult.edge?.to || selectedDraftEdge.to)}`,
+                                change_count: selectedDraftEdgeSaveState.applyResult.changeCount ?? "-",
+                                repo_first_required: selectedDraftEdgeSaveState.applyResult.repoFirstRequired ? "yes" : "no",
+                                production_dag_changed: selectedDraftEdgeSaveState.applyResult.productionDagChanged ? "yes" : "no",
+                                hash_before: selectedDraftEdgeSaveState.applyResult.hashBefore || "-",
+                                hash_after: selectedDraftEdgeSaveState.applyResult.hashAfter || "-",
+                                target: String(selectedDraftEdgeSaveState.applyResult.targets?.project_template_sop_yaml || selectedDraftEdgeSaveState.applyPlan?.projectTemplateSopYaml || "-"),
+                                patch_path: selectedDraftEdgeSaveState.applyResult.patchPath || "-",
+                                candidate_sop: selectedDraftEdgeSaveState.applyResult.candidateSopPath || "-",
+                              }} />
+                              <details className="workflow-draft-advanced-json">
+                                <summary>查看 patch / before / after</summary>
+                                <pre>{JSON.stringify({
+                                  patch: selectedDraftEdgeSaveState.applyResult.patch || "",
+                                  before: selectedDraftEdgeSaveState.applyResult.before || [],
+                                  after: selectedDraftEdgeSaveState.applyResult.after || [],
+                                }, null, 2)}</pre>
+                              </details>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                       {selectedDraftEdgeSaveState?.applyPlan ? (
                         <details className="workflow-draft-runtime-brief workflow-draft-agent-plan">
                           <summary>
-                            <span>Edge 落库（repo-first）执行方案</span>
+                            <span>Advanced: 手工落库方案</span>
                             <button
                               type="button"
                               className="ghost-btn compact"
@@ -9196,13 +9296,10 @@ function WorkflowCatalog({
                             ) : null}
                             <div className="field-hint" style={{ marginTop: 6 }}>
                               <strong>执行清单（建议）</strong>
-                              <div>1) 复制落库脚本到 /tmp/apply-edge.sh</div>
-                              <div>2) bash /tmp/apply-edge.sh --dry-run --auto-confirm</div>
-                              <div>3) 确认草稿上下文通过后，执行 bash /tmp/apply-edge.sh --auto-confirm</div>
-                              <div>4) 脚本成功后在本地 repo-first 分支提交并 pull 到运行机器更新</div>
+                              <div>主流程请使用上方生成 SOP Patch。真实落库必须回到开发机仓库修改、测试、commit、push。</div>
                             </div>
                             <div className="field-hint" style={{ marginBottom: 8 }}>
-                              说明：草稿仅落在 Runtime 的 `raw/workflow-drafts`；生产 `sop.yaml` 仍需本地 repo-first 更新。
+                              说明：如果 Patch 生成失败，再用这里的 Change Request 和 Proposal 定位原因。
                             </div>
                             {selectedDraftEdgeSaveState.applyPlan.applyScript ? (
                               <details className="workflow-draft-advanced-json workflow-draft-apply-script">
@@ -10369,6 +10466,73 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     "change_request:",
     plan.changeRequestText,
   ].join("\n");
+}
+
+async function postWorkflowEdgeJson(url: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = await response.text();
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = text ? JSON.parse(text) as Record<string, unknown> : {};
+  } catch {
+    raw = { detail: text };
+  }
+  if (!response.ok) {
+    const result = mapEdgeDraftApplyResult(raw);
+    throw new Error(edgeDraftApplyErrorText(result, raw, text, response.status));
+  }
+  return raw;
+}
+
+function mapEdgeDraftApplyResult(raw: Record<string, unknown>): EdgeDraftApplyResult {
+  return {
+    status: safeToString(raw.status),
+    workflowId: safeToString(raw.workflow_id || raw.workflowId),
+    draftId: safeToString(raw.draft_id || raw.draftId),
+    draftPath: safeToString(raw.draft_path || raw.draftPath),
+    edge: safeRecord(raw.edge),
+    targets: safeRecord(raw.targets),
+    before: Array.isArray(raw.before) ? raw.before : [],
+    after: Array.isArray(raw.after) ? raw.after : [],
+    hashBefore: safeToString(raw.hash_before || raw.hashBefore),
+    hashAfter: safeToString(raw.hash_after || raw.hashAfter),
+    changeCount: typeof raw.change_count === "number" ? raw.change_count : typeof raw.changeCount === "number" ? raw.changeCount : undefined,
+    repoFirstRequired: Boolean(raw.repo_first_required || raw.repoFirstRequired),
+    productionDagChanged: Boolean(raw.production_dag_changed || raw.productionDagChanged),
+    candidateSopPath: safeToString(raw.candidate_sop_path || raw.candidateSopPath),
+    patchPath: safeToString(raw.patch_path || raw.patchPath),
+    patch: safeToString(raw.patch),
+    errors: Array.isArray(raw.errors) ? raw.errors.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [],
+    reason: safeToString(raw.reason || raw.message || raw.detail),
+  };
+}
+
+function edgeDraftApplyErrorText(result: EdgeDraftApplyResult, raw: Record<string, unknown>, text: string, status: number) {
+  if (result.errors?.length) {
+    return result.errors.map((item) => safeToString(item.message || item.code || JSON.stringify(item))).join("; ");
+  }
+  return result.reason || safeToString(raw.detail || raw.message || raw.error || text || `HTTP ${status}`);
+}
+
+function edgeDraftApplyStatusLabel(status?: string) {
+  if (status === "applied") return "已应用";
+  if (status === "patch_ready") return "Patch 已生成";
+  if (status === "unchanged") return "无需变更";
+  if (status === "failed") return "Patch 生成失败";
+  return status || "未应用";
+}
+
+function edgeDraftApplyStatusTone(status?: string) {
+  if (status === "applied" || status === "patch_ready" || status === "unchanged") return "done";
+  if (status === "failed") return "failed";
+  return "waiting";
 }
 
 function edgeHandoffAgentCanSave(evaluation?: EdgeHandoffAgentEvaluation) {

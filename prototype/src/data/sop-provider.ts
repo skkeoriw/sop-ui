@@ -37,7 +37,9 @@ import type {
   StageStatus,
   TriggerInput,
   TriggerResult,
-  WorkflowDefinition
+  WorkflowDefinition,
+  WorkflowEdgeRequest,
+  WorkflowEdgeResult
 } from "./types";
 
 const TUNNEL_API = "https://tunnel-api.chxyka.ccwu.cc";
@@ -1588,6 +1590,27 @@ export const sopProvider: SopDataProvider = {
       input
     );
     return mapNodeDraft(raw);
+  },
+
+  async evaluateWorkflowEdge(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/evaluate`,
+      input
+    );
+  },
+
+  async createWorkflowEdgeDraft(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/drafts`,
+      input
+    );
+  },
+
+  async applyWorkflowEdgeDraft(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/apply`,
+      input
+    );
   },
 
   async getRuntimeInheritance(runtime, instanceId) {

@@ -33,11 +33,14 @@ import type {
   RunList,
   SopDataProvider,
   TriggerInput,
-  WorkflowDefinition
+  WorkflowDefinition,
+  WorkflowEdgeRequest,
+  WorkflowEdgeResult
 } from "./types";
 
 const runsByRuntime = new Map<string, RunMock[]>(mockRuntimes.map((runtime) => [runtime.id, baseRuns.map((run) => ({ ...run }))]));
 const draftByRuntime = new Map<string, NodeDraft[]>();
+const edgeDraftById = new Map<string, Record<string, unknown>>();
 const nodeRunCreatedAt = new Map<string, number>();
 const nodeRunRetryOf = new Map<string, string>();
 const nodeRunModeById = new Map<string, string>();
@@ -988,6 +991,118 @@ export const mockProvider: SopDataProvider = {
     };
     draftByRuntime.set(target.id, [draft, ...(draftByRuntime.get(target.id) || [])]);
     return draft;
+  },
+
+  async evaluateWorkflowEdge(_target, _instanceId, _workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    await delay();
+    const edge = (input.edge && typeof input.edge === "object" ? input.edge : {}) as Record<string, unknown>;
+    const instruction = String(input.edge_handoff_instruction || edge.instruction || "").trim();
+    const downstreamNodeId = String(input.downstream_node_id || edge.to || edge.target || "");
+    const isTelegram = downstreamNodeId.includes("tg-notify");
+    const ready = instruction.length >= 6 || !isTelegram;
+    return {
+      ok: true,
+      mode: "edge-handoff-agent-evaluation",
+      evaluation: {
+        status: ready ? "ready" : "needs_instruction",
+        score: ready ? 0.91 : 0.42,
+        confidence: ready ? 0.86 : 0.62,
+        summary: ready
+          ? "Mock Edge Handoff Agent 确认这条边可以生成下游执行指导。"
+          : "目标节点是泛化通知节点，必须补充 Edge 交接说明才能知道发送什么。",
+        decision: ready ? "can_run" : "needs_user_instruction",
+        required_user_inputs: ready ? [] : [{ message: "请说明下游节点应该消费哪个上游输出，以及消息正文如何生成。" }],
+        blocking_reasons: ready ? [] : [{ code: "missing_edge_instruction", message: "泛化输入不能自动推断业务意图。" }],
+        resolved_handoff: {
+          edge_id: String(input.edge_id || edge.id || "mock-edge"),
+          primary_artifacts: [{ from: `${String(edge.from || input.upstream_node_id || "upstream")}.outputs.source_url` }],
+        },
+        node_execution_guide: {
+          format: "markdown",
+          prompt: `Use skill ${downstreamNodeId || "downstream-skill"} with this Edge instruction: ${instruction || "ask user for handoff instruction before running"}`,
+        },
+        test_plan: ["保存 Edge Draft", "生成 SOP Patch", "在开发机 repo-first 提交后用下游 Node Run 验证 Node Execution Guide"],
+        agent: { provider: "mock", model: "edge-handoff-agent-mock", used_ai: true },
+        evaluated_at: new Date().toISOString(),
+      },
+      request: input,
+    };
+  },
+
+  async createWorkflowEdgeDraft(_target, _instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    await delay();
+    const edge = (input.edge && typeof input.edge === "object" ? input.edge : {}) as Record<string, unknown>;
+    const from = String(edge.from || input.upstream_node_id || "upstream");
+    const to = String(edge.to || input.downstream_node_id || "downstream");
+    const edgeId = String(input.edge_id || edge.id || `${from}-to-${to}`);
+    const draftId = `${edgeId}-edge-mock-${Date.now()}`;
+    const result = {
+      draft_id: draftId,
+      draft_type: "save_evaluated_edge",
+      draft_path: `raw/workflow-drafts/${draftId}`,
+      edge: {
+        id: edgeId,
+        from,
+        to,
+        relay: {
+          mode: input.relay_mode || edge.relayMode || "auto_by_target_inputs",
+          handoff_instruction: input.edge_handoff_instruction || edge.instruction || "",
+          node_execution_guide: (input.evaluation as Record<string, unknown> | undefined)?.node_execution_guide || {},
+        },
+      },
+      change_request: {
+        version: 1,
+        draft_type: "save_evaluated_edge",
+        draft_id: draftId,
+        workflow_id: workflowId,
+        edge_id: edgeId,
+        save_target: "agent-brain-plugins",
+        save_owner: "agent-brain-plugins",
+        targets: {
+          runtime_sop_file: "runtime/sop.yaml",
+          project_template_sop_yaml: "youtube-wiki/templates/wiki-repo/sop.yaml",
+          workflow_id: workflowId,
+        },
+      },
+      validation: { status: "passed", production_dag_changed: false, change_count: 1 },
+    };
+    edgeDraftById.set(draftId, result);
+    return result;
+  },
+
+  async applyWorkflowEdgeDraft(_target, _instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    await delay();
+    const draftId = String(input.draft_id || input.draftId || "");
+    const draft = edgeDraftById.get(draftId);
+    if (!draft) {
+      return {
+        status: "failed",
+        reason: "workflow edge draft not found",
+        errors: [{ code: "draft_not_found", message: "Mock draft is missing. Save draft first." }],
+      };
+    }
+    const edge = (draft.edge || {}) as Record<string, unknown>;
+    return {
+      status: "patch_ready",
+      workflow_id: workflowId,
+      draft_id: draftId,
+      draft_path: input.draft_path || draft.draft_path,
+      targets: {
+        project_template_sop_yaml: "youtube-wiki/templates/wiki-repo/sop.yaml",
+        workflow_id: workflowId,
+      },
+      edge,
+      before: [],
+      after: [edge],
+      hash_before: "mock-before",
+      hash_after: "mock-after",
+      change_count: 1,
+      repo_first_required: true,
+      production_dag_changed: false,
+      candidate_sop_path: "raw/workflow-drafts/mock/candidate_sop.yaml",
+      patch_path: "raw/workflow-drafts/mock/template_patch.diff",
+      patch: "--- youtube-wiki/templates/wiki-repo/sop.yaml\n+++ youtube-wiki/templates/wiki-repo/sop.yaml (candidate)\n@@ mock edge patch @@\n",
+    };
   },
 
   async getRuntimeInheritance(): Promise<RuntimeInheritancePreview> {
