@@ -9937,6 +9937,14 @@ function buildEdgeDraftApplyScript(input: {
   const exitSuccess = getEdgeDraftApplyExitCode("success");
   const issueBlock = JSON.stringify(targetValidationIssues);
   const warningBlock = JSON.stringify(targetValidationWarnings);
+  const pythonExitCodeResolver = [
+    "def resolve_exit_code(name, fallback):",
+    "  raw = os.environ.get(name, str(fallback))",
+    "  try:",
+    "    return int(raw)",
+    "  except (TypeError, ValueError):",
+    "    return int(fallback)",
+  ].join("\\n");
   const normalizedDraftPath = draftPath.startsWith("/") || draftPath.startsWith("~")
     ? draftPath
     : `${repoRoot}/${draftPath}`;
@@ -10081,12 +10089,7 @@ function buildEdgeDraftApplyScript(input: {
     "import os",
     "import re",
     "import sys",
-    "def resolve_exit_code(name, fallback):",
-    "  raw = os.environ.get(name, str(fallback))",
-    "  try:",
-    "    return int(raw)",
-    "  except (TypeError, ValueError):",
-    "    return int(fallback)",
+    ...pythonExitCodeResolver.split("\\n"),
     "path = sys.argv[1]",
     "from_node = sys.argv[2].strip()",
     "to_node = sys.argv[3].strip()",
@@ -10144,12 +10147,7 @@ function buildEdgeDraftApplyScript(input: {
     "import os",
     "import re",
     "import sys",
-    "def resolve_exit_code(name, fallback):",
-    "  raw = os.environ.get(name, str(fallback))",
-    "  try:",
-    "    return int(raw)",
-    "  except (TypeError, ValueError):",
-    "    return int(fallback)",
+    ...pythonExitCodeResolver.split("\\n"),
     "path = sys.argv[1]",
     "workflow_id = sys.argv[2].strip()",
     "from_node = sys.argv[3].strip()",
