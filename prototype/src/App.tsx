@@ -10173,6 +10173,14 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     "  [info] pushing to remote",
     "  [info] done. pull-request: use commit from <branch>",
     "  [success] all done",
+    "",
+    "失败排查字典（按消息定位）：",
+    "  0    -> 成功（dry-run 或正式模式）",
+    "  2    -> 前置阻塞（常见：target file 不存在 / 草稿与 target 不一致 / 目标文件无 diff）",
+    "  !0   -> 执行异常（如 commit/push/环境依赖异常，查看日志末尾 error 提示）",
+    "  关键定位命令:",
+    "    bash /tmp/apply-edge.sh --dry-run --auto-confirm",
+    "    bash /tmp/apply-edge.sh --dry-run --auto-confirm 2>&1 | tee /tmp/apply-edge-dryrun.log",
   ].join("\n");
   return [
     `Edge 落库计划 (${plan.edgeId})`,
