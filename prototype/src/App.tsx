@@ -8134,7 +8134,21 @@ function WorkflowCatalog({
     setSelectedDraftNodeId("");
     setSelectedDraftEdgeId(nextEdgeId);
     setActiveDraftHandoffNodeId("");
-    setDraftCanvasMessage(`已创建接力：${fromNodeId} -> ${toNodeId}`);
+    const evaluation = evaluateWorkflowDraftEdge({
+      id: nextEdgeId,
+      from: fromNodeId,
+      to: toNodeId,
+      sourceIntent: workflowDraftNodeOutputIntent(from),
+      targetIntent: workflowDraftNodeInputIntent(to),
+      instruction: "",
+      fromSignature: workflowDraftNodeSignature(from),
+      toSignature: workflowDraftNodeSignature(to),
+      relayMode: "auto_by_target_inputs",
+      relayMappings: [],
+    }, nodesById);
+    setDraftCanvasMessage(evaluation.status === "incompatible"
+      ? `已创建待配置 Edge：${fromNodeId} -> ${toNodeId}；补充 Edge 交接说明后才可试运行。`
+      : `已创建接力：${fromNodeId} -> ${toNodeId}`);
   }
   function addDraftNodeAndEdge(fromNodeId: string, toNodeId: string) {
     const from = nodesById.get(fromNodeId);
@@ -8636,7 +8650,7 @@ function WorkflowCatalog({
           <aside className="workflow-draft-inspector">
             <div className="section-title">
               <span>Inspector</span>
-              <span>{draftStatusCounts.compatible || 0} 可连接 · {draftStatusCounts.needs_review || 0} 需确认 · {draftStatusCounts.blocked || 0} 阻断 · {draftStatusCounts.stale || 0} 变更</span>
+              <span>{draftStatusCounts.compatible || 0} 可执行 · {draftStatusCounts.needs_review || 0} 可试运行 · {draftStatusCounts.incompatible || 0} 缺说明 · {draftStatusCounts.blocked || 0} 阻断 · {draftStatusCounts.stale || 0} 变更</span>
             </div>
             {selectedDraftEdge && selectedDraftEdgeEvaluation ? (
               <article className={`workflow-draft-edge-card selected ${selectedDraftEdgeEvaluation.status}`}>
@@ -9256,10 +9270,10 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
   if (relayMode === "selected_outputs") {
     if (!mappings.length) {
       return {
-        status: "needs_review",
+        status: "incompatible",
         delivers,
         needs,
-        reason: "手动接力未选择任何上游输出。请至少绑定 1 个上游输出到目标输入。",
+        reason: "手动接力未选择任何上游输出，不能执行。请至少绑定 1 个上游输出到目标输入。",
       };
     }
     const outputMap = new Set(outputs.map(([name]) => name));
@@ -9286,23 +9300,23 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
   }
   if (relayMode === "all_outputs") {
     return {
-      status: "needs_review",
+      status: hasInstruction ? "needs_review" : "incompatible",
       delivers,
       needs,
       reason: hasInstruction
-        ? "已设置整包传递，并提供了接续说明；运行前仍建议确认下游如何理解整包内容。"
-        : "整包传递需要补充接续说明，否则下游 Agent 很难知道应该使用哪些产物。",
+        ? "原本无法自动判断整包内容如何消费；已提供 Edge 交接说明，可作为下游 Agent 指导提示词试运行。"
+        : "整包传递没有 Edge 交接说明，下游 Agent 不知道应该消费哪些产物，不能执行。",
     };
   }
   if (workflowDraftHasContractMatch(upstream, downstream, outputs, inputs)) {
     if (!hasExplicitReference && ambiguousTargetInputs.length) {
       return {
-        status: "needs_review",
+        status: hasInstruction ? "needs_review" : "incompatible",
         delivers,
         needs,
         reason: hasInstruction
-          ? `目标输入 ${ambiguousTargetInputs.join(", ")} 是泛化接收口；已提供 Edge 交接说明，但运行前仍需确认下游到底消费什么。`
-          : `目标输入 ${ambiguousTargetInputs.join(", ")} 是泛化接收口，不能只靠字段名自动判断。请补充 Edge 交接说明或改为手动映射。`,
+          ? `目标输入 ${ambiguousTargetInputs.join(", ")} 是泛化接收口；已提供 Edge 交接说明，可作为下游 Agent 指导提示词试运行。`
+          : `目标输入 ${ambiguousTargetInputs.join(", ")} 是泛化接收口，不能只靠字段名自动判断，也不能执行。请补充 Edge 交接说明或改为手动映射。`,
       };
     }
     return {
@@ -9313,20 +9327,20 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
     };
   }
   return {
-    status: "needs_review",
+    status: hasInstruction ? "needs_review" : "incompatible",
     delivers,
     needs,
     reason: hasInstruction
-      ? "节点契约没有自动匹配，但已提供接续说明；需要人工确认后作为 Edge Instruction 交给运行时。"
-      : "两边都有契约，但系统没有找到明确对应关系。请补充接续说明或改为手动绑定。",
+      ? "节点契约没有自动匹配；Edge 交接说明让这条原本不可自动连接的边变成可试运行连接。"
+      : "两边都有契约，但系统没有找到明确对应关系；没有 Edge 交接说明时不能执行。请补充交接说明或改为手动绑定。",
   };
 }
 
 function workflowDraftStatusLabel(status: WorkflowDraftEdgeStatus) {
-  if (status === "compatible") return "可连接";
-  if (status === "needs_review") return "需确认";
+  if (status === "compatible") return "可执行";
+  if (status === "needs_review") return "可试运行";
   if (status === "blocked") return "已阻断";
-  if (status === "incompatible") return "不可连接";
+  if (status === "incompatible") return "缺交接说明";
   return "定义变更";
 }
 
