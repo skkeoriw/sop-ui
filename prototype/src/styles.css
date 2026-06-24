@@ -7664,6 +7664,74 @@ pre {
   background: #f7fee7;
 }
 
+.workflow-draft-agent-plan summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-draft-apply-plan-data {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-draft-apply-plan-data .kv {
+  margin: 0;
+}
+
+.workflow-draft-apply-plan-data .kv code {
+  color: #374151;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workflow-draft-apply-commands {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-draft-apply-commands article {
+  margin: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.workflow-draft-apply-commands article code {
+  display: block;
+  width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-advanced-json {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.workflow-draft-advanced-json > summary {
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.workflow-draft-advanced-json pre {
+  margin: 0;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  background: #f9fafb;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
 .workflow-draft-agent-guide summary {
   display: flex;
   align-items: center;

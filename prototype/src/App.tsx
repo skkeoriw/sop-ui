@@ -181,6 +181,24 @@ type EdgeDraftSaveState = {
   draftId?: string;
   draftPath?: string;
   changeRequest?: Record<string, unknown>;
+  applyPlan?: EdgeDraftApplyPlan;
+};
+type EdgeDraftApplyPlan = {
+  draftId: string;
+  draftPath: string;
+  saveTarget: string;
+  saveOwner: string;
+  workflowId: string;
+  edgeId: string;
+  edgeFrom: string;
+  edgeTo: string;
+  runtimeSopFile: string;
+  projectTemplateSopYaml: string;
+  projectWorkflowId: string;
+  targetsText: string;
+  proposedText: string;
+  changeRequestText: string;
+  applyCommands: string[];
 };
 
 interface StageNodeData extends Record<string, unknown> {
@@ -8457,16 +8475,28 @@ function WorkflowCatalog({
         throw new Error(detail);
       }
       const changeRequest = raw.change_request && typeof raw.change_request === "object" ? raw.change_request as Record<string, unknown> : {};
+      const draftId = String(raw.draft_id || edge.id);
+      const draftPath = String(raw.draft_path || "raw/workflow-drafts/{draft_id}");
+      const applyPlan = edgeDraftBuildApplyPlan({
+        draftId,
+        draftPath,
+        workflowId,
+        edgeId: edge.id,
+        edgeFrom: edge.from,
+        edgeTo: edge.to,
+        changeRequest,
+      });
       setDraftEdgeSaveStates((current) => ({
         ...current,
         [edgeId]: {
           loading: false,
-          draftId: String(raw.draft_id || ""),
-          draftPath: String(raw.draft_path || ""),
+          draftId,
+          draftPath,
           changeRequest,
+          applyPlan,
         },
       }));
-      setDraftCanvasMessage(`已保存 Edge Definition Draft：${String(raw.draft_id || edgeId)}`);
+      setDraftCanvasMessage(`已保存 Edge Definition Draft：${draftId}`);
     } catch (error) {
       setDraftEdgeSaveStates((current) => ({
         ...current,
@@ -9116,6 +9146,61 @@ function WorkflowCatalog({
                           <small>save_target: {String(selectedDraftEdgeSaveState.changeRequest?.save_target || "agent-brain-plugins")}</small>
                         </div>
                       ) : null}
+                      {selectedDraftEdgeSaveState?.applyPlan ? (
+                        <details className="workflow-draft-runtime-brief workflow-draft-agent-plan">
+                          <summary>
+                            <span>Edge 落库（repo-first）执行方案</span>
+                            <button
+                              type="button"
+                              className="ghost-btn compact"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                const text = buildEdgeDraftApplyPlanText(selectedDraftEdgeSaveState.applyPlan);
+                                navigator.clipboard?.writeText(text);
+                                setDraftCanvasMessage("已复制 Edge 落库方案");
+                              }}
+                            >
+                              <Copy size={13} />复制方案
+                            </button>
+                          </summary>
+                          <div className="workflow-draft-apply-plan-data">
+                            <KeyValues data={{
+                              edge_id: selectedDraftEdgeSaveState.applyPlan.edgeId,
+                              workflow_id: selectedDraftEdgeSaveState.applyPlan.workflowId,
+                              draft_path: selectedDraftEdgeSaveState.applyPlan.draftPath,
+                              save_target: selectedDraftEdgeSaveState.applyPlan.saveTarget,
+                              save_owner: selectedDraftEdgeSaveState.applyPlan.saveOwner,
+                              runtime_sop_file: selectedDraftEdgeSaveState.applyPlan.runtimeSopFile,
+                              project_template_sop_yaml: selectedDraftEdgeSaveState.applyPlan.projectTemplateSopYaml,
+                              project_workflow_id: selectedDraftEdgeSaveState.applyPlan.projectWorkflowId,
+                              targets: selectedDraftEdgeSaveState.applyPlan.targetsText,
+                            }} />
+                            <div className="field-hint" style={{ marginBottom: 8 }}>
+                              说明：草稿仅落在 Runtime 的 `raw/workflow-drafts`；生产 `sop.yaml` 仍需本地 repo-first 更新。
+                            </div>
+                            <div className="workflow-draft-apply-commands">
+                              <div className="section-title"><span>落库命令（按顺序）</span><span>{selectedDraftEdgeSaveState.applyPlan.applyCommands.length}</span></div>
+                              {(selectedDraftEdgeSaveState.applyPlan.applyCommands.length ? selectedDraftEdgeSaveState.applyPlan.applyCommands : ["No commands"]).map((command, index) => (
+                                <article key={`${command}-${index}`}>
+                                  <code>{command}</code>
+                                </article>
+                              ))}
+                            </div>
+                            {selectedDraftEdgeSaveState.applyPlan.changeRequestText ? (
+                              <details className="workflow-draft-advanced-json">
+                                <summary>Change Request</summary>
+                                <pre>{selectedDraftEdgeSaveState.applyPlan.changeRequestText}</pre>
+                              </details>
+                            ) : null}
+                            {selectedDraftEdgeSaveState.applyPlan.proposedText ? (
+                              <details className="workflow-draft-advanced-json">
+                                <summary>Change Proposal</summary>
+                                <pre>{selectedDraftEdgeSaveState.applyPlan.proposedText}</pre>
+                              </details>
+                            ) : null}
+                          </div>
+                        </details>
+                      ) : null}
                       {selectedDraftAgentEvaluation.resolved_handoff && Object.keys(selectedDraftAgentEvaluation.resolved_handoff).length ? (
                         <details className="workflow-draft-runtime-brief">
                           <summary><span>Agent 解析出的交接结构</span><ChevronDown size={14} /></summary>
@@ -9537,6 +9622,102 @@ function edgeHandoffAgentStatusTone(status?: string) {
 function edgeHandoffAgentGuidePrompt(evaluation?: EdgeHandoffAgentEvaluation) {
   const guide = evaluation?.node_execution_guide;
   return typeof guide?.prompt === "string" ? guide.prompt : "";
+}
+
+function safeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function safeToString(value: unknown, fallback = "") {
+  if (value === undefined || value === null) return fallback;
+  return String(value).trim() || fallback;
+}
+
+function stringifyTargets(targets: Record<string, unknown>): string {
+  const entries = Object.entries(targets || {});
+  if (!entries.length) return "{}";
+  return entries.map(([key, value]) => `${key}: ${safeToString(value, "-")}`).join("\n");
+}
+
+function pickChangeRequestText(value: unknown): string {
+  if (!value) return "{}";
+  if (typeof value === "string") return value.trim() || "{}";
+  if (typeof value === "object") return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+function edgeDraftBuildApplyPlan(input: {
+  draftId: string;
+  draftPath: string;
+  workflowId: string;
+  edgeId: string;
+  edgeFrom: string;
+  edgeTo: string;
+  changeRequest: Record<string, unknown>;
+}): EdgeDraftApplyPlan {
+  const { draftId, draftPath, workflowId, edgeId, edgeFrom, edgeTo, changeRequest } = input;
+  const targets = safeRecord(changeRequest.targets);
+  const saveTarget = safeToString(changeRequest.save_target, "agent-brain-plugins");
+  const saveOwner = safeToString(changeRequest.save_owner, "agent-brain-plugins");
+  const runtimeSopFile = safeToString(targets.runtime_sop_file, "runtime/sop.yaml");
+  const projectTemplateSopYaml = safeToString(targets.project_template_sop_yaml, "agent-brain-plugins/youtube-wiki/templates/wiki-repo/sop.yaml");
+  const projectWorkflowId = safeToString(targets.workflow_id, workflowId);
+  const targetsText = stringifyTargets(targets);
+  const proposedText = pickChangeRequestText(changeRequest.proposed_text || changeRequest.proposedText || changeRequest.proposal || "");
+  const changeRequestText = pickChangeRequestText(changeRequest);
+  return {
+    draftId,
+    draftPath,
+    saveTarget,
+    saveOwner,
+    workflowId,
+    edgeId,
+    edgeFrom,
+    edgeTo,
+    runtimeSopFile,
+    projectTemplateSopYaml,
+    projectWorkflowId,
+    targetsText,
+    proposedText: proposedText || "{}",
+    changeRequestText,
+    applyCommands: [
+      "cd ~/agent-brain-plugins",
+      `git checkout -b chore/apply-edge-${draftId}`,
+      "# 按照 change_request.targets 里的目标文件确认 workflow id 与 edge 归属",
+      `# runtime_sop_file: ${runtimeSopFile}`,
+      `# project_template_sop_yaml: ${projectTemplateSopYaml}`,
+      `# project_workflow_id: ${projectWorkflowId}`,
+      `# edge: ${edgeFrom} -> ${edgeTo}`,
+      "# 1) 打开目标 sop.yaml",
+      `# 2) 根据 change_request 中建议的边信息更新 yaml（仅本地 repo）`,
+      "# 3) 校验 draft 变更与运行时行为一致，避免直接覆盖生产定义",
+      "git status --short",
+      `git add ${projectTemplateSopYaml}`,
+      `git commit -m "chore: apply workflow edge ${edgeFrom}-to-${edgeTo}-draft"`,
+      "# 如果是主分支流程，继续 git push 并提交 PR/合并" ,
+    ],
+  };
+}
+
+function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
+  if (!plan) return "";
+  return [
+    `Edge 落库计划 (${plan.edgeId})`,
+    `workflow: ${plan.workflowId}`,
+    `draft_id: ${plan.draftId}`,
+    `save_target: ${plan.saveTarget}`,
+    `save_owner: ${plan.saveOwner}`,
+    `runtime_sop_file: ${plan.runtimeSopFile}`,
+    `project_template_sop_yaml: ${plan.projectTemplateSopYaml}`,
+    `project_workflow_id: ${plan.projectWorkflowId}`,
+    `targets:\n${plan.targetsText}`,
+    "",
+    "commands:",
+    ...plan.applyCommands.map((command, index) => `${index + 1}. ${command}`),
+    "",
+    "change_request:",
+    plan.changeRequestText,
+  ].join("\n");
 }
 
 function edgeHandoffAgentCanSave(evaluation?: EdgeHandoffAgentEvaluation) {
