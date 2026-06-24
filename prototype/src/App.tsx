@@ -9031,10 +9031,11 @@ function workflowDraftNodeSkillId(node: NodeRegistryItem | undefined) {
 function workflowDraftNodeSkillSummary(node: NodeRegistryItem | undefined) {
   if (!node) return "节点定义缺失。";
   const readme = String(node.skillReadme || node.skill?.summary || "").trim();
+  const ignoredHeadings = new Set(["trigger", "triggers", "触发条件", "overview", "usage", "使用方式"]);
   const firstMeaningful = readme
     .split(/\r?\n/)
     .map((line) => line.replace(/^#+\s*/, "").trim())
-    .find((line) => line && !line.startsWith("---") && !line.includes(": ")) || "";
+    .find((line) => line && !line.startsWith("---") && !line.includes(": ") && !ignoredHeadings.has(line.toLowerCase())) || "";
   return firstMeaningful || node.description || node.purpose || contractSummary(node) || "该 Skill 暂未提供说明。";
 }
 
@@ -9059,8 +9060,10 @@ function workflowDraftEdgeAgentPrompt(
   downstream: NodeRegistryItem | undefined,
   mappings: WorkflowDraftRelayMapping[] = [],
 ) {
-  const selectedMappings = mappings.length
+  const selectedMappings = edge.relayMode === "selected_outputs" && mappings.length
     ? mappings.map((item) => `- ${edge.from}.${item.sourceOutput} -> ${edge.to}.${item.targetInput || "target_input"} via ${item.resolver || "auto"}`)
+    : edge.relayMode === "all_outputs"
+      ? [`- Pass the upstream relay package as a package. The Edge instruction must tell ${edge.to} what to consume.`]
     : ["- Runtime resolver should match upstream outputs to downstream inputs using the Edge contract."];
   const instruction = edge.instruction?.trim()
     || "No explicit Edge handoff instruction yet. Ask the user to clarify what the downstream agent should do with the upstream outputs before real execution.";
@@ -9174,11 +9177,11 @@ function workflowDraftHasExplicitInputReference(upstream: NodeRegistryItem, inpu
 
 function workflowDraftAmbiguousTargetInputs(inputs: Array<[string, unknown]>) {
   const genericNames = new Set(["message", "content", "payload", "index", "body", "text", "summary", "prompt", "input"]);
-  return inputs.filter(([name, spec]) => {
+  return [...new Set(inputs.filter(([name, spec]) => {
     const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
     const from = String(record.from || "");
     return genericNames.has(name.toLowerCase()) || from.startsWith("edge.");
-  }).map(([name]) => name);
+  }).map(([name]) => name))];
 }
 
 function workflowDraftNodeHasCapability(node: NodeRegistryItem | undefined, capability: string) {
