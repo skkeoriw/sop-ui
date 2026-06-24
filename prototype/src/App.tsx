@@ -9804,7 +9804,7 @@ function buildEdgeDraftApplyScript(input: {
     "  echo \"missing repo root: $REPO_DIR\"",
     "  exit 2",
     "fi",
-    "if ! cd \"$REPO_DIR\" && true; then",
+    "if ! cd \"$REPO_DIR\"; then",
     "  echo \"cannot enter repo root: $REPO_DIR\"",
     "  exit 2",
     "fi",
