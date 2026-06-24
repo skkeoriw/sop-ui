@@ -729,6 +729,7 @@ export interface NodeRunResult {
   sourceNodeRunId?: string;
   relaySelection?: Record<string, unknown>;
   edgeContract?: Record<string, unknown>;
+  nodeExecutionGuide?: Record<string, unknown>;
   workflowRevision?: Record<string, unknown>;
   relayContext?: Record<string, unknown>;
   relayContextBrief?: string;

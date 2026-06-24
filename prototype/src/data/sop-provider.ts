@@ -865,6 +865,7 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     sourceNodeRunId: raw.source_node_run_id ? String(raw.source_node_run_id) : raw.sourceNodeRunId ? String(raw.sourceNodeRunId) : undefined,
     relaySelection: (raw.relay_selection as Record<string, unknown>) || (raw.relaySelection as Record<string, unknown>) || {},
     edgeContract: (raw.edge_contract as Record<string, unknown>) || (raw.edgeContract as Record<string, unknown>) || {},
+    nodeExecutionGuide: (raw.node_execution_guide as Record<string, unknown>) || (raw.nodeExecutionGuide as Record<string, unknown>) || {},
     workflowRevision: (raw.workflow_revision as Record<string, unknown>) || (raw.workflowRevision as Record<string, unknown>) || {},
     relayContext: (raw.relay_context as Record<string, unknown>) || (raw.relayContext as Record<string, unknown>) || {},
     relayContextBrief: raw.relay_context_brief ? String(raw.relay_context_brief) : raw.relayContextBrief ? String(raw.relayContextBrief) : undefined,

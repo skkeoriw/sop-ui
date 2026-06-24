@@ -2783,6 +2783,12 @@ function NodeRunAgentRequestSummary({
 }) {
   const stepDetail = detailRecord(step?.detail);
   const agent = { ...detailRecord(result?.agentRequest), ...stepDetail };
+  const guide = {
+    ...detailRecord(result?.nodeExecutionGuide),
+    ...detailRecord((result?.inputResolution as Record<string, unknown> | undefined)?.node_execution_guide),
+    ...detailRecord(agent.node_execution_guide),
+  };
+  const guidePrompt = String(guide.prompt || "");
   const rendered = String(agent.rendered_request || "");
   const receipt = detailRecord(agent.receipt);
   const command = Array.isArray(agent.command) ? agent.command.map(String).join(" ") : String(agent.stage_command_preview || "");
@@ -2795,6 +2801,21 @@ function NodeRunAgentRequestSummary({
         <span><b>Request</b>{String(agent.request_path || "-")}</span>
         <span><b>Receipt</b>{String(agent.receipt_path || "-")}</span>
       </div>
+      {Object.keys(guide).length ? (
+        <section className="node-run-edge-guide">
+          <div className="section-title">
+            <span>Edge 执行指导</span>
+            <span>{String(guide.source || "unknown")}</span>
+          </div>
+          <div className="node-run-step-meta-grid">
+            <span><b>Edge</b>{String(guide.edge_id || "-")}</span>
+            <span><b>Draft</b>{String(guide.draft_id || "-")}</span>
+            <span><b>上游</b>{String(guide.source_node || "-")}</span>
+            <span><b>下游</b>{String(guide.target_node || "-")}</span>
+          </div>
+          {guidePrompt ? <pre className="node-run-edge-guide-preview">{guidePrompt}</pre> : <div className="node-run-empty">当前 Node Run 没有解析到已批准的 Edge Handoff Guide。</div>}
+        </section>
+      ) : null}
       {command ? (
         <details className="node-run-step-raw" open>
           <summary><span>执行命令</span><ChevronDown size={14} /></summary>

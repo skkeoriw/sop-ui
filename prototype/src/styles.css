@@ -11055,6 +11055,29 @@ pre {
   text-transform: uppercase;
 }
 
+.node-run-edge-guide {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 10px;
+  background: #eff6ff;
+}
+
+.node-run-edge-guide-preview {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  border-radius: 7px;
+  padding: 9px;
+  background: #ffffff;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .node-run-step-raw {
   min-width: 0;
   border-top: 1px solid var(--line-2);
