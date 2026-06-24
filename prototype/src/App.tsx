@@ -10110,7 +10110,7 @@ function buildEdgeDraftApplyScript(input: {
     "  read -r -p \"已核对草稿并手工更新 TARGET_FILE，确认继续提交? (y/N) \" confirm",
     "  case \"$confirm\" in",
     "    y|Y|yes|YES) ;;",
-    "    *) echo \"已取消。\"; exit 0 ;;",
+    "    *) echo \"已取消。\"; echo \"exit code: 1\"; exit 1 ;;",
     "  esac",
     "fi",
     "if [ ! -f \"$TARGET_FILE\" ]; then",
