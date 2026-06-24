@@ -196,6 +196,7 @@ type EdgeDraftApplyPlan = {
   projectTemplateSopYaml: string;
   projectWorkflowId: string;
   targetValidationIssues: string[];
+  targetValidationWarnings: string[];
   targetsText: string;
   proposedText: string;
   changeRequestText: string;
@@ -9185,6 +9186,14 @@ function WorkflowCatalog({
                                 ))}
                               </div>
                             ) : null}
+                            {selectedDraftEdgeSaveState.applyPlan.targetValidationWarnings.length ? (
+                              <div className="field-hint" style={{ color: "#7c2d12" }}>
+                                <strong>change_request.targets 预检提示（执行时校验）</strong>
+                                {selectedDraftEdgeSaveState.applyPlan.targetValidationWarnings.map((item) => (
+                                  <div key={item}>- {item}</div>
+                                ))}
+                              </div>
+                            ) : null}
                             <div className="field-hint" style={{ marginBottom: 8 }}>
                               说明：草稿仅落在 Runtime 的 `raw/workflow-drafts`；生产 `sop.yaml` 仍需本地 repo-first 更新。
                             </div>
@@ -9696,6 +9705,7 @@ function edgeDraftBuildApplyPlan(input: {
     { key: "workflow_id", fallback: workflowId },
   ];
   const targetValidationIssues: string[] = [];
+  const targetValidationWarnings: string[] = [];
   requiredTargetFields.forEach((item) => {
     if (!hasOwnObjectKey(targets, item.key) || !safeToString(targets[item.key]).trim()) {
       targetValidationIssues.push(`change_request.targets.${item.key} missing, expected: ${item.fallback}`);
@@ -9731,6 +9741,12 @@ function edgeDraftBuildApplyPlan(input: {
   if (!/\.ya?ml$/i.test(projectTemplateSopYaml)) {
     targetValidationIssues.push(`change_request.targets.project_template_sop_yaml should be yaml path: ${projectTemplateSopYaml}`);
   }
+  if (runtimeSopFile.includes("$")) {
+    targetValidationWarnings.push(`runtime_sop_file contains template placeholder: ${runtimeSopFile}`);
+  }
+  if (projectTemplateSopYaml.includes("$")) {
+    targetValidationWarnings.push(`project_template_sop_yaml contains template placeholder: ${projectTemplateSopYaml}`);
+  }
 
   const saveTarget = safeToString(changeRequest.save_target, "agent-brain-plugins");
   const saveOwner = safeToString(changeRequest.save_owner, "agent-brain-plugins");
@@ -9748,6 +9764,7 @@ function edgeDraftBuildApplyPlan(input: {
     projectTemplateSopYaml,
     projectWorkflowId,
     saveOwner,
+    targetValidationWarnings,
     targetValidationIssues,
   });
   return {
@@ -9763,6 +9780,7 @@ function edgeDraftBuildApplyPlan(input: {
     projectTemplateSopYaml,
     projectWorkflowId,
     targetValidationIssues,
+    targetValidationWarnings,
     targetsText,
     proposedText: proposedText || "{}",
     changeRequestText,
@@ -9803,6 +9821,7 @@ function buildEdgeDraftApplyScript(input: {
   projectWorkflowId: string;
   saveOwner: string;
   targetValidationIssues: string[];
+  targetValidationWarnings: string[];
 }) {
   const {
     draftId,
@@ -9816,11 +9835,13 @@ function buildEdgeDraftApplyScript(input: {
     projectWorkflowId,
     saveOwner,
     targetValidationIssues,
+    targetValidationWarnings,
   } = input;
   const quote = (value: string) => `"${value.replace(/"/g, "\\\"")}"`;
   const repoRoot = safeToString(saveOwner, "~/agent-brain-plugins").replace(/\/+/g, "/").replace(/\/$/, "");
   const branch = `chore/apply-edge-${edgeFrom}-to-${edgeTo}-${draftId}`;
   const issueBlock = JSON.stringify(targetValidationIssues);
+  const warningBlock = JSON.stringify(targetValidationWarnings);
   const normalizedDraftPath = draftPath.startsWith("/") || draftPath.startsWith("~")
     ? draftPath
     : `${repoRoot}/${draftPath}`;
@@ -9847,6 +9868,7 @@ function buildEdgeDraftApplyScript(input: {
     `DRAFT_PATH=${quote(normalizedDraftPath)}`,
     `TARGET_FILE=${quote(normalizedTemplatePath)}`,
     `TARGET_VALIDATION_ISSUES=${quote(issueBlock)}`,
+    `TARGET_VALIDATION_WARNINGS=${quote(warningBlock)}`,
     "",
     "if ! command -v git >/dev/null 2>&1; then",
     "  echo \"missing: git\"",
@@ -9872,14 +9894,6 @@ function buildEdgeDraftApplyScript(input: {
     "  echo \"target file is not inside repo: $TARGET_FILE\"",
     "  exit 2",
     "fi",
-    "if [ ! -f \"$DRAFT_PATH\" ]; then",
-    "  echo \"missing draft file: $DRAFT_PATH\"",
-    "  exit 2",
-    "fi",
-    "if [ ! -f \"$TARGET_FILE\" ]; then",
-    "  echo \"missing target file: $TARGET_FILE\"",
-    "  exit 2",
-    "fi",
     "if [ \"${TARGET_VALIDATION_ISSUES}\" != \"[]\" ]; then",
     "  echo \"change_request.targets check failed\"",
     "  echo \"Detected invalid target metadata:\"",
@@ -9895,6 +9909,31 @@ function buildEdgeDraftApplyScript(input: {
     "  echo \"Hint: update backend-generated change_request.targets to include runtime_sop_file / project_template_sop_yaml / workflow_id.\"",
     "  echo \"Hint: regenerate edge draft after backend returns complete change_request.targets.\"",
     "  exit 2",
+    "fi",
+    "if command -v python3 >/dev/null 2>&1; then",
+    "  TARGET_VALIDATION_WARNINGS=$(python3 - <<'PY')",
+    "import json",
+    "import os",
+    "warnings = json.loads(os.environ.get('TARGET_VALIDATION_WARNINGS', '[]'))",
+    "for label, path in [('draft file', os.path.expanduser(os.environ.get('DRAFT_PATH', ''))), ('target file', os.path.expanduser(os.environ.get('TARGET_FILE', '')))]:",
+    "    if path and not os.path.exists(path):",
+    "        warnings.append(f\"{label} not found: {path}\")",
+    "print(json.dumps(warnings))",
+    "PY)",
+    "  if [ -n \"$TARGET_VALIDATION_WARNINGS\" ] && [ \"$TARGET_VALIDATION_WARNINGS\" != \"[]\" ]; then",
+    "    echo \"change_request.targets local presence warnings (non-blocking):\"",
+    "    python3 - <<'PY'",
+    "import json",
+    "import os",
+    "warnings = json.loads(os.environ.get('TARGET_VALIDATION_WARNINGS', '[]'))",
+    "if not warnings:",
+    "  print('  - (none)')",
+    "for item in warnings:",
+    "  print(f'  - {item}')",
+    "PY",
+    "  fi",
+    "else",
+    "  echo \"python3 unavailable: skip local target existence check\"",
     "fi",
     "",
     "while [[ $# -gt 0 ]]; do",
@@ -10076,6 +10115,9 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
   const targetValidation = plan.targetValidationIssues.length
     ? `\nissues:\n${plan.targetValidationIssues.map((item) => `  - ${item}`).join("\n")}`
     : "";
+  const targetValidationWarnings = plan.targetValidationWarnings.length
+    ? `\nwarning:\n${plan.targetValidationWarnings.map((item) => `  - ${item}`).join("\n")}`
+    : "\n  (none)";
   return [
     `Edge 落库计划 (${plan.edgeId})`,
     `workflow: ${plan.workflowId}`,
@@ -10087,6 +10129,7 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
     `project_workflow_id: ${plan.projectWorkflowId}`,
     `targets:\n${plan.targetsText}`,
     `change_request.targets 校验${targetValidation || "\n  (none)"}`,
+    `change_request.targets 预检提示${targetValidationWarnings}`,
     "",
     "commands:",
     ...plan.applyCommands.map((command, index) => `${index + 1}. ${command}`),
