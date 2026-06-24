@@ -9313,6 +9313,12 @@ function workflowDraftNodeSkillDetail(node: NodeRegistryItem | undefined) {
   ].filter(Boolean).join("\n");
 }
 
+function workflowDraftCompactAgentText(value: string, limit = 1800) {
+  const text = String(value || "").trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit).trim()}\n...[truncated for Edge Handoff evaluation]`;
+}
+
 function workflowDraftNodeAgentPayload(node: NodeRegistryItem | undefined) {
   if (!node) return {};
   return {
@@ -9320,8 +9326,8 @@ function workflowDraftNodeAgentPayload(node: NodeRegistryItem | undefined) {
     title: node.title || node.nodeId,
     description: node.description || node.purpose || "",
     skill_id: workflowDraftNodeSkillId(node),
-    skill_summary: workflowDraftNodeSkillSummary(node),
-    skill_readme: workflowDraftNodeSkillDetail(node),
+    skill_summary: workflowDraftCompactAgentText(workflowDraftNodeSkillSummary(node), 1200),
+    skill_readme: workflowDraftCompactAgentText(workflowDraftNodeSkillDetail(node), 1800),
     inputs: node.inputs || {},
     optional_inputs: node.optionalInputs || {},
     outputs: node.outputs || {},
