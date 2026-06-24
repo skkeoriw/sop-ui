@@ -9903,6 +9903,10 @@ function buildEdgeDraftApplyFailureGuide() {
   return [...lines, ...quickLines];
 }
 
+function buildEdgeDraftApplyFailureGuideScriptBlock() {
+  return buildEdgeDraftApplyFailureGuide().map((line) => `# ${line}`);
+}
+
 function buildEdgeDraftApplyScript(input: {
   draftId: string;
   draftPath: string;
@@ -9967,6 +9971,11 @@ function buildEdgeDraftApplyScript(input: {
     `EXIT_CODE_PREFLIGHT=${exitPreflight}`,
     `EXIT_CODE_COMMIT=${exitCommit}`,
     `EXIT_CODE_PUSH=${exitPush}`,
+    "",
+    "# 运行时失败码说明（与 Edge 落库计划保持一致）：",
+    "# ------------------------------",
+    ...buildEdgeDraftApplyFailureGuideScriptBlock(),
+    "# ------------------------------",
     "",
     "# Edge 落库脚本（repo-first）",
     "# 说明：仅作为人工可执行脚本模板，请先确认变更再 push。",
