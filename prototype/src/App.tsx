@@ -9816,19 +9816,24 @@ function edgeDraftBuildApplyPlan(input: {
   };
 }
 
+type EdgeDraftApplyFailureCode = "success" | "cancel" | "preflight" | "commit" | "push";
+
 type EdgeDraftApplyFailureRecord = {
-  code: number | string;
+  key: EdgeDraftApplyFailureCode;
+  code: number;
   reason: string;
   quickFix: string[];
 };
 
 const EDGE_DRAFT_APPLY_FAILURE_RECORDS: EdgeDraftApplyFailureRecord[] = [
   {
+    key: "success",
     code: 0,
     reason: "成功（dry-run 或正式模式）",
     quickFix: [],
   },
   {
+    key: "cancel",
     code: 1,
     reason: "用户取消（未选择确认继续）",
     quickFix: [
@@ -9836,6 +9841,7 @@ const EDGE_DRAFT_APPLY_FAILURE_RECORDS: EdgeDraftApplyFailureRecord[] = [
     ],
   },
   {
+    key: "preflight",
     code: 2,
     reason: "前置阻塞（常见：target file 不存在 / 草稿与 target 不一致 / 目标文件无 diff / invalid workflow context）",
     quickFix: [
@@ -9844,6 +9850,7 @@ const EDGE_DRAFT_APPLY_FAILURE_RECORDS: EdgeDraftApplyFailureRecord[] = [
     ],
   },
   {
+    key: "commit",
     code: 3,
     reason: "Git 提交失败（查看上方 git commit 错误行）",
     quickFix: [
@@ -9853,6 +9860,7 @@ const EDGE_DRAFT_APPLY_FAILURE_RECORDS: EdgeDraftApplyFailureRecord[] = [
     ],
   },
   {
+    key: "push",
     code: 4,
     reason: "Git 推送失败（无远程权限、网络失败或认证问题）",
     quickFix: [
@@ -9862,6 +9870,18 @@ const EDGE_DRAFT_APPLY_FAILURE_RECORDS: EdgeDraftApplyFailureRecord[] = [
     ],
   },
 ];
+
+const EDGE_DRAFT_APPLY_EXIT_CODES = EDGE_DRAFT_APPLY_FAILURE_RECORDS.reduce<Record<EdgeDraftApplyFailureCode, number>>(
+  (acc, item) => {
+    acc[item.key] = item.code;
+    return acc;
+  },
+  {} as Record<EdgeDraftApplyFailureCode, number>,
+);
+
+function getEdgeDraftApplyExitCode(key: EdgeDraftApplyFailureCode): number {
+  return EDGE_DRAFT_APPLY_EXIT_CODES[key];
+}
 
 function buildEdgeDraftApplyFailureGuide() {
   const lines: string[] = ["失败排查字典（按消息定位）：", "快速修复动作："];
@@ -9914,6 +9934,7 @@ function buildEdgeDraftApplyScript(input: {
   const quote = (value: string) => `"${value.replace(/"/g, "\\\"")}"`;
   const repoRoot = safeToString(saveOwner, "~/agent-brain-plugins").replace(/\/+/g, "/").replace(/\/$/, "");
   const branch = `chore/apply-edge-${edgeFrom}-to-${edgeTo}-${draftId}`;
+  const exitSuccess = getEdgeDraftApplyExitCode("success");
   const issueBlock = JSON.stringify(targetValidationIssues);
   const warningBlock = JSON.stringify(targetValidationWarnings);
   const normalizedDraftPath = draftPath.startsWith("/") || draftPath.startsWith("~")
@@ -9923,12 +9944,21 @@ function buildEdgeDraftApplyScript(input: {
     projectTemplateSopYaml.startsWith("/") || projectTemplateSopYaml.startsWith("~")
       ? projectTemplateSopYaml
       : `${repoRoot}/${projectTemplateSopYaml.replace(/^\//, "")}`;
+  const exitCancel = getEdgeDraftApplyExitCode("cancel");
+  const exitPreflight = getEdgeDraftApplyExitCode("preflight");
+  const exitCommit = getEdgeDraftApplyExitCode("commit");
+  const exitPush = getEdgeDraftApplyExitCode("push");
   return [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     "",
     "DRY_RUN=0",
     "AUTO_CONFIRM=0",
+    `EXIT_CODE_SUCCESS=${exitSuccess}`,
+    `EXIT_CODE_CANCEL=${exitCancel}`,
+    `EXIT_CODE_PREFLIGHT=${exitPreflight}`,
+    `EXIT_CODE_COMMIT=${exitCommit}`,
+    `EXIT_CODE_PUSH=${exitPush}`,
     "",
     "# Edge 落库脚本（repo-first）",
     "# 说明：仅作为人工可执行脚本模板，请先确认变更再 push。",
@@ -9946,27 +9976,27 @@ function buildEdgeDraftApplyScript(input: {
     "",
     "if ! command -v git >/dev/null 2>&1; then",
     "  echo \"missing: git\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "",
     "REPO_DIR=\"${REPO_ROOT/#\\~/$HOME}\"",
     "if [ -z \"$REPO_DIR\" ]; then",
     "  echo \"missing repo root: $REPO_ROOT\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "if [ ! -d \"$REPO_DIR\" ]; then",
     "  echo \"missing repo root: $REPO_DIR\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "if ! cd \"$REPO_DIR\"; then",
     "  echo \"cannot enter repo root: $REPO_DIR\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "DRAFT_PATH=\"${DRAFT_PATH/#\\~/$HOME}\"",
     "TARGET_FILE=\"${TARGET_FILE/#\\~/$HOME}\"",
     "if [[ \"$TARGET_FILE\" != \"$REPO_DIR\"/* ]]; then",
     "  echo \"target file is not inside repo: $TARGET_FILE\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "if [ \"${TARGET_VALIDATION_ISSUES}\" != \"[]\" ]; then",
     "  echo \"change_request.targets check failed\"",
@@ -9982,7 +10012,7 @@ function buildEdgeDraftApplyScript(input: {
     "PY",
     "  echo \"Hint: update backend-generated change_request.targets to include runtime_sop_file / project_template_sop_yaml / workflow_id.\"",
     "  echo \"Hint: regenerate edge draft after backend returns complete change_request.targets.\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "if command -v python3 >/dev/null 2>&1; then",
     "  TARGET_VALIDATION_WARNINGS=$(python3 - <<'PY')",
@@ -10023,7 +10053,7 @@ function buildEdgeDraftApplyScript(input: {
     "    *)",
     "      echo \"unknown arg: $1\"",
     "      echo \"usage: $0 [--dry-run] [--auto-confirm]\"",
-    "      exit 2",
+    "      exit $EXIT_CODE_PREFLIGHT",
     "      ;;",
     "  esac",
     "done",
@@ -10031,7 +10061,7 @@ function buildEdgeDraftApplyScript(input: {
     "cd \"$REPO_DIR\"",
     "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then",
     "  echo \"invalid git repo: $REPO_DIR\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "# 1) 新建/切换工作分支",
     "if git rev-parse --verify \"$BRANCH\" >/dev/null 2>&1; then",
@@ -10177,32 +10207,32 @@ function buildEdgeDraftApplyScript(input: {
     "  read -r -p \"已核对草稿并手工更新 TARGET_FILE，确认继续提交? (y/N) \" confirm",
     "  case \"$confirm\" in",
     "    y|Y|yes|YES) ;;",
-    "    *) echo \"已取消。\"; echo \"exit code: 1\"; exit 1 ;;",
+    "    *) echo \"已取消。\"; echo \"exit code: $EXIT_CODE_CANCEL\"; exit $EXIT_CODE_CANCEL ;;",
     "  esac",
     "fi",
     "if [ ! -f \"$TARGET_FILE\" ]; then",
     "  echo \"target file not found, abort: $TARGET_FILE\"",
     "  echo \"Please ensure runtime draft has applied edge changes to the target file first.\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     "if git diff --quiet \"$TARGET_FILE\"; then",
     "  echo \"no changes detected in target file, abort.\"",
     "  echo \"Hint: edit target file according to draft, then rerun --dry-run/auto-confirm.\"",
-    "  exit 2",
+    "  exit $EXIT_CODE_PREFLIGHT",
     "fi",
     `git status --short ${quote(projectTemplateSopYaml)}`,
   `git add ${quote(projectTemplateSopYaml)}`,
   `if ! git commit -m ${quote(`chore: apply workflow edge ${edgeFrom}-to-${edgeTo}-${workflowId}`)}; then`,
   `  echo "commit failed, abort."`,
-  `  exit 3`,
+  `  exit $EXIT_CODE_COMMIT`,
   `fi`,
     "if [[ \"$DRY_RUN\" -eq 1 ]]; then",
     "  echo \"[DRY-RUN] git push -u origin HEAD skipped\"",
     "  echo \"dry-run done, no remote changes were pushed.\"",
   "else",
   "  if ! git push -u origin HEAD; then",
-  "    echo \"git push failed, abort.\"",
-  "    exit 4",
+    "    echo \"git push failed, abort.\"",
+    `    exit $EXIT_CODE_PUSH`,
   "  fi",
   "  echo \"done. pull-request: use commit from $BRANCH\"",
   "fi",
