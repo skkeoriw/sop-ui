@@ -8137,6 +8137,24 @@ function WorkflowCatalog({
   const selectedDraftAgentGuidePrompt = edgeHandoffAgentGuidePrompt(selectedDraftAgentEvaluation);
   const selectedDraftEdgeSaveState = selectedDraftEdge ? draftEdgeSaveStates[selectedDraftEdge.id] : undefined;
   const selectedDraftAgentCanSave = edgeHandoffAgentCanSave(selectedDraftAgentEvaluation);
+  useEffect(() => {
+    if (!selectedDraftEdge || !runtime || !activeInstanceId || !selectedDraftEdgeSourceNode || !selectedDraftEdgeTargetNode) return;
+    const current = draftAgentEvaluations[selectedDraftEdge.id];
+    if (current?.loading || current?.evaluation || current?.error) return;
+    if (selectedDraftEdgeEvaluation?.status === "stale" || selectedDraftEdgeEvaluation?.status === "blocked") return;
+    const timer = window.setTimeout(() => {
+      void runDraftEdgeAgentEvaluation(selectedDraftEdge.id);
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeInstanceId,
+    draftAgentEvaluations,
+    runtime,
+    selectedDraftEdge,
+    selectedDraftEdgeEvaluation?.status,
+    selectedDraftEdgeSourceNode,
+    selectedDraftEdgeTargetNode,
+  ]);
   const activeDraftHandoffNode = activeDraftHandoffNodeId ? nodesById.get(activeDraftHandoffNodeId) : undefined;
   const activeDraftTargets = activeDraftHandoffNode
     ? draftNodes.filter((target) => target.nodeId !== activeDraftHandoffNode.nodeId && !draft.edges.some((edge) => edge.from === activeDraftHandoffNode.nodeId && edge.to === target.nodeId))
@@ -9699,12 +9717,23 @@ function workflowDraftNodeSkillId(node: NodeRegistryItem | undefined) {
 function workflowDraftNodeSkillSummary(node: NodeRegistryItem | undefined) {
   if (!node) return "节点定义缺失。";
   const readme = String(node.skillReadme || node.skill?.summary || "").trim();
+  const frontmatterDescription = workflowDraftSkillFrontmatterDescription(readme);
+  if (frontmatterDescription) return frontmatterDescription;
   const ignoredHeadings = new Set(["trigger", "triggers", "触发条件", "overview", "usage", "使用方式"]);
   const firstMeaningful = readme
     .split(/\r?\n/)
     .map((line) => line.replace(/^#+\s*/, "").trim())
     .find((line) => line && !line.startsWith("---") && !line.includes(": ") && !ignoredHeadings.has(line.toLowerCase())) || "";
   return firstMeaningful || node.description || node.purpose || contractSummary(node) || "该 Skill 暂未提供说明。";
+}
+
+function workflowDraftSkillFrontmatterDescription(readme: string) {
+  const match = String(readme || "").match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return "";
+  const line = match[1].split(/\r?\n/).find((item) => item.trim().startsWith("description:"));
+  if (!line) return "";
+  const raw = line.replace(/^description:\s*/, "").trim();
+  return raw.replace(/^['"]|['"]$/g, "").trim();
 }
 
 function workflowDraftNodeSkillDetail(node: NodeRegistryItem | undefined) {
@@ -10697,14 +10726,20 @@ function workflowDraftNodeHasCapability(node: NodeRegistryItem | undefined, capa
   return false;
 }
 
+function workflowDraftNodeIsTelegramNotify(node: NodeRegistryItem | undefined) {
+  if (!node) return false;
+  const skillId = workflowDraftNodeSkillId(node);
+  return node.nodeId === "tg-notify" || skillId.includes("tg-notify");
+}
+
 function workflowDraftNodeEffectTitle(node: NodeRegistryItem | undefined) {
-  if (workflowDraftNodeHasCapability(node, "telegram")) return "Telegram 将发送什么";
+  if (workflowDraftNodeIsTelegramNotify(node)) return "Telegram 将发送什么";
   return "节点副作用";
 }
 
 function workflowDraftNodeEffectNote(node: NodeRegistryItem | undefined) {
   if (!node) return "";
-  if (workflowDraftNodeHasCapability(node, "telegram")) {
+  if (workflowDraftNodeIsTelegramNotify(node)) {
     return "当前 sop-tg-notify 的真实逻辑是：优先发送 pipeline-context.json 里的 tg_summary；没有 tg_summary 时发送 YouTube Wiki 默认 summary。它不会自动把上游 analysis_file/transcript_file 当消息正文，除非 Edge 明确映射到 message 或由上游/边生成 tg_summary。";
   }
   return "";
