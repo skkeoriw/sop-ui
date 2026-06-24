@@ -9108,10 +9108,12 @@ function workflowDraftNodeInputIntent(node: NodeRegistryItem | undefined) {
 }
 
 function workflowDraftInputContractRows(node: NodeRegistryItem | undefined) {
-  return [
-    ...Object.entries(node?.inputs || {}).map(([name, spec]) => ({ name, spec, required: true })),
-    ...Object.entries(node?.optionalInputs || {}).map(([name, spec]) => ({ name, spec, required: false })),
-  ];
+  const rows = Object.entries(node?.inputs || {}).map(([name, spec]) => ({ name, spec, required: true }));
+  const seen = new Set(rows.map((row) => row.name));
+  Object.entries(node?.optionalInputs || {}).forEach(([name, spec]) => {
+    if (!seen.has(name)) rows.push({ name, spec, required: false });
+  });
+  return rows;
 }
 
 function workflowDraftRelayModeLabel(mode: string | undefined) {
