@@ -6325,6 +6325,7 @@ export default function App() {
             runtimes={runtimes}
             runtime={runtime}
             selectedInstance={instance}
+            selectedInstanceId={instanceId}
             instances={instances}
             loading={workflowsQuery.isLoading}
             onOpenRuntime={(id) => selectRuntime(id)}
@@ -7961,6 +7962,7 @@ function WorkflowCatalog({
   runtimes,
   runtime,
   selectedInstance,
+  selectedInstanceId,
   instances,
   loading,
   onOpenRuntime,
@@ -7973,6 +7975,7 @@ function WorkflowCatalog({
   runtimes: Runtime[];
   runtime: Runtime | undefined;
   selectedInstance: Instance | undefined;
+  selectedInstanceId: string;
   instances: Instance[];
   loading: boolean;
   onOpenRuntime: (runtimeId: string) => void;
@@ -8005,7 +8008,8 @@ function WorkflowCatalog({
   const workflowTypes = useMemo(() => Array.from(new Set(workflows.flatMap((item) => [item.interpreter, item.workflowType]).filter(Boolean))).sort(), [workflows]);
   const selectedWorkflow = workflows.find((item) => item.workflowId === selectedWorkflowId) || workflows[0];
   const managementWorkflow = selectedWorkflow?.workflowId === "runtime-management";
-  const defaultInstance = selectedInstance || instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
+  const activeInstanceId = selectedInstanceId || selectedInstance?.instanceId || instances.find((item) => item.instanceId !== "runtime-management")?.instanceId || instances[0]?.instanceId || "";
+  const defaultInstance = selectedInstance || instances.find((item) => item.instanceId === activeInstanceId) || instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.nodeId, node])), [nodes]);
   const draftNodeIds = useMemo(() => new Set(draft.nodes.map((node) => node.nodeId)), [draft.nodes]);
   const draftNodes = draft.nodes.map((item) => nodesById.get(item.nodeId)).filter(Boolean) as NodeRegistryItem[];
@@ -8279,7 +8283,7 @@ function WorkflowCatalog({
     const upstream = nodesById.get(edge.from);
     const downstream = nodesById.get(edge.to);
     const workflowId = selectedWorkflow?.workflowId || "workflow";
-    const instanceId = defaultInstance?.instanceId || "";
+    const instanceId = activeInstanceId;
     const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtime));
     if (!runtime || !spiBase || !instanceId || !upstream || !downstream) {
       setDraftAgentEvaluations((current) => ({
@@ -8364,7 +8368,7 @@ function WorkflowCatalog({
     const agentState = draftAgentEvaluations[edgeId];
     const evaluation = agentState?.evaluation;
     const workflowId = selectedWorkflow?.workflowId || "workflow";
-    const instanceId = defaultInstance?.instanceId || "";
+    const instanceId = activeInstanceId;
     const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtime));
     if (!edge || !evaluation) {
       setDraftEdgeSaveStates((current) => ({
@@ -8728,7 +8732,7 @@ function WorkflowCatalog({
                     </button>
                     <label className="workflow-run-context-select">
                       <strong>Instance Workspace</strong>
-                      <select value={defaultInstance?.instanceId || ""} onChange={(event) => onSelectInstance(event.target.value)} disabled={!instances.length}>
+                      <select value={activeInstanceId} onChange={(event) => onSelectInstance(event.target.value)} disabled={!instances.length}>
                         {!instances.length && <option value="">No instance selected</option>}
                         {instances.map((item) => (
                           <option key={item.instanceId} value={item.instanceId}>{item.instanceId} · {item.repo || item.status || "workspace"}</option>
