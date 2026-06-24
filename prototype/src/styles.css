@@ -6833,6 +6833,56 @@ pre {
   font-weight: 700;
 }
 
+.workflow-draft-concept-strip {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.workflow-draft-concept-strip article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 8px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.workflow-draft-concept-strip article > span {
+  grid-row: span 2;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.workflow-draft-concept-strip strong,
+.workflow-draft-concept-strip small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-concept-strip strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-concept-strip small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .workflow-draft-toolbar {
   padding: 0 12px;
 }
@@ -7283,6 +7333,70 @@ pre {
   white-space: nowrap;
 }
 
+.workflow-draft-skill-pair {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workflow-draft-skill-pair article {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .8);
+}
+
+.workflow-draft-skill-pair span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.workflow-draft-skill-pair strong,
+.workflow-draft-skill-pair p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-skill-pair strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.workflow-draft-skill-pair p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workflow-draft-skill-pair details {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding-top: 6px;
+}
+
+.workflow-draft-skill-pair summary {
+  cursor: pointer;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-draft-skill-pair pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .workflow-draft-inspector .node-relay-output-row span {
   min-width: 0;
   overflow: hidden;
@@ -7357,6 +7471,40 @@ pre {
   line-height: 1.35;
 }
 
+.workflow-draft-effect-note {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.workflow-draft-effect-note span {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.workflow-draft-effect-note strong,
+.workflow-draft-effect-note p {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-effect-note strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-effect-note p {
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .workflow-draft-runtime-brief {
   min-width: 0;
   border: 1px solid var(--line);
@@ -7376,6 +7524,27 @@ pre {
   padding: 10px;
   border-top: 1px solid var(--line);
   white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workflow-draft-empty-guide {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.workflow-draft-empty-guide strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-empty-guide span {
+  color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
 }

@@ -8014,6 +8014,15 @@ function WorkflowCatalog({
     selectedDraftEdgeMode === "selected_outputs" ? selectedDraftEdgeSelectedOutputs : selectedDraftEdgeSourceOutputs.map((item) => item.name),
     selectedDraftEdge?.relayMappings || [],
   ), [selectedDraftEdge?.relayMappings, selectedDraftEdgeMode, selectedDraftEdgeSelectedOutputs, selectedDraftEdgeSourceOutputs, selectedDraftEdgeTargetNode]);
+  const selectedDraftEdgeAgentPrompt = selectedDraftEdge
+    ? workflowDraftEdgeAgentPrompt(
+      selectedDraftEdge,
+      selectedDraftEdgeEvaluation,
+      selectedDraftEdgeSourceNode,
+      selectedDraftEdgeTargetNode,
+      selectedDraftEdgeMappings,
+    )
+    : "";
   const activeDraftHandoffNode = activeDraftHandoffNodeId ? nodesById.get(activeDraftHandoffNodeId) : undefined;
   const activeDraftTargets = activeDraftHandoffNode
     ? draftNodes.filter((target) => target.nodeId !== activeDraftHandoffNode.nodeId && !draft.edges.some((edge) => edge.from === activeDraftHandoffNode.nodeId && edge.to === target.nodeId))
@@ -8482,6 +8491,23 @@ function WorkflowCatalog({
           <AlertTriangle size={16} />
           <span>发布 SOP 仍必须走 agent-brain-plugins repo-first 流程；当前页面只生成 Edge 设计草稿和连接评估。</span>
         </div>
+        <div className="workflow-draft-concept-strip">
+          <article>
+            <span>1</span>
+            <strong>选择或创建 Edge</strong>
+            <small>节点是固定 skill；Edge 才描述两个 agent 之间如何交接。</small>
+          </article>
+          <article>
+            <span>2</span>
+            <strong>填写 Edge 交接说明</strong>
+            <small>这里就是之前讨论的“粘合剂”：把业务意图写在边上，而不是写死到节点里。</small>
+          </article>
+          <article>
+            <span>3</span>
+            <strong>检查下游 Agent 提示词</strong>
+            <small>系统把上下游 skill 说明、产物契约和 Edge 交接说明合成运行时指导提示词。</small>
+          </article>
+        </div>
         <div className="workflow-draft-toolbar">
           <button type="button" className="btn primary" disabled={!WORKFLOW_DRAFT_NODE_PRIORITY.every((nodeId) => nodesById.has(nodeId))} onClick={seedYoutubeWikiDraft}>
             <Workflow size={15} />生成三节点 YouTube Wiki 草稿
@@ -8618,6 +8644,26 @@ function WorkflowCatalog({
                   <strong>{selectedDraftEdge.from} → {selectedDraftEdge.to}</strong>
                   <span className={`status-pill ${workflowDraftStatusTone(selectedDraftEdgeEvaluation.status)}`}>{workflowDraftStatusLabel(selectedDraftEdgeEvaluation.status)}</span>
                 </div>
+                <div className="workflow-draft-skill-pair">
+                  <article>
+                    <span>上游 Skill 说明</span>
+                    <strong>{workflowDraftNodeSkillId(selectedDraftEdgeSourceNode)}</strong>
+                    <p>{workflowDraftNodeSkillSummary(selectedDraftEdgeSourceNode)}</p>
+                    <details>
+                      <summary>查看 Skill 摘要</summary>
+                      <pre>{workflowDraftNodeSkillDetail(selectedDraftEdgeSourceNode)}</pre>
+                    </details>
+                  </article>
+                  <article>
+                    <span>下游 Skill 说明</span>
+                    <strong>{workflowDraftNodeSkillId(selectedDraftEdgeTargetNode)}</strong>
+                    <p>{workflowDraftNodeSkillSummary(selectedDraftEdgeTargetNode)}</p>
+                    <details>
+                      <summary>查看 Skill 摘要</summary>
+                      <pre>{workflowDraftNodeSkillDetail(selectedDraftEdgeTargetNode)}</pre>
+                    </details>
+                  </article>
+                </div>
                 <div className="workflow-draft-edge-report">
                   <article>
                     <span>上游交付</span>
@@ -8632,18 +8678,25 @@ function WorkflowCatalog({
                     <strong>{selectedDraftEdgeEvaluation.reason}</strong>
                   </article>
                 </div>
+                {workflowDraftNodeEffectNote(selectedDraftEdgeTargetNode) ? (
+                  <div className="workflow-draft-effect-note">
+                    <span>下游副作用</span>
+                    <strong>{workflowDraftNodeEffectTitle(selectedDraftEdgeTargetNode)}</strong>
+                    <p>{workflowDraftNodeEffectNote(selectedDraftEdgeTargetNode)}</p>
+                  </div>
+                ) : null}
                 <label className="workflow-draft-edge-instruction">
-                  <span>接续说明</span>
+                  <span>Edge 交接说明（原“粘合剂”）</span>
                   <textarea
                     value={selectedDraftEdge.instruction || ""}
                     onChange={(event) => updateDraftEdgeInstruction(selectedDraftEdge.id, event.target.value)}
                     placeholder="说明这条边要让下游 Agent 如何理解上游产物，例如：把 metadata_file 里的 title 作为 Telegram 消息正文。"
                   />
-                  <small>这段说明会成为 Edge Instruction，后续运行时会转成 Relay Context Brief 交给下游 Agent。</small>
+                  <small>这段说明属于 Edge，不属于上游或下游节点。运行时会和上下游 Skill 说明、输入输出契约一起合成给下游 Agent 的指导提示词。</small>
                 </label>
-                <details className="workflow-draft-runtime-brief">
-                  <summary><span>运行时接续简报</span><ChevronDown size={14} /></summary>
-                  <pre>{workflowDraftEdgeBrief(selectedDraftEdge, selectedDraftEdgeEvaluation)}</pre>
+                <details className="workflow-draft-runtime-brief" open>
+                  <summary><span>下游 Agent 指导提示词</span><ChevronDown size={14} /></summary>
+                  <pre>{selectedDraftEdgeAgentPrompt}</pre>
                 </details>
 
                 <div className="node-relay-mode-panel">
@@ -8843,6 +8896,12 @@ function WorkflowCatalog({
                   );
                 })}
                 {!draft.edges.length && <Empty text="选择节点查看输入/输出意图，连接节点后查看 handoff 评估" />}
+                {!selectedDraftNode && !selectedDraftEdge && (
+                  <div className="workflow-draft-empty-guide">
+                    <strong>Edge 语义层在哪里？</strong>
+                    <span>创建或点击一条 Edge 后，这里会显示：上下游 Skill 说明、Edge 交接说明、下游 Agent 指导提示词、接力方式和映射。</span>
+                  </div>
+                )}
               </div>
             )}
           </aside>
@@ -8964,6 +9023,77 @@ function workflowDraftEdgeBrief(edge: WorkflowDraftEdge, evaluation: WorkflowDra
   return parts.join("\n");
 }
 
+function workflowDraftNodeSkillId(node: NodeRegistryItem | undefined) {
+  if (!node) return "skill pending";
+  return String(node.skill?.id || node.skill?.skill || node.executor?.skill || node.skillScript || node.nodeId);
+}
+
+function workflowDraftNodeSkillSummary(node: NodeRegistryItem | undefined) {
+  if (!node) return "节点定义缺失。";
+  const readme = String(node.skillReadme || node.skill?.summary || "").trim();
+  const firstMeaningful = readme
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^#+\s*/, "").trim())
+    .find((line) => line && !line.startsWith("---") && !line.includes(": ")) || "";
+  return firstMeaningful || node.description || node.purpose || contractSummary(node) || "该 Skill 暂未提供说明。";
+}
+
+function workflowDraftNodeSkillDetail(node: NodeRegistryItem | undefined) {
+  if (!node) return "节点定义缺失。";
+  const readme = String(node.skillReadme || node.skill?.summary || "").trim();
+  if (readme) return readme;
+  return [
+    `${node.title || node.nodeId}`,
+    node.description || node.purpose || "",
+    `executor: ${String(node.executor?.type || node.case || "node")}`,
+    `skill: ${workflowDraftNodeSkillId(node)}`,
+    `inputs: ${workflowDraftNodeInputIntent(node)}`,
+    `outputs: ${workflowDraftNodeOutputIntent(node)}`,
+  ].filter(Boolean).join("\n");
+}
+
+function workflowDraftEdgeAgentPrompt(
+  edge: WorkflowDraftEdge,
+  evaluation: WorkflowDraftEvaluation | undefined,
+  upstream: NodeRegistryItem | undefined,
+  downstream: NodeRegistryItem | undefined,
+  mappings: WorkflowDraftRelayMapping[] = [],
+) {
+  const selectedMappings = mappings.length
+    ? mappings.map((item) => `- ${edge.from}.${item.sourceOutput} -> ${edge.to}.${item.targetInput || "target_input"} via ${item.resolver || "auto"}`)
+    : ["- Runtime resolver should match upstream outputs to downstream inputs using the Edge contract."];
+  const instruction = edge.instruction?.trim()
+    || "No explicit Edge handoff instruction yet. Ask the user to clarify what the downstream agent should do with the upstream outputs before real execution.";
+  return [
+    `Use skill ${workflowDraftNodeSkillId(downstream)} to execute this downstream Node Execution Request.`,
+    "",
+    "Workflow Edge Handoff",
+    `- Edge: ${edge.from} -> ${edge.to}`,
+    `- Relay mode: ${workflowDraftRelayModeLabel(edge.relayMode)}`,
+    `- Edge instruction: ${instruction}`,
+    "",
+    "Upstream agent / skill",
+    `- Node: ${edge.from}`,
+    `- Skill: ${workflowDraftNodeSkillId(upstream)}`,
+    `- Skill summary: ${workflowDraftNodeSkillSummary(upstream)}`,
+    `- Declared outputs: ${evaluation?.delivers || workflowDraftNodeOutputIntent(upstream)}`,
+    "",
+    "Downstream agent / skill",
+    `- Node: ${edge.to}`,
+    `- Skill: ${workflowDraftNodeSkillId(downstream)}`,
+    `- Skill summary: ${workflowDraftNodeSkillSummary(downstream)}`,
+    `- Required inputs: ${evaluation?.needs || workflowDraftNodeInputIntent(downstream)}`,
+    "",
+    "Relay bindings",
+    ...selectedMappings,
+    "",
+    "Execution rules",
+    "- Use only the resolved Edge inputs and materialized relay artifacts for this node run.",
+    "- If the selected upstream output cannot satisfy the downstream input contract, fail before executing the skill.",
+    "- Do not silently fall back to stale pipeline context or unrelated historical artifacts.",
+  ].join("\n");
+}
+
 function workflowDraftNodeOutputIntent(node: NodeRegistryItem | undefined) {
   if (!node) return "missing upstream intent";
   return workflowDraftHandoffSummary(workflowDraftContractEntries(node.outputs), `${node.nodeId} has no declared handoff output`);
@@ -9038,6 +9168,44 @@ function workflowDraftHasContractMatch(upstream: NodeRegistryItem, downstream: N
   });
 }
 
+function workflowDraftHasExplicitInputReference(upstream: NodeRegistryItem, inputs: Array<[string, unknown]>) {
+  return inputs.some(([, spec]) => nodeInputReferencesNode(spec, upstream.nodeId));
+}
+
+function workflowDraftAmbiguousTargetInputs(inputs: Array<[string, unknown]>) {
+  const genericNames = new Set(["message", "content", "payload", "index", "body", "text", "summary", "prompt", "input"]);
+  return inputs.filter(([name, spec]) => {
+    const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+    const from = String(record.from || "");
+    return genericNames.has(name.toLowerCase()) || from.startsWith("edge.");
+  }).map(([name]) => name);
+}
+
+function workflowDraftNodeHasCapability(node: NodeRegistryItem | undefined, capability: string) {
+  if (!node) return false;
+  const caps = node.capabilities || {};
+  const value = caps[capability];
+  if (value && typeof value === "object") return (value as Record<string, unknown>).enabled !== false;
+  if (value !== undefined) return Boolean(value);
+  if (capability === "telegram") {
+    return node.infra?.tgNotify === true || workflowDraftNodeSkillId(node).includes("tg-notify");
+  }
+  return false;
+}
+
+function workflowDraftNodeEffectTitle(node: NodeRegistryItem | undefined) {
+  if (workflowDraftNodeHasCapability(node, "telegram")) return "Telegram 将发送什么";
+  return "节点副作用";
+}
+
+function workflowDraftNodeEffectNote(node: NodeRegistryItem | undefined) {
+  if (!node) return "";
+  if (workflowDraftNodeHasCapability(node, "telegram")) {
+    return "当前 sop-tg-notify 的真实逻辑是：优先发送 pipeline-context.json 里的 tg_summary；没有 tg_summary 时发送 YouTube Wiki 默认 summary。它不会自动把上游 analysis_file/transcript_file 当消息正文，除非 Edge 明确映射到 message 或由上游/边生成 tg_summary。";
+  }
+  return "";
+}
+
 function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<string, NodeRegistryItem>): WorkflowDraftEvaluation {
   const upstream = nodesById.get(edge.from);
   const downstream = nodesById.get(edge.to);
@@ -9058,6 +9226,8 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
   const relayMode = typeof edge.relayMode === "string" && edge.relayMode ? edge.relayMode : "auto_by_target_inputs";
   const mappings = Array.isArray(edge.relayMappings) ? edge.relayMappings : [];
   const hasInstruction = String(edge.instruction || "").trim().length >= 6;
+  const hasExplicitReference = workflowDraftHasExplicitInputReference(upstream, inputs);
+  const ambiguousTargetInputs = workflowDraftAmbiguousTargetInputs(inputs);
   if (edge.fromSignature !== workflowDraftNodeSignature(upstream) || edge.toSignature !== workflowDraftNodeSignature(downstream)) {
     return {
       status: "stale",
@@ -9120,6 +9290,16 @@ function evaluateWorkflowDraftEdge(edge: WorkflowDraftEdge, nodesById: Map<strin
     };
   }
   if (workflowDraftHasContractMatch(upstream, downstream, outputs, inputs)) {
+    if (!hasExplicitReference && ambiguousTargetInputs.length) {
+      return {
+        status: "needs_review",
+        delivers,
+        needs,
+        reason: hasInstruction
+          ? `目标输入 ${ambiguousTargetInputs.join(", ")} 是泛化接收口；已提供 Edge 交接说明，但运行前仍需确认下游到底消费什么。`
+          : `目标输入 ${ambiguousTargetInputs.join(", ")} 是泛化接收口，不能只靠字段名自动判断。请补充 Edge 交接说明或改为手动映射。`,
+      };
+    }
     return {
       status: "compatible",
       delivers,
