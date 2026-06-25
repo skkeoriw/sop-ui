@@ -8274,6 +8274,118 @@ function WorkflowCatalog({
     setDraftBuilderOpen(true);
   }, [draft.edges, routeEdgeId]);
   useEffect(() => {
+    if (!builderOnly || !routeEdgeId || !activeRuntime || !activeInstanceId) return;
+    if (draft.edges.some((edge) => edge.id === routeEdgeId || draftEdgeSaveStates[edge.id]?.draftId === routeEdgeId)) return;
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(activeRuntime));
+    if (!spiBase) return;
+    let cancelled = false;
+    async function loadSavedEdgeDraft() {
+      try {
+        const response = await fetch(`${spiBase}/${encodeURIComponent(activeInstanceId)}/workflow-drafts`, {
+          headers: { Accept: "application/json" },
+        });
+        const raw = await response.json() as Record<string, unknown>;
+        if (!response.ok) throw new Error(safeToString(raw.detail || raw.message || `HTTP ${response.status}`));
+        const drafts = Array.isArray(raw.drafts) ? raw.drafts.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [];
+        const match = drafts.find((item) => {
+          const edge = safeRecord(item.edge);
+          return safeToString(item.draft_id || item.draftId) === routeEdgeId || safeToString(edge.id) === routeEdgeId;
+        });
+        if (!match || cancelled) return;
+        const rawEdge = safeRecord(match.edge);
+        const relay = safeRecord(rawEdge.relay);
+        const from = safeToString(rawEdge.from || rawEdge.source);
+        const to = safeToString(rawEdge.to || rawEdge.target);
+        if (!from || !to) return;
+        const fromNode = nodesById.get(from);
+        const toNode = nodesById.get(to);
+        const edgeId = safeToString(rawEdge.id, routeEdgeId);
+        const savedMappings = Array.isArray(relay.mappings)
+          ? relay.mappings
+            .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+            .map((item) => ({
+              sourceOutput: safeToString(item.source_output || item.sourceOutput),
+              targetInput: safeToString(item.target_input || item.targetInput || item.input),
+              resolver: safeToString(item.resolver),
+            }))
+            .filter((item) => item.sourceOutput)
+          : [];
+        const restoredEdge: WorkflowDraftEdge = {
+          id: edgeId,
+          from,
+          to,
+          sourceIntent: safeToString(rawEdge.sourceIntent || rawEdge.source_intent) || workflowDraftNodeOutputIntent(fromNode),
+          targetIntent: safeToString(rawEdge.targetIntent || rawEdge.target_intent) || workflowDraftNodeInputIntent(toNode),
+          instruction: safeToString(rawEdge.instruction || relay.handoff_instruction),
+          fromSignature: safeToString(rawEdge.fromSignature || rawEdge.from_signature) || workflowDraftNodeSignature(fromNode),
+          toSignature: safeToString(rawEdge.toSignature || rawEdge.to_signature) || workflowDraftNodeSignature(toNode),
+          relayMode: safeToString(rawEdge.relayMode || rawEdge.relay_mode || relay.mode) || "auto_by_target_inputs",
+          relayMappings: savedMappings,
+        };
+        setDraft((current) => {
+          if (current.edges.some((edge) => edge.id === edgeId)) return current;
+          const nextNodeIds = new Set(current.nodes.map((node) => node.nodeId));
+          const nextNodes = [...current.nodes];
+          for (const nodeId of [from, to]) {
+            if (!nextNodeIds.has(nodeId)) {
+              nextNodeIds.add(nodeId);
+              nextNodes.push({ nodeId, signature: workflowDraftNodeSignature(nodesById.get(nodeId)) });
+            }
+          }
+          return {
+            ...current,
+            name: current.name || "saved-workflow-draft",
+            nodes: nextNodes,
+            edges: [...current.edges, restoredEdge],
+          };
+        });
+        const draftId = safeToString(match.draft_id || match.draftId);
+        const draftPath = safeToString(match.draft_path || match.draftPath);
+        const changeRequest = safeRecord(match.change_request || match.changeRequest);
+        const runtimeRaw = safeRecord(match.runtime_sop_result || match.runtimeSopResult);
+        const applyRaw = safeRecord(match.apply_result || match.applyResult);
+        setDraftAgentEvaluations((current) => ({
+          ...current,
+          [edgeId]: {
+            ...(current[edgeId] || {}),
+            evaluation: safeRecord(match.evaluation) as EdgeHandoffAgentEvaluation,
+            raw: { evaluation: safeRecord(match.evaluation) },
+          },
+        }));
+        setDraftEdgeSaveStates((current) => ({
+          ...current,
+          [edgeId]: {
+            ...(current[edgeId] || {}),
+            loading: false,
+            draftId,
+            draftPath,
+            changeRequest,
+            applyPlan: edgeDraftBuildApplyPlan({
+              draftId,
+              draftPath,
+              workflowId: selectedWorkflow?.workflowId || "workflow",
+              edgeId,
+              edgeFrom: from,
+              edgeTo: to,
+              changeRequest,
+            }),
+            runtimeSopResult: runtimeRaw.status ? mapEdgeRuntimeSopResult(runtimeRaw) : undefined,
+            applyResult: applyRaw.status ? mapEdgeDraftApplyResult(applyRaw) : undefined,
+          },
+        }));
+        setSelectedDraftEdgeId(edgeId);
+        setSelectedDraftNodeId("");
+        setActiveDraftHandoffNodeId("");
+        setDraftBuilderOpen(true);
+        setDraftCanvasMessage(`已从 Runtime 草稿恢复 Edge：${edgeId}`);
+      } catch (error) {
+        if (!cancelled) setDraftCanvasMessage(`加载 Edge 草稿失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    void loadSavedEdgeDraft();
+    return () => { cancelled = true; };
+  }, [activeInstanceId, activeRuntime, builderOnly, draft.edges, draftEdgeSaveStates, nodesById, routeEdgeId, selectedWorkflow?.workflowId]);
+  useEffect(() => {
     try {
       window.localStorage.setItem(WORKFLOW_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft, positions: draftNodePositions }));
     } catch {
