@@ -34,6 +34,8 @@ import type {
   SopDataProvider,
   TriggerInput,
   WorkflowDefinition,
+  WorkflowDraftRequest,
+  WorkflowDraftResult,
   WorkflowEdgeRequest,
   WorkflowEdgeResult
 } from "./types";
@@ -41,6 +43,7 @@ import type {
 const runsByRuntime = new Map<string, RunMock[]>(mockRuntimes.map((runtime) => [runtime.id, baseRuns.map((run) => ({ ...run }))]));
 const draftByRuntime = new Map<string, NodeDraft[]>();
 const edgeDraftById = new Map<string, Record<string, unknown>>();
+const workflowDraftById = new Map<string, Record<string, unknown>>();
 const nodeRunCreatedAt = new Map<string, number>();
 const nodeRunRetryOf = new Map<string, string>();
 const nodeRunModeById = new Map<string, string>();
@@ -1194,6 +1197,66 @@ export const mockProvider: SopDataProvider = {
       repo_first_required: false,
       message: "mock runtime SOP snapshot prepared",
     };
+  },
+
+  async saveWorkflowDraft(_target, _instanceId, workflowId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    await delay();
+    const draft = (input.draft && typeof input.draft === "object" ? input.draft : input) as Record<string, unknown>;
+    const draftId = String(input.draft_id || input.draftId || `${String(draft.name || "workflow-draft")}-${Date.now()}`);
+    const edges = Array.isArray(draft.edges) ? draft.edges : [];
+    const result = {
+      status: "draft_saved",
+      draft_id: draftId,
+      draft_type: "workflow_draft",
+      draft_path: `raw/workflow-drafts/${draftId}`,
+      workflow_id: workflowId,
+      validation: { status: "passed", node_count: Array.isArray(draft.nodes) ? draft.nodes.length : 0, edge_count: edges.length, ready_edge_count: edges.length },
+      edge_count: edges.length,
+      ready_edge_count: edges.length,
+      runtime_sop_result: {},
+    };
+    workflowDraftById.set(draftId, { ...result, draft });
+    return result;
+  },
+
+  async generateWorkflowDraftRuntimeSop(_target, _instanceId, workflowId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    await delay();
+    const draftId = String(input.draft_id || input.draftId || "");
+    const draft = workflowDraftById.get(draftId);
+    if (!draft) return { status: "failed", reason: "workflow draft not found", errors: [{ code: "draft_not_found" }] };
+    const result = {
+      status: "runtime_sop_ready",
+      workflow_id: workflowId,
+      draft_id: draftId,
+      draft_path: draft.draft_path,
+      runtime_sop_path: `raw/workflow-drafts/${draftId}/runtime_sop.yaml`,
+      runtime_sop_source: "runtime/sop.yaml",
+      edge_count: draft.edge_count || 0,
+      change_count: draft.edge_count || 0,
+      active_runtime_sop_changed: false,
+      production_dag_changed: false,
+    };
+    workflowDraftById.set(draftId, { ...draft, runtime_sop_result: result });
+    return result;
+  },
+
+  async runWorkflowDraft(target, _instanceId, workflowId, draftId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    await delay();
+    const now = new Date();
+    const pipelineId = `mock-draft-${now.toISOString().replace(/[-:.]/g, "").slice(0, 15)}`;
+    const run: RunMock = {
+      pipelineId,
+      status: "running",
+      sourceUrl: String(input.url || (input.input as Record<string, unknown> | undefined)?.url || ""),
+      startedAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+      profile: "initial"
+    };
+    const items = runsByRuntime.get(target.id) || [];
+    runsByRuntime.set(target.id, [run, ...items]);
+    window.setTimeout(() => mutateRun(target.id, pipelineId, "running", "wiki-running"), 1200);
+    window.setTimeout(() => mutateRun(target.id, pipelineId, "done", "done"), 2800);
+    return { status: "triggered", pipeline_id: pipelineId, pipelineId, workflow_id: workflowId, workflow_draft_id: draftId };
   },
 
   async getRuntimeInheritance(): Promise<RuntimeInheritancePreview> {

@@ -894,6 +894,9 @@ export interface TriggerResult {
   message?: string;
 }
 
+export type WorkflowDraftRequest = Record<string, unknown>;
+export type WorkflowDraftResult = Record<string, unknown>;
+
 export interface SopDataProvider {
   mode: DataMode;
   listRuntimeHosts?(options?: ListQueryOptions): Promise<RuntimeList>;
@@ -933,6 +936,9 @@ export interface SopDataProvider {
   createWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   generateWorkflowEdgeRuntimeSop?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   applyWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
+  saveWorkflowDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowDraftRequest): Promise<WorkflowDraftResult>;
+  generateWorkflowDraftRuntimeSop?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowDraftRequest): Promise<WorkflowDraftResult>;
+  runWorkflowDraft?(runtime: Runtime, instanceId: string, workflowId: string, draftId: string, input: WorkflowDraftRequest): Promise<WorkflowDraftResult>;
   getRuntimeInheritance(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   getRuntimeManagementConfig(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   saveRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview>;

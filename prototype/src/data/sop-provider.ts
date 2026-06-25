@@ -38,6 +38,8 @@ import type {
   TriggerInput,
   TriggerResult,
   WorkflowDefinition,
+  WorkflowDraftRequest,
+  WorkflowDraftResult,
   WorkflowEdgeRequest,
   WorkflowEdgeResult
 } from "./types";
@@ -1623,6 +1625,29 @@ export const sopProvider: SopDataProvider = {
   async applyWorkflowEdgeDraft(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
     return postJsonResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/apply`,
+      input
+    );
+  },
+
+  async saveWorkflowDraft(runtime, instanceId, workflowId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts`,
+      input
+    );
+  },
+
+  async generateWorkflowDraftRuntimeSop(runtime, instanceId, workflowId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    const draftId = String(input.draft_id || input.draftId || "");
+    const suffix = draftId ? `/drafts/${encodeURIComponent(draftId)}/runtime-sop` : "/drafts/runtime-sop";
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}${suffix}`,
+      input
+    );
+  },
+
+  async runWorkflowDraft(runtime, instanceId, workflowId, draftId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts/${encodeURIComponent(draftId)}/runs`,
       input
     );
   },

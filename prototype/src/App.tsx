@@ -29,6 +29,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Send,
   Server,
@@ -195,6 +196,20 @@ type EdgeDraftSaveState = {
   applying?: boolean;
   applyError?: string;
   applyResult?: EdgeDraftApplyResult;
+};
+type WorkflowDraftRunState = {
+  saving?: boolean;
+  generating?: boolean;
+  running?: boolean;
+  error?: string;
+  runtimeSopError?: string;
+  runError?: string;
+  draftId?: string;
+  draftPath?: string;
+  saveResult?: Record<string, unknown>;
+  runtimeSopResult?: Record<string, unknown>;
+  runResult?: Record<string, unknown>;
+  pipelineId?: string;
 };
 type EdgeRuntimeSopResult = {
   status?: string;
@@ -6451,6 +6466,7 @@ export default function App() {
             onOpenDraftBuilder={() => navigateTo("workflowBuilder")}
             onOpenDraftEdgeDetail={(edgeId) => navigateTo("workflowBuilder", edgeId)}
             onOpenCatalog={() => navigateTo("workflows")}
+            onOpenRun={(workflowId, pipelineId, targetInstanceId) => openWorkflowDefinitionForInstance(workflowId, targetInstanceId || instance?.instanceId || instanceId, pipelineId)}
             onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "runtime" && isRuntimeDirectory ? (
@@ -8094,6 +8110,7 @@ function WorkflowCatalog({
   onOpenDraftBuilder,
   onOpenDraftEdgeDetail,
   onOpenCatalog,
+  onOpenRun,
   onOpenManagement,
 }: {
   provider: SopDataProvider;
@@ -8113,6 +8130,7 @@ function WorkflowCatalog({
   onOpenDraftBuilder: () => void;
   onOpenDraftEdgeDetail: (edgeId: string) => void;
   onOpenCatalog: () => void;
+  onOpenRun: (workflowId: string, pipelineId: string, targetInstanceId?: string) => void;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
@@ -8130,6 +8148,8 @@ function WorkflowCatalog({
   const [draftAgentEvaluations, setDraftAgentEvaluations] = useState<Record<string, EdgeHandoffAgentState>>({});
   const [draftEdgeSimulationStates, setDraftEdgeSimulationStates] = useState<Record<string, EdgeHandoffSimulationState>>({});
   const [draftEdgeSaveStates, setDraftEdgeSaveStates] = useState<Record<string, EdgeDraftSaveState>>({});
+  const [workflowDraftRunState, setWorkflowDraftRunState] = useState<WorkflowDraftRunState>({});
+  const [workflowDraftRunUrl, setWorkflowDraftRunUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   const [draftBuilderOpen, setDraftBuilderOpen] = useState(false);
   const filteredWorkflows = useMemo(() => {
     const query = workflowSearch.trim().toLowerCase();
@@ -8681,6 +8701,152 @@ function WorkflowCatalog({
       },
     };
   }
+  function buildWorkflowDraftPayload() {
+    const evaluations = Object.fromEntries(
+      draft.edges
+        .map((edge) => [edge.id, draftAgentEvaluations[edge.id]?.evaluation])
+        .filter(([, evaluation]) => Boolean(evaluation))
+    );
+    return {
+      draft: {
+        ...draft,
+        positions: draftNodePositions,
+      },
+      evaluations,
+      runtime_context: {
+        runtime_id: activeRuntime?.id || "",
+        instance_id: activeInstanceId || "",
+        workflow_id: selectedWorkflow?.workflowId || "",
+      },
+    };
+  }
+  async function saveWorkflowDraftDefinition() {
+    const workflowId = selectedWorkflow?.workflowId || "workflow";
+    const instanceId = activeInstanceId || selectedInstanceId || selectedInstance?.instanceId || (provider.mode === "mock" ? "mock-instance" : "");
+    const runtimeForDraft = activeRuntime || runtime || (provider.mode === "mock"
+      ? ({ id: "mock-runtime", name: "mock-runtime", endpoint: "", status: "active", localStatus: "ok" } as Runtime)
+      : undefined);
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForDraft));
+    if (!runtimeForDraft || !instanceId || (!provider.saveWorkflowDraft && !spiBase)) {
+      setWorkflowDraftRunState((current) => ({ ...current, error: "缺少 Runtime 或 Instance，不能保存 Workflow Draft。" }));
+      return;
+    }
+    if (!draft.nodes.length || !draft.edges.length) {
+      setWorkflowDraftRunState((current) => ({ ...current, error: "请先添加节点并创建至少一条 Edge。" }));
+      return;
+    }
+    setWorkflowDraftRunState((current) => ({ ...current, saving: true, error: "" }));
+    try {
+      const payload = buildWorkflowDraftPayload();
+      const raw = provider.saveWorkflowDraft
+        ? await provider.saveWorkflowDraft(runtimeForDraft, instanceId, workflowId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts`, payload);
+      const draftId = String(raw.draft_id || raw.draftId || "");
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        saving: false,
+        error: "",
+        draftId,
+        draftPath: String(raw.draft_path || raw.draftPath || ""),
+        saveResult: raw,
+        runtimeSopResult: safeRecord(raw.runtime_sop_result),
+        runtimeSopError: "",
+      }));
+      setDraftCanvasMessage(`Workflow Draft 已保存：${draftId || draft.name}`);
+    } catch (error) {
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        saving: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+  async function generateWorkflowDraftRuntimeSop() {
+    const workflowId = selectedWorkflow?.workflowId || "workflow";
+    const instanceId = activeInstanceId || selectedInstanceId || selectedInstance?.instanceId || (provider.mode === "mock" ? "mock-instance" : "");
+    const runtimeForDraft = activeRuntime || runtime || (provider.mode === "mock"
+      ? ({ id: "mock-runtime", name: "mock-runtime", endpoint: "", status: "active", localStatus: "ok" } as Runtime)
+      : undefined);
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForDraft));
+    const draftId = workflowDraftRunState.draftId || "";
+    if (!runtimeForDraft || !instanceId || (!provider.generateWorkflowDraftRuntimeSop && !spiBase)) {
+      setWorkflowDraftRunState((current) => ({ ...current, runtimeSopError: "缺少 Runtime 或 Instance，不能生成 Runtime SOP。" }));
+      return;
+    }
+    if (!draftId) {
+      setWorkflowDraftRunState((current) => ({ ...current, runtimeSopError: "请先保存 Workflow Draft。" }));
+      return;
+    }
+    setWorkflowDraftRunState((current) => ({ ...current, generating: true, runtimeSopError: "" }));
+    try {
+      const payload = { draft_id: draftId, draft_path: workflowDraftRunState.draftPath || "" };
+      const raw = provider.generateWorkflowDraftRuntimeSop
+        ? await provider.generateWorkflowDraftRuntimeSop(runtimeForDraft, instanceId, workflowId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts/${encodeURIComponent(draftId)}/runtime-sop`, payload);
+      if (String(raw.status || "") === "failed") throw new Error(String(raw.reason || raw.message || "Runtime SOP generation failed"));
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        generating: false,
+        runtimeSopError: "",
+        runtimeSopResult: raw,
+      }));
+      setDraftCanvasMessage(`Runtime SOP 已生成：${String(raw.runtime_sop_path || raw.runtimeSopPath || "")}`);
+    } catch (error) {
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        generating: false,
+        runtimeSopError: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+  async function runWorkflowDraftDefinition() {
+    const workflowId = selectedWorkflow?.workflowId || "workflow";
+    const instanceId = activeInstanceId || selectedInstanceId || selectedInstance?.instanceId || (provider.mode === "mock" ? "mock-instance" : "");
+    const runtimeForDraft = activeRuntime || runtime || (provider.mode === "mock"
+      ? ({ id: "mock-runtime", name: "mock-runtime", endpoint: "", status: "active", localStatus: "ok" } as Runtime)
+      : undefined);
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForDraft));
+    const draftId = workflowDraftRunState.draftId || "";
+    if (!runtimeForDraft || !instanceId || (!provider.runWorkflowDraft && !spiBase)) {
+      setWorkflowDraftRunState((current) => ({ ...current, runError: "缺少 Runtime 或 Instance，不能运行 Workflow Draft。" }));
+      return;
+    }
+    if (!draftId) {
+      setWorkflowDraftRunState((current) => ({ ...current, runError: "请先保存 Workflow Draft。" }));
+      return;
+    }
+    const runtimeSopPath = String(workflowDraftRunState.runtimeSopResult?.runtime_sop_path || workflowDraftRunState.runtimeSopResult?.runtimeSopPath || "");
+    setWorkflowDraftRunState((current) => ({ ...current, running: true, runError: "" }));
+    try {
+      const payload = {
+        draft_id: draftId,
+        draft_path: workflowDraftRunState.draftPath || "",
+        runtime_sop_path: runtimeSopPath,
+        repo: defaultInstance?.repo || selectedInstance?.repo || "",
+        url: workflowDraftRunUrl,
+        input: { url: workflowDraftRunUrl },
+      };
+      const raw = provider.runWorkflowDraft
+        ? await provider.runWorkflowDraft(runtimeForDraft, instanceId, workflowId, draftId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts/${encodeURIComponent(draftId)}/runs`, payload);
+      const pipelineId = String(raw.pipeline_id || raw.pipelineId || "");
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        running: false,
+        runError: "",
+        runResult: raw,
+        pipelineId,
+      }));
+      setDraftCanvasMessage(pipelineId ? `Workflow Draft 已启动：${pipelineId}` : "Workflow Draft 已启动");
+      if (pipelineId) onOpenRun(workflowId, pipelineId, instanceId);
+    } catch (error) {
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        running: false,
+        runError: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
   async function runDraftEdgeAgentEvaluation(edgeId: string) {
     const built = buildDraftEdgePayload(edgeId, "design");
     const runtimeForEdge = built?.runtime || activeRuntime;
@@ -9113,6 +9279,7 @@ function WorkflowCatalog({
     setDraftNodePositions({});
     setDraftAgentEvaluations({});
     setDraftEdgeSaveStates({});
+    setWorkflowDraftRunState({});
   }
   function seedYoutubeWikiDraft() {
     const seedNodes = WORKFLOW_DRAFT_NODE_PRIORITY
@@ -9156,6 +9323,7 @@ function WorkflowCatalog({
     setActiveDraftHandoffNodeId("");
     setDraftAgentEvaluations({});
     setDraftEdgeSaveStates({});
+    setWorkflowDraftRunState({});
     if (workflows.some((workflow) => workflow.workflowId === "youtube-research-wiki")) {
       setSelectedWorkflowId("youtube-research-wiki");
     }
@@ -9166,6 +9334,10 @@ function WorkflowCatalog({
   const draftEdgeDisabledReason = workflowDraftEdgeDisabledReason(draft, draftFromNode, draftToNode, nodesById);
   const canAddEdge = !draftEdgeDisabledReason;
   const draftBuilderVisible = builderOnly || draftBuilderOpen;
+  const workflowDraftAiReadyCount = draft.edges.filter((edge) => edgeHandoffAgentCanSave(draftAgentEvaluations[edge.id]?.evaluation)).length;
+  const workflowDraftRuntimeSopPath = String(workflowDraftRunState.runtimeSopResult?.runtime_sop_path || workflowDraftRunState.runtimeSopResult?.runtimeSopPath || "");
+  const workflowDraftSaveStatus = String(safeRecord(workflowDraftRunState.saveResult?.validation).status || "-");
+  const workflowDraftCanRun = Boolean(workflowDraftRunState.draftId && workflowDraftRuntimeSopPath && !workflowDraftRunState.running);
   return (
     <section className={`workflow-catalog-page ${builderOnly ? "workflow-builder-page" : ""}`}>
       {builderOnly ? (
@@ -9817,6 +9989,72 @@ function WorkflowCatalog({
             <RefreshCw size={15} />重置本地草稿
           </button>
         </div>
+        <section className="workflow-draft-run-panel">
+          <div className="workflow-draft-run-head">
+            <div>
+              <strong>Workflow Draft 运行闭环</strong>
+              <span>先保存草稿，再生成当前 Runtime 可加载的 SOP 快照，最后基于快照启动真实 Workflow Run。</span>
+            </div>
+            <div className="workflow-draft-run-actions">
+              <button type="button" className="ghost-btn compact" disabled={workflowDraftRunState.saving || !draft.edges.length} onClick={saveWorkflowDraftDefinition}>
+                {workflowDraftRunState.saving ? <Loader2 size={14} /> : <Save size={14} />}
+                保存草稿
+              </button>
+              <button type="button" className="btn compact" disabled={!workflowDraftRunState.draftId || workflowDraftRunState.generating} onClick={generateWorkflowDraftRuntimeSop}>
+                {workflowDraftRunState.generating ? <Loader2 size={14} /> : <Workflow size={14} />}
+                生成 Runtime SOP
+              </button>
+              <button type="button" className="btn primary compact" disabled={!workflowDraftCanRun} title={!workflowDraftRuntimeSopPath ? "请先生成 Runtime SOP 快照" : "基于草稿快照启动真实 Workflow Run"} onClick={runWorkflowDraftDefinition}>
+                {workflowDraftRunState.running ? <Loader2 size={14} /> : <Play size={14} />}
+                运行 Draft Workflow
+              </button>
+            </div>
+          </div>
+          <div className="workflow-draft-run-grid">
+            <article className={workflowDraftRunState.draftId ? "ready" : ""}>
+              <span>1. Draft</span>
+              <strong>{workflowDraftRunState.draftId ? "已保存" : "未保存"}</strong>
+              <small>{workflowDraftRunState.draftId || `${draft.nodes.length} nodes · ${draft.edges.length} edges · AI ready ${workflowDraftAiReadyCount}/${draft.edges.length}`}</small>
+            </article>
+            <article className={workflowDraftRuntimeSopPath ? "ready" : ""}>
+              <span>2. Runtime SOP</span>
+              <strong>{workflowDraftRuntimeSopPath ? "已生成" : "未生成"}</strong>
+              <small>{workflowDraftRuntimeSopPath || `validation ${workflowDraftSaveStatus}`}</small>
+            </article>
+            <article className={workflowDraftRunState.pipelineId ? "ready" : ""}>
+              <span>3. Workflow Run</span>
+              <strong>{workflowDraftRunState.pipelineId ? shortId(workflowDraftRunState.pipelineId) : "未启动"}</strong>
+              <small>{workflowDraftRunState.pipelineId ? "已产生真实 pipeline_id" : "运行后会打开 Workflow Run 详情"}</small>
+            </article>
+          </div>
+          <div className="workflow-draft-run-input-row">
+            <label>
+              <span>运行输入 URL</span>
+              <input value={workflowDraftRunUrl} onChange={(event) => setWorkflowDraftRunUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." />
+            </label>
+            {workflowDraftRunState.pipelineId ? (
+              <button type="button" className="ghost-btn compact" onClick={() => onOpenRun(selectedWorkflow?.workflowId || "workflow", workflowDraftRunState.pipelineId || "", activeInstanceId)}>
+                <PanelRightOpen size={14} />打开运行详情
+              </button>
+            ) : null}
+          </div>
+          {workflowDraftRunState.error || workflowDraftRunState.runtimeSopError || workflowDraftRunState.runError ? (
+            <div className="workflow-draft-overview-error">
+              <AlertTriangle size={14} />
+              <span>{workflowDraftRunState.error || workflowDraftRunState.runtimeSopError || workflowDraftRunState.runError}</span>
+            </div>
+          ) : null}
+          <details className="workflow-draft-runtime-brief">
+            <summary><span>运行闭环原始状态</span><ChevronDown size={14} /></summary>
+            <KeyValues data={{
+              draft_id: workflowDraftRunState.draftId || "-",
+              draft_path: workflowDraftRunState.draftPath || "-",
+              runtime_sop_path: workflowDraftRuntimeSopPath || "-",
+              pipeline_id: workflowDraftRunState.pipelineId || "-",
+              validation: workflowDraftSaveStatus,
+            }} />
+          </details>
+        </section>
         <div className="workflow-draft-layout">
           <section className="workflow-draft-library">
             <div className="workflow-draft-form">
