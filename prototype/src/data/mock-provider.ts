@@ -1160,6 +1160,42 @@ export const mockProvider: SopDataProvider = {
     };
   },
 
+  async generateWorkflowEdgeRuntimeSop(_target, _instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    await delay();
+    const draftId = String(input.draft_id || input.draftId || "");
+    const draft = edgeDraftById.get(draftId);
+    if (!draft) {
+      return {
+        status: "failed",
+        reason: "workflow edge draft not found",
+        errors: [{ code: "draft_not_found", message: "Mock draft is missing. Save draft first." }],
+      };
+    }
+    const edge = (draft.edge || {}) as Record<string, unknown>;
+    return {
+      status: "runtime_sop_ready",
+      workflow_id: workflowId,
+      draft_id: draftId,
+      draft_path: input.draft_path || draft.draft_path,
+      runtime_sop_path: `raw/workflow-drafts/${draftId}/runtime_sop.yaml`,
+      runtime_sop_source: "runtime/sop.yaml",
+      targets: {
+        runtime_sop_file: "runtime/sop.yaml",
+        workflow_id: workflowId,
+      },
+      edge,
+      before: [],
+      after: [edge],
+      hash_before: "mock-runtime-before",
+      hash_after: "mock-runtime-after",
+      change_count: 1,
+      active_runtime_sop_changed: false,
+      production_dag_changed: false,
+      repo_first_required: false,
+      message: "mock runtime SOP snapshot prepared",
+    };
+  },
+
   async getRuntimeInheritance(): Promise<RuntimeInheritancePreview> {
     await delay();
     return mockRuntimeInheritancePreview;

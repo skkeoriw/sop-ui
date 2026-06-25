@@ -189,9 +189,32 @@ type EdgeDraftSaveState = {
   draftPath?: string;
   changeRequest?: Record<string, unknown>;
   applyPlan?: EdgeDraftApplyPlan;
+  runtimeSopGenerating?: boolean;
+  runtimeSopError?: string;
+  runtimeSopResult?: EdgeRuntimeSopResult;
   applying?: boolean;
   applyError?: string;
   applyResult?: EdgeDraftApplyResult;
+};
+type EdgeRuntimeSopResult = {
+  status?: string;
+  workflowId?: string;
+  draftId?: string;
+  draftPath?: string;
+  runtimeSopPath?: string;
+  runtimeSopSource?: string;
+  edge?: Record<string, unknown>;
+  targets?: Record<string, unknown>;
+  before?: unknown[];
+  after?: unknown[];
+  hashBefore?: string;
+  hashAfter?: string;
+  changeCount?: number;
+  activeRuntimeSopChanged?: boolean;
+  productionDagChanged?: boolean;
+  repoFirstRequired?: boolean;
+  errors?: Array<Record<string, unknown>>;
+  reason?: string;
 };
 type EdgeDraftApplyResult = {
   status?: string;
@@ -8592,9 +8615,12 @@ function WorkflowCatalog({
       return;
     }
     const evaluation = draftAgentEvaluations[edgeId]?.evaluation || {};
+    const runtimeSopPath = draftEdgeSaveStates[edgeId]?.runtimeSopResult?.runtimeSopPath || "";
     const payload = {
       ...built.payload,
       input_source: "generated-fixture",
+      simulation_target: runtimeSopPath ? "runtime-sop" : "edge-draft",
+      runtime_sop_path: runtimeSopPath,
       evaluation,
     };
     setDraftEdgeSimulationStates((current) => ({
@@ -8710,6 +8736,63 @@ function WorkflowCatalog({
       }));
     }
   }
+  async function generateSavedDraftRuntimeSop(edgeId: string) {
+    const edge = draft.edges.find((item) => item.id === edgeId);
+    const saved = draftEdgeSaveStates[edgeId];
+    const workflowId = selectedWorkflow?.workflowId || "workflow";
+    const instanceId = activeInstanceId;
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtime));
+    if (!edge || !saved?.draftId) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { ...(current[edgeId] || {}), runtimeSopError: "请先保存草稿，再生成 Runtime SOP。" },
+      }));
+      return;
+    }
+    if (!runtime || !spiBase || !instanceId) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { ...(current[edgeId] || {}), runtimeSopError: "缺少 Runtime 或 Instance，不能生成 Runtime SOP。" },
+      }));
+      return;
+    }
+    setDraftEdgeSaveStates((current) => ({
+      ...current,
+      [edgeId]: { ...(current[edgeId] || {}), runtimeSopGenerating: true, runtimeSopError: "" },
+    }));
+    try {
+      const payload = {
+        draft_id: saved.draftId,
+        draft_path: saved.draftPath || "",
+      };
+      const raw = provider.generateWorkflowEdgeRuntimeSop
+        ? await provider.generateWorkflowEdgeRuntimeSop(runtime, instanceId, workflowId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/runtime-sop`, payload);
+      const result = mapEdgeRuntimeSopResult(raw);
+      if (result.status === "failed") throw new Error(edgeRuntimeSopErrorText(result, raw, "", 422));
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: {
+          ...(current[edgeId] || {}),
+          runtimeSopGenerating: false,
+          runtimeSopError: "",
+          runtimeSopResult: result,
+          applyResult: undefined,
+          applyError: "",
+        },
+      }));
+      setDraftCanvasMessage(`已生成 Runtime SOP：${edge.from} -> ${edge.to}`);
+    } catch (error) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: {
+          ...(current[edgeId] || {}),
+          runtimeSopGenerating: false,
+          runtimeSopError: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    }
+  }
   async function applySavedDraftEdge(edgeId: string) {
     const edge = draft.edges.find((item) => item.id === edgeId);
     const saved = draftEdgeSaveStates[edgeId];
@@ -8720,6 +8803,13 @@ function WorkflowCatalog({
       setDraftEdgeSaveStates((current) => ({
         ...current,
         [edgeId]: { ...(current[edgeId] || {}), applyError: "请先保存草稿，再生成正式 SOP 变更方案。" },
+      }));
+      return;
+    }
+    if (!saved.runtimeSopResult) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { ...(current[edgeId] || {}), applyError: "请先生成 Runtime SOP，并确认当前 Runtime 可加载这份草案。" },
       }));
       return;
     }
@@ -9238,7 +9328,17 @@ function WorkflowCatalog({
                     <button
                       type="button"
                       className="btn primary compact"
-                      disabled={!selectedDraftEdgeSaveState?.draftId || selectedDraftEdgeSaveState?.applying}
+                      disabled={!selectedDraftEdgeSaveState?.draftId || selectedDraftEdgeSaveState?.runtimeSopGenerating}
+                      onClick={() => generateSavedDraftRuntimeSop(selectedDraftEdge.id)}
+                    >
+                      {selectedDraftEdgeSaveState?.runtimeSopGenerating ? <Loader2 size={13} /> : <Workflow size={13} />}
+                      生成 Runtime SOP
+                    </button>
+                    <button
+                      type="button"
+                      className="btn primary compact"
+                      disabled={!selectedDraftEdgeSaveState?.draftId || !selectedDraftEdgeSaveState?.runtimeSopResult || selectedDraftEdgeSaveState?.applying}
+                      title={!selectedDraftEdgeSaveState?.runtimeSopResult ? "请先生成 Runtime SOP" : "生成正式 SOP 变更方案"}
                       onClick={() => applySavedDraftEdge(selectedDraftEdge.id)}
                     >
                       {selectedDraftEdgeSaveState?.applying ? <Loader2 size={13} /> : <GitBranch size={13} />}
@@ -9252,10 +9352,10 @@ function WorkflowCatalog({
                     <strong>{selectedDraftEdgeSaveState?.draftId ? "已保存" : "未保存"}</strong>
                     <small>保存当前 Edge 设计，不改正式 SOP。</small>
                   </article>
-                  <article>
+                  <article className={selectedDraftEdgeSaveState?.runtimeSopResult ? "ready" : ""}>
                     <span>2. Runtime SOP</span>
-                    <strong>未生成</strong>
-                    <small>当前试运行仍基于草稿；不是 Runtime SOP 生效版本。</small>
+                    <strong>{edgeRuntimeSopStatusLabel(selectedDraftEdgeSaveState?.runtimeSopResult?.status)}</strong>
+                    <small>{selectedDraftEdgeSaveState?.runtimeSopResult ? "当前 Runtime 已持久化可验证 SOP 快照。" : "先生成 Runtime SOP，再生成正式 SOP。"}</small>
                   </article>
                   <article className={selectedDraftEdgeSaveState?.applyResult ? "ready" : ""}>
                     <span>3. 正式 SOP</span>
@@ -9263,16 +9363,17 @@ function WorkflowCatalog({
                     <small>生成 candidate_sop 和 patch，之后走开发机 repo-first。</small>
                   </article>
                 </div>
-                {selectedDraftEdgeSaveState?.error || selectedDraftEdgeSaveState?.applyError ? (
+                {selectedDraftEdgeSaveState?.error || selectedDraftEdgeSaveState?.runtimeSopError || selectedDraftEdgeSaveState?.applyError ? (
                   <div className="workflow-draft-agent-error">
                     <AlertTriangle size={14} />
-                    <span>{selectedDraftEdgeSaveState.error || selectedDraftEdgeSaveState.applyError}</span>
+                    <span>{selectedDraftEdgeSaveState.error || selectedDraftEdgeSaveState.runtimeSopError || selectedDraftEdgeSaveState.applyError}</span>
                   </div>
                 ) : null}
                 <KeyValues data={{
                   draft_id: selectedDraftEdgeSaveState?.draftId || "-",
                   draft_path: selectedDraftEdgeSaveState?.draftPath || "-",
-                  runtime_sop: "not generated",
+                  runtime_sop_status: selectedDraftEdgeSaveState?.runtimeSopResult?.status || "-",
+                  runtime_sop_path: selectedDraftEdgeSaveState?.runtimeSopResult?.runtimeSopPath || "-",
                   formal_sop_status: selectedDraftEdgeSaveState?.applyResult?.status || "-",
                   patch_path: selectedDraftEdgeSaveState?.applyResult?.patchPath || "-",
                   candidate_sop: selectedDraftEdgeSaveState?.applyResult?.candidateSopPath || "-",
@@ -9298,25 +9399,26 @@ function WorkflowCatalog({
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head">
-                  <div><strong>交接试运行</strong><span>运行对象是当前 Edge 草稿；只验证交接，不执行真实下游节点。</span></div>
+                  <div><strong>交接试运行</strong><span>运行对象是{selectedDraftEdgeSaveState?.runtimeSopResult ? " Runtime SOP 快照" : "当前 Edge 草稿"}；只验证交接，不执行真实下游节点。</span></div>
                   <button type="button" className="btn primary compact" disabled={selectedDraftSimulationState?.loading} onClick={() => runDraftEdgeSimulation(selectedDraftEdge.id)}>
-                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Play size={13} />}试运行当前草稿
+                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Play size={13} />}{selectedDraftEdgeSaveState?.runtimeSopResult ? "试运行 Runtime SOP" : "试运行当前草稿"}
                   </button>
                 </div>
                 <div className="workflow-draft-run-target-note">
-                  <strong>运行对象：当前 Edge 草稿</strong>
-                  <span>会生成模拟上游产物、relay package、resolved inputs 和 Hermes 请求预览；不会执行真实节点，也不会写 Runtime SOP 或正式 SOP。</span>
+                  <strong>运行对象：{selectedDraftEdgeSaveState?.runtimeSopResult ? "Runtime SOP 快照" : "当前 Edge 草稿"}</strong>
+                  <span>会生成模拟上游产物、relay package、resolved inputs 和 Hermes 请求预览；不会执行真实节点，也不会写 active Runtime SOP 或正式 SOP。</span>
                 </div>
                 {selectedDraftSimulationState?.error ? <div className="workflow-draft-agent-error"><AlertTriangle size={14} /><span>{selectedDraftSimulationState.error}</span></div> : null}
                 {selectedDraftSimulationState?.result ? (
                   <div className="workflow-edge-simulation-result">
                     <KeyValues data={{
-                      run_target: "edge draft",
+                      run_target: selectedDraftEdgeSaveState?.runtimeSopResult ? "runtime sop snapshot" : "edge draft",
                       status: String(selectedDraftSimulationState.result.status || "-"),
                       verdict: String(selectedDraftSimulationState.result.verdict || "-"),
                       simulation_id: String(selectedDraftSimulationState.result.simulation_id || "-"),
                       executes_real_node: String(safeRecord(selectedDraftSimulationState.result.hermes_request_preview).executes_real_node ?? false),
-                      writes_runtime_sop: "false",
+                      runtime_sop_path: selectedDraftEdgeSaveState?.runtimeSopResult?.runtimeSopPath || "-",
+                      writes_active_runtime_sop: "false",
                     }} />
                     <div className="workflow-edge-detail-lists">
                       <div>
@@ -9765,13 +9867,49 @@ function WorkflowCatalog({
                       {selectedDraftEdgeSaveState?.draftId ? (
                         <div className={`workflow-draft-apply-card ${selectedDraftEdgeSaveState.applyResult?.status || ""}`}>
                           <div>
+                            <strong>生成 Runtime SOP</strong>
+                            <span>把草稿编译为当前 Instance 的 Runtime SOP 快照，用于验证；不覆盖 active sop.yaml。</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn primary compact"
+                            disabled={selectedDraftEdgeSaveState.runtimeSopGenerating}
+                            onClick={() => generateSavedDraftRuntimeSop(selectedDraftEdge.id)}
+                          >
+                            {selectedDraftEdgeSaveState.runtimeSopGenerating ? <Loader2 size={13} className="spin" /> : <Workflow size={13} />}
+                            {selectedDraftEdgeSaveState.runtimeSopResult ? "重新生成 Runtime SOP" : "生成 Runtime SOP"}
+                          </button>
+                          {selectedDraftEdgeSaveState.runtimeSopError ? (
+                            <div className="workflow-draft-agent-error workflow-draft-apply-message">
+                              <AlertTriangle size={14} />
+                              <span>{selectedDraftEdgeSaveState.runtimeSopError}</span>
+                            </div>
+                          ) : null}
+                          {selectedDraftEdgeSaveState.runtimeSopResult ? (
+                            <div className="workflow-draft-apply-result">
+                              <span className={`status-pill ${edgeRuntimeSopStatusTone(selectedDraftEdgeSaveState.runtimeSopResult.status)}`}>
+                                {edgeRuntimeSopStatusLabel(selectedDraftEdgeSaveState.runtimeSopResult.status)}
+                              </span>
+                              <KeyValues data={{
+                                runtime_sop_path: selectedDraftEdgeSaveState.runtimeSopResult.runtimeSopPath || "-",
+                                active_runtime_sop_changed: selectedDraftEdgeSaveState.runtimeSopResult.activeRuntimeSopChanged ? "yes" : "no",
+                                change_count: selectedDraftEdgeSaveState.runtimeSopResult.changeCount ?? "-",
+                              }} />
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {selectedDraftEdgeSaveState?.draftId ? (
+                        <div className={`workflow-draft-apply-card ${selectedDraftEdgeSaveState.applyResult?.status || ""}`}>
+                          <div>
                             <strong>生成正式 SOP</strong>
                             <span>生成 `candidate_sop.yaml` 和 diff；不直接修改 Runtime 机器源码，后续在开发机 repo-first 提交。</span>
                           </div>
                           <button
                             type="button"
                             className="btn primary compact"
-                            disabled={selectedDraftEdgeSaveState.applying}
+                            disabled={!selectedDraftEdgeSaveState.runtimeSopResult || selectedDraftEdgeSaveState.applying}
+                            title={!selectedDraftEdgeSaveState.runtimeSopResult ? "请先生成 Runtime SOP" : "生成正式 SOP 变更方案"}
                             onClick={() => applySavedDraftEdge(selectedDraftEdge.id)}
                           >
                             {selectedDraftEdgeSaveState.applying ? <Loader2 size={13} className="spin" /> : <GitBranch size={13} />}
@@ -11109,6 +11247,48 @@ function mapEdgeDraftApplyResult(raw: Record<string, unknown>): EdgeDraftApplyRe
     errors: Array.isArray(raw.errors) ? raw.errors.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [],
     reason: safeToString(raw.reason || raw.message || raw.detail),
   };
+}
+
+function mapEdgeRuntimeSopResult(raw: Record<string, unknown>): EdgeRuntimeSopResult {
+  return {
+    status: safeToString(raw.status),
+    workflowId: safeToString(raw.workflow_id || raw.workflowId),
+    draftId: safeToString(raw.draft_id || raw.draftId),
+    draftPath: safeToString(raw.draft_path || raw.draftPath),
+    runtimeSopPath: safeToString(raw.runtime_sop_path || raw.runtimeSopPath),
+    runtimeSopSource: safeToString(raw.runtime_sop_source || raw.runtimeSopSource),
+    edge: safeRecord(raw.edge),
+    targets: safeRecord(raw.targets),
+    before: Array.isArray(raw.before) ? raw.before : [],
+    after: Array.isArray(raw.after) ? raw.after : [],
+    hashBefore: safeToString(raw.hash_before || raw.hashBefore),
+    hashAfter: safeToString(raw.hash_after || raw.hashAfter),
+    changeCount: typeof raw.change_count === "number" ? raw.change_count : typeof raw.changeCount === "number" ? raw.changeCount : undefined,
+    activeRuntimeSopChanged: Boolean(raw.active_runtime_sop_changed || raw.activeRuntimeSopChanged),
+    productionDagChanged: Boolean(raw.production_dag_changed || raw.productionDagChanged),
+    repoFirstRequired: Boolean(raw.repo_first_required || raw.repoFirstRequired),
+    errors: Array.isArray(raw.errors) ? raw.errors.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object") : [],
+    reason: safeToString(raw.reason || raw.message || raw.detail),
+  };
+}
+
+function edgeRuntimeSopErrorText(result: EdgeRuntimeSopResult, raw: Record<string, unknown>, text: string, status: number) {
+  if (result.errors?.length) {
+    return result.errors.map((item) => safeToString(item.message || item.code || JSON.stringify(item))).join("; ");
+  }
+  return result.reason || safeToString(raw.detail || raw.message || raw.error || text || `HTTP ${status}`);
+}
+
+function edgeRuntimeSopStatusLabel(status?: string) {
+  if (status === "runtime_sop_ready") return "Runtime SOP 已生成";
+  if (status === "failed") return "Runtime SOP 生成失败";
+  return status || "未生成";
+}
+
+function edgeRuntimeSopStatusTone(status?: string) {
+  if (status === "runtime_sop_ready") return "done";
+  if (status === "failed") return "failed";
+  return "waiting";
 }
 
 function edgeDraftApplyErrorText(result: EdgeDraftApplyResult, raw: Record<string, unknown>, text: string, status: number) {
