@@ -1021,7 +1021,7 @@ export const mockProvider: SopDataProvider = {
           format: "markdown",
           prompt: `Use skill ${downstreamNodeId || "downstream-skill"} with this Edge instruction: ${instruction || "ask user for handoff instruction before running"}`,
         },
-        test_plan: ["保存 Edge Draft", "生成 SOP Patch", "在开发机 repo-first 提交后用下游 Node Run 验证 Node Execution Guide"],
+        test_plan: ["保存 Edge 草稿", "生成正式 SOP 变更方案", "在开发机 repo-first 提交后用下游 Node Run 验证 Node Execution Guide"],
         agent: { provider: "mock", model: "edge-handoff-agent-mock", used_ai: true },
         evaluated_at: new Date().toISOString(),
       },
@@ -1035,7 +1035,7 @@ export const mockProvider: SopDataProvider = {
     const from = String(input.upstream_node_id || edge.from || "youtube-fetch");
     const to = String(input.downstream_node_id || edge.to || "youtube-deep-research");
     const edgeId = String(input.edge_id || edge.id || `${from}-to-${to}`);
-    const prompt = `Use skill sop-${to} to execute this Node Execution Request.\n\n# Edge Handoff Simulation Request\n\n- edge_id: ${edgeId}\n- upstream: ${from}\n- downstream: ${to}\n- instruction: ${String(input.edge_handoff_instruction || edge.instruction || "")}\n\nResolved input source_url from generated fixture.`;
+    const prompt = `Use skill sop-${to} to execute this Node Execution Request.\n\n# Edge Draft Trial Request\n\n- edge_id: ${edgeId}\n- upstream: ${from}\n- downstream: ${to}\n- instruction: ${String(input.edge_handoff_instruction || edge.instruction || "")}\n\nResolved input source_url from synthetic upstream output.`;
     return {
       ok: true,
       mode: "edge-handoff-simulation",

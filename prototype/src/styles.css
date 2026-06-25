@@ -7880,6 +7880,68 @@ pre {
   gap: 10px;
 }
 
+.workflow-draft-sop-states {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-draft-sop-states article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-draft-sop-states article.ready {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.workflow-draft-sop-states span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.workflow-draft-sop-states strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-sop-states small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-run-target-note {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.workflow-draft-run-target-note strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-run-target-note span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .edge-detail-agent-result {
   gap: 12px;
 }
@@ -7897,6 +7959,7 @@ pre {
   .workflow-edge-detail-grid,
   .workflow-edge-skill-meta-grid,
   .workflow-edge-detail-lists,
+  .workflow-draft-sop-states,
   .workflow-draft-edge-overview-card {
     grid-template-columns: 1fr;
   }

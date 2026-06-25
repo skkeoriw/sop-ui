@@ -8698,7 +8698,7 @@ function WorkflowCatalog({
           applyPlan,
         },
       }));
-      setDraftCanvasMessage(`已保存 Edge Definition Draft：${draftId}`);
+      setDraftCanvasMessage(`已保存 Edge 草稿：${draftId}`);
     } catch (error) {
       setDraftEdgeSaveStates((current) => ({
         ...current,
@@ -8719,14 +8719,14 @@ function WorkflowCatalog({
     if (!edge || !saved?.draftId) {
       setDraftEdgeSaveStates((current) => ({
         ...current,
-        [edgeId]: { ...(current[edgeId] || {}), applyError: "请先保存 Edge Draft，再生成 SOP Patch。" },
+        [edgeId]: { ...(current[edgeId] || {}), applyError: "请先保存草稿，再生成正式 SOP 变更方案。" },
       }));
       return;
     }
     if (!runtime || !spiBase || !instanceId) {
       setDraftEdgeSaveStates((current) => ({
         ...current,
-        [edgeId]: { ...(current[edgeId] || {}), applyError: "缺少 Runtime 或 Instance，不能应用 Edge Draft。" },
+        [edgeId]: { ...(current[edgeId] || {}), applyError: "缺少 Runtime 或 Instance，不能生成正式 SOP 变更方案。" },
       }));
       return;
     }
@@ -8754,8 +8754,8 @@ function WorkflowCatalog({
         },
       }));
       setDraftCanvasMessage(result.status === "unchanged"
-        ? `Edge 已经在 SOP 中：${edge.from} -> ${edge.to}`
-        : `已生成 SOP Patch：${edge.from} -> ${edge.to}`);
+        ? `Edge 已经在正式 SOP 候选中：${edge.from} -> ${edge.to}`
+        : `已生成正式 SOP 变更方案：${edge.from} -> ${edge.to}`);
     } catch (error) {
       setDraftEdgeSaveStates((current) => ({
         ...current,
@@ -9223,7 +9223,7 @@ function WorkflowCatalog({
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head">
-                  <div><strong>Draft Actions</strong><span>把通过评估的 Edge 保存为 repo-first 草稿，再生成 SOP Patch</span></div>
+                  <div><strong>草稿与 SOP 生成</strong><span>保存草稿后可试运行交接；正式 SOP 仍需 repo-first 落库。</span></div>
                   <div className="workflow-edge-detail-actions-inline">
                     <button
                       type="button"
@@ -9233,7 +9233,7 @@ function WorkflowCatalog({
                       onClick={() => saveDraftEdgeDefinition(selectedDraftEdge.id)}
                     >
                       {selectedDraftEdgeSaveState?.loading ? <Loader2 size={13} /> : <CheckCircle2 size={13} />}
-                      保存 Edge 草稿
+                      保存草稿
                     </button>
                     <button
                       type="button"
@@ -9242,9 +9242,26 @@ function WorkflowCatalog({
                       onClick={() => applySavedDraftEdge(selectedDraftEdge.id)}
                     >
                       {selectedDraftEdgeSaveState?.applying ? <Loader2 size={13} /> : <GitBranch size={13} />}
-                      生成 SOP Patch
+                      生成正式 SOP
                     </button>
                   </div>
+                </div>
+                <div className="workflow-draft-sop-states">
+                  <article className={selectedDraftEdgeSaveState?.draftId ? "ready" : ""}>
+                    <span>1. 草稿</span>
+                    <strong>{selectedDraftEdgeSaveState?.draftId ? "已保存" : "未保存"}</strong>
+                    <small>保存当前 Edge 设计，不改正式 SOP。</small>
+                  </article>
+                  <article>
+                    <span>2. Runtime SOP</span>
+                    <strong>未生成</strong>
+                    <small>当前试运行仍基于草稿；不是 Runtime SOP 生效版本。</small>
+                  </article>
+                  <article className={selectedDraftEdgeSaveState?.applyResult ? "ready" : ""}>
+                    <span>3. 正式 SOP</span>
+                    <strong>{selectedDraftEdgeSaveState?.applyResult ? "变更方案已生成" : "未生成"}</strong>
+                    <small>生成 candidate_sop 和 patch，之后走开发机 repo-first。</small>
+                  </article>
                 </div>
                 {selectedDraftEdgeSaveState?.error || selectedDraftEdgeSaveState?.applyError ? (
                   <div className="workflow-draft-agent-error">
@@ -9255,14 +9272,15 @@ function WorkflowCatalog({
                 <KeyValues data={{
                   draft_id: selectedDraftEdgeSaveState?.draftId || "-",
                   draft_path: selectedDraftEdgeSaveState?.draftPath || "-",
-                  apply_status: selectedDraftEdgeSaveState?.applyResult?.status || "-",
+                  runtime_sop: "not generated",
+                  formal_sop_status: selectedDraftEdgeSaveState?.applyResult?.status || "-",
                   patch_path: selectedDraftEdgeSaveState?.applyResult?.patchPath || "-",
                   candidate_sop: selectedDraftEdgeSaveState?.applyResult?.candidateSopPath || "-",
                   repo_first_required: selectedDraftEdgeSaveState?.applyResult?.repoFirstRequired ? "yes" : "not generated",
                 }} />
                 {selectedDraftEdgeSaveState?.applyResult ? (
                   <details className="workflow-draft-runtime-brief">
-                    <summary><span>SOP Patch Preview</span><ChevronDown size={14} /></summary>
+                    <summary><span>正式 SOP 变更预览</span><ChevronDown size={14} /></summary>
                     <pre>{String(selectedDraftEdgeSaveState.applyResult.patch || "")}</pre>
                   </details>
                 ) : null}
@@ -9280,19 +9298,25 @@ function WorkflowCatalog({
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head">
-                  <div><strong>Handoff Simulation</strong><span>只验证交接，不执行真实下游节点</span></div>
+                  <div><strong>交接试运行</strong><span>运行对象是当前 Edge 草稿；只验证交接，不执行真实下游节点。</span></div>
                   <button type="button" className="btn primary compact" disabled={selectedDraftSimulationState?.loading} onClick={() => runDraftEdgeSimulation(selectedDraftEdge.id)}>
-                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Play size={13} />}运行 Generated Fixture
+                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Play size={13} />}试运行当前草稿
                   </button>
+                </div>
+                <div className="workflow-draft-run-target-note">
+                  <strong>运行对象：当前 Edge 草稿</strong>
+                  <span>会生成模拟上游产物、relay package、resolved inputs 和 Hermes 请求预览；不会执行真实节点，也不会写 Runtime SOP 或正式 SOP。</span>
                 </div>
                 {selectedDraftSimulationState?.error ? <div className="workflow-draft-agent-error"><AlertTriangle size={14} /><span>{selectedDraftSimulationState.error}</span></div> : null}
                 {selectedDraftSimulationState?.result ? (
                   <div className="workflow-edge-simulation-result">
                     <KeyValues data={{
+                      run_target: "edge draft",
                       status: String(selectedDraftSimulationState.result.status || "-"),
                       verdict: String(selectedDraftSimulationState.result.verdict || "-"),
                       simulation_id: String(selectedDraftSimulationState.result.simulation_id || "-"),
                       executes_real_node: String(safeRecord(selectedDraftSimulationState.result.hermes_request_preview).executes_real_node ?? false),
+                      writes_runtime_sop: "false",
                     }} />
                     <div className="workflow-edge-detail-lists">
                       <div>
@@ -9313,7 +9337,7 @@ function WorkflowCatalog({
                       <pre>{JSON.stringify(selectedDraftSimulationState.result.relay_package || {}, null, 2)}</pre>
                     </details>
                   </div>
-                ) : <Empty text="点击运行后，会生成模拟上游输出、relay package、resolved inputs 和 Hermes Request Preview。" />}
+                ) : <Empty text="点击试运行后，会基于当前草稿生成模拟上游输出、relay package、resolved inputs 和 Hermes 请求预览。" />}
               </section>
 
               <section className="flow-panel workflow-edge-detail-section">
@@ -9323,7 +9347,7 @@ function WorkflowCatalog({
                     <Copy size={13} />复制
                   </button>
                 </div>
-                {selectedDraftSimulationPrompt ? <pre className="workflow-edge-prompt-preview">{selectedDraftSimulationPrompt}</pre> : <Empty text="先运行 Handoff Simulation，生成真实 request preview。" />}
+                {selectedDraftSimulationPrompt ? <pre className="workflow-edge-prompt-preview">{selectedDraftSimulationPrompt}</pre> : <Empty text="先运行交接试运行，生成真实 request preview。" />}
               </section>
             </>
           ) : (
@@ -9575,9 +9599,9 @@ function WorkflowCatalog({
                     </small>
                   </div>
                   <div>
-                    <span>Handoff Simulation</span>
+                    <span>交接试运行</span>
                     <strong>{selectedDraftSimulationState?.result ? String(selectedDraftSimulationState.result.status || "-") : "未试运行"}</strong>
-                    <small>只验证交接包和 Hermes Request，不执行真实节点。</small>
+                    <small>基于当前 Edge 草稿，只验证交接包和 Hermes Request，不执行真实节点。</small>
                   </div>
                 </div>
                 <div className="workflow-draft-edge-overview-actions">
@@ -9711,8 +9735,8 @@ function WorkflowCatalog({
                       ) : null}
                       <div className="workflow-draft-agent-save">
                         <div>
-                          <strong>保存为 Edge Definition Draft</strong>
-                          <span>先写入当前 Instance 的 `raw/workflow-drafts`，通过校验后生成 repo-first SOP Patch。</span>
+                          <strong>保存草稿</strong>
+                          <span>写入当前 Instance 的 `raw/workflow-drafts`，保存设计，不改正式 SOP。</span>
                         </div>
                         <button
                           type="button"
@@ -9722,7 +9746,7 @@ function WorkflowCatalog({
                           onClick={() => saveDraftEdgeDefinition(selectedDraftEdge.id)}
                         >
                           {selectedDraftEdgeSaveState?.loading ? <Loader2 size={13} /> : <CheckCircle2 size={13} />}
-                          保存 Edge 草稿
+                          保存草稿
                         </button>
                       </div>
                       {selectedDraftEdgeSaveState?.error ? (
@@ -9741,8 +9765,8 @@ function WorkflowCatalog({
                       {selectedDraftEdgeSaveState?.draftId ? (
                         <div className={`workflow-draft-apply-card ${selectedDraftEdgeSaveState.applyResult?.status || ""}`}>
                           <div>
-                            <strong>生成 SOP Patch</strong>
-                            <span>只生成 `candidate_sop.yaml` 和 diff，不直接修改 runtime 机器上的源码；后续在开发机 repo-first 提交。</span>
+                            <strong>生成正式 SOP</strong>
+                            <span>生成 `candidate_sop.yaml` 和 diff；不直接修改 Runtime 机器源码，后续在开发机 repo-first 提交。</span>
                           </div>
                           <button
                             type="button"
@@ -9751,7 +9775,7 @@ function WorkflowCatalog({
                             onClick={() => applySavedDraftEdge(selectedDraftEdge.id)}
                           >
                             {selectedDraftEdgeSaveState.applying ? <Loader2 size={13} className="spin" /> : <GitBranch size={13} />}
-                            {selectedDraftEdgeSaveState.applyResult ? "重新生成 Patch" : "生成 Patch"}
+                            {selectedDraftEdgeSaveState.applyResult ? "重新生成正式 SOP" : "生成正式 SOP"}
                           </button>
                           {selectedDraftEdgeSaveState.applyError ? (
                             <div className="workflow-draft-agent-error workflow-draft-apply-message">
@@ -9833,10 +9857,10 @@ function WorkflowCatalog({
                             ) : null}
                             <div className="field-hint" style={{ marginTop: 6 }}>
                               <strong>执行清单（建议）</strong>
-                              <div>主流程请使用上方生成 SOP Patch。真实落库必须回到开发机仓库修改、测试、commit、push。</div>
+                              <div>主流程请使用上方生成正式 SOP。真实落库必须回到开发机仓库修改、测试、commit、push。</div>
                             </div>
                             <div className="field-hint" style={{ marginBottom: 8 }}>
-                              说明：如果 Patch 生成失败，再用这里的 Change Request 和 Proposal 定位原因。
+                              说明：如果正式 SOP 变更方案生成失败，再用这里的 Change Request 和 Proposal 定位原因。
                             </div>
                             {selectedDraftEdgeSaveState.applyPlan.applyScript ? (
                               <details className="workflow-draft-advanced-json workflow-draft-apply-script">
@@ -11096,9 +11120,9 @@ function edgeDraftApplyErrorText(result: EdgeDraftApplyResult, raw: Record<strin
 
 function edgeDraftApplyStatusLabel(status?: string) {
   if (status === "applied") return "已应用";
-  if (status === "patch_ready") return "Patch 已生成";
+  if (status === "patch_ready") return "正式 SOP 变更已生成";
   if (status === "unchanged") return "无需变更";
-  if (status === "failed") return "Patch 生成失败";
+  if (status === "failed") return "正式 SOP 生成失败";
   return status || "未应用";
 }
 
