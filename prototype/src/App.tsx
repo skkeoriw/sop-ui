@@ -313,6 +313,10 @@ function workflowIdForInstance(instance: Instance | undefined) {
   return instance?.workflowBinding?.workflowId || instance?.sopType || "workflow";
 }
 
+function isManagementInstance(instance: Instance | undefined) {
+  return Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
+}
+
 function runtimeHost(runtime: Runtime | undefined) {
   return runtime?.clientIp || runtime?.machine || runtime?.metadata?.client_ip || "";
 }
@@ -5068,7 +5072,8 @@ export default function App() {
   const instanceTotal = Math.max(instancesQuery.data?.total ?? instances.length, instances.length);
   const instanceSource = instancesQuery.data?.source || "";
   const instanceHasMore = Boolean(instancesQuery.data?.hasMore);
-  const instance = instances.find((item) => item.instanceId === instanceId) || instances[0];
+  const workflowDefaultInstance = instances.find((item) => !isManagementInstance(item)) || instances[0];
+  const instance = instances.find((item) => item.instanceId === instanceId) || (viewMode === "workflows" ? workflowDefaultInstance : undefined) || instances[0];
   const switcherInstances = useMemo(() => {
     const query = instanceSwitchSearch.trim().toLowerCase();
     if (!query) return instances;
@@ -5085,8 +5090,8 @@ export default function App() {
       return searchable.includes(query);
     });
   }, [instanceSwitchSearch, instances]);
-  const managementInstance = instances.find((item) => item.instanceId === "runtime-management" || item.sopType === "runtime-management");
-  const isRuntimeManagementInstance = Boolean(instance && (instance.instanceId === "runtime-management" || instance.sopType === "runtime-management"));
+  const managementInstance = instances.find((item) => isManagementInstance(item));
+  const isRuntimeManagementInstance = isManagementInstance(instance);
   const workflowsQuery = useQuery({
     queryKey: ["workflow-definitions", mode, runtime?.id || ""],
     queryFn: async () => provider.listWorkflowDefinitions ? provider.listWorkflowDefinitions(runtime) : [],
@@ -6396,7 +6401,7 @@ export default function App() {
             loading={workflowsQuery.isLoading}
             onOpenRuntime={(id) => selectRuntime(id)}
             onSelectInstance={switchActiveInstance}
-            onOpenExecutions={(workflowId) => openWorkflowDefinitionForInstance(workflowId, instance?.instanceId || instanceId)}
+            onOpenExecutions={(workflowId, targetInstanceId) => openWorkflowDefinitionForInstance(workflowId, targetInstanceId || instance?.instanceId || instanceId)}
             onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "runtime" && isRuntimeDirectory ? (
@@ -8048,7 +8053,7 @@ function WorkflowCatalog({
   loading: boolean;
   onOpenRuntime: (runtimeId: string) => void;
   onSelectInstance: (instanceId: string) => void;
-  onOpenExecutions: (workflowId: string) => void;
+  onOpenExecutions: (workflowId: string, targetInstanceId?: string) => void;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
@@ -8065,6 +8070,7 @@ function WorkflowCatalog({
   const [draftNodePositions, setDraftNodePositions] = useState<Record<string, { x: number; y: number }>>(() => draft.positions || {});
   const [draftAgentEvaluations, setDraftAgentEvaluations] = useState<Record<string, EdgeHandoffAgentState>>({});
   const [draftEdgeSaveStates, setDraftEdgeSaveStates] = useState<Record<string, EdgeDraftSaveState>>({});
+  const [draftBuilderOpen, setDraftBuilderOpen] = useState(false);
   const filteredWorkflows = useMemo(() => {
     const query = workflowSearch.trim().toLowerCase();
     return workflows.filter((item) => {
@@ -8076,8 +8082,10 @@ function WorkflowCatalog({
   const workflowTypes = useMemo(() => Array.from(new Set(workflows.flatMap((item) => [item.interpreter, item.workflowType]).filter(Boolean))).sort(), [workflows]);
   const selectedWorkflow = workflows.find((item) => item.workflowId === selectedWorkflowId) || workflows[0];
   const managementWorkflow = selectedWorkflow?.workflowId === "runtime-management";
-  const activeInstanceId = selectedInstanceId || selectedInstance?.instanceId || instances.find((item) => item.instanceId !== "runtime-management")?.instanceId || instances[0]?.instanceId || "";
-  const defaultInstance = selectedInstance || instances.find((item) => item.instanceId === activeInstanceId) || instances.find((item) => item.instanceId !== "runtime-management") || instances[0];
+  const firstBusinessInstance = instances.find((item) => !isManagementInstance(item));
+  const activeInstanceId = selectedInstanceId || (!isManagementInstance(selectedInstance) ? selectedInstance?.instanceId : "") || firstBusinessInstance?.instanceId || instances[0]?.instanceId || "";
+  const defaultInstance = instances.find((item) => item.instanceId === activeInstanceId) || firstBusinessInstance || instances[0];
+  const visibleWorkflowNodes = nodes.filter((node) => node.nodeId !== "retry" && node.mode !== "manual");
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.nodeId, node])), [nodes]);
   const draftNodeIds = useMemo(() => new Set(draft.nodes.map((node) => node.nodeId)), [draft.nodes]);
   const draftNodes = draft.nodes.map((item) => nodesById.get(item.nodeId)).filter(Boolean) as NodeRegistryItem[];
@@ -8830,6 +8838,22 @@ function WorkflowCatalog({
                 definition_path: selectedWorkflow.definitionPath,
                 nodes: selectedWorkflow.nodeCount || "-",
               }} />
+              {!managementWorkflow && (
+                <div className="workflow-existing-overview">
+                  <div className="section-title"><span>Current Workflow</span><span>read-only definition</span></div>
+                  <p>这里展示当前已存在的 Workflow Definition。下面的 Edge Builder 是新建草稿，不会修改这个 workflow。</p>
+                  <div className="workflow-existing-node-strip">
+                    {visibleWorkflowNodes.map((node, index) => (
+                      <article key={node.nodeId}>
+                        <span>{node.ui?.stageLetter || String(index + 1)}</span>
+                        <strong>{node.title || node.nodeId}</strong>
+                        <small>{node.nodeId}</small>
+                      </article>
+                    ))}
+                    {!visibleWorkflowNodes.length && <Empty text="当前 Instance 没有加载到 Workflow 节点目录" />}
+                  </div>
+                </div>
+              )}
               {managementWorkflow ? (
                 <div className="workflow-action-grid">
                   {(selectedWorkflow.actions || []).map((action) => (
@@ -8863,9 +8887,9 @@ function WorkflowCatalog({
                       </select>
                       <span>{defaultInstance?.repo || "No instance selected"}</span>
                     </label>
-                    <button type="button" className="primary" disabled={!runtime || !defaultInstance} onClick={() => selectedWorkflow && onOpenExecutions(selectedWorkflow.workflowId)}>
+                    <button type="button" className="primary" disabled={!runtime || !defaultInstance} onClick={() => selectedWorkflow && onOpenExecutions(selectedWorkflow.workflowId, activeInstanceId)}>
                       <Play size={16} />
-                      Open Executions
+                      Open Workflow Detail
                     </button>
                   </div>
                 </div>
@@ -8875,18 +8899,27 @@ function WorkflowCatalog({
         </div>
       </section>
 
-      <section className="flow-panel workflow-draft-builder">
+      <section className={`flow-panel workflow-draft-builder ${draftBuilderOpen ? "open" : "collapsed"}`}>
         <div className="panel-head">
           <div>
-            <strong>Workflow Edge Builder</strong>
-            <span>在这里设计节点之间的 Edge：谁交付、谁接收、为什么能接、运行时如何交给下游 Agent。</span>
+            <strong>New Workflow Draft Builder</strong>
+            <span>只用于新建/试验 Edge 草稿，不会修改当前已有 Workflow Definition。</span>
           </div>
           <div className="draft-builder-status">
+            <button type="button" className="ghost-btn compact" onClick={() => setDraftBuilderOpen((open) => !open)}>
+              <ChevronDown size={14} />{draftBuilderOpen ? "Hide Builder" : "Open Builder"}
+            </button>
             <span className="status-pill waiting">本地草稿</span>
             <span>{draft.nodes.length} nodes</span>
             <span>{draft.edges.length} edges</span>
           </div>
         </div>
+        {!draftBuilderOpen && (
+          <div className="workflow-draft-collapsed">
+            <Info size={16} />
+            <span>Edge Builder 已折叠。点击 Open Builder 才进入新 workflow 草稿设计；上方 Current Workflow 是现有 workflow 的只读入口。</span>
+          </div>
+        )}
         <div className="workflow-draft-notice">
           <AlertTriangle size={16} />
           <span>发布 SOP 仍必须走 agent-brain-plugins repo-first 流程；当前页面只生成 Edge 设计草稿和连接评估。</span>
