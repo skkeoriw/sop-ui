@@ -1259,6 +1259,23 @@ export const mockProvider: SopDataProvider = {
     return { status: "triggered", pipeline_id: pipelineId, pipelineId, workflow_id: workflowId, workflow_draft_id: draftId };
   },
 
+  async publishWorkflowDraft(_target, instanceId, workflowId, draftId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    await delay();
+    const draft = workflowDraftById.get(draftId);
+    if (!draft) return { status: "failed", reason: "workflow draft not found", errors: [{ code: "draft_not_found" }] };
+    const publishedWorkflowId = String(input.published_workflow_id || `${workflowId}-${draftId}`);
+    return {
+      status: "published",
+      workflow_id: publishedWorkflowId,
+      source_workflow_id: workflowId,
+      title: String(input.title || (draft.draft as Record<string, unknown> | undefined)?.name || publishedWorkflowId),
+      draft_id: draftId,
+      instance_id: instanceId,
+      runtime_sop_path: `raw/runtime-workflows/${publishedWorkflowId}/sop.yaml`,
+      catalog_url: "/api/sop/v1/workflows",
+    };
+  },
+
   async getRuntimeInheritance(): Promise<RuntimeInheritancePreview> {
     await delay();
     return mockRuntimeInheritancePreview;

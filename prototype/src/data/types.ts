@@ -939,6 +939,7 @@ export interface SopDataProvider {
   saveWorkflowDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowDraftRequest): Promise<WorkflowDraftResult>;
   generateWorkflowDraftRuntimeSop?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowDraftRequest): Promise<WorkflowDraftResult>;
   runWorkflowDraft?(runtime: Runtime, instanceId: string, workflowId: string, draftId: string, input: WorkflowDraftRequest): Promise<WorkflowDraftResult>;
+  publishWorkflowDraft?(runtime: Runtime, instanceId: string, workflowId: string, draftId: string, input: WorkflowDraftRequest): Promise<WorkflowDraftResult>;
   getRuntimeInheritance(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   getRuntimeManagementConfig(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;
   saveRuntimeManagementConfig(runtime: Runtime, instanceId: string, input: RuntimeManagementConfigSaveInput): Promise<RuntimeInheritancePreview>;

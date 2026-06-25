@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, memo, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, memo, useEffect, useMemo, useRef, useState } from "react";
 import { Background, Connection, Controls, Edge, Handle, MiniMap, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -29,7 +29,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Save,
   Search,
   Send,
   Server,
@@ -199,16 +198,22 @@ type EdgeDraftSaveState = {
 };
 type WorkflowDraftRunState = {
   saving?: boolean;
+  autoSaving?: boolean;
+  autoSaveError?: string;
+  autoSavedAt?: string;
   generating?: boolean;
   running?: boolean;
+  publishing?: boolean;
   error?: string;
   runtimeSopError?: string;
   runError?: string;
+  publishError?: string;
   draftId?: string;
   draftPath?: string;
   saveResult?: Record<string, unknown>;
   runtimeSopResult?: Record<string, unknown>;
   runResult?: Record<string, unknown>;
+  publishResult?: Record<string, unknown>;
   pipelineId?: string;
 };
 type EdgeRuntimeSopResult = {
@@ -8133,6 +8138,7 @@ function WorkflowCatalog({
   onOpenRun: (workflowId: string, pipelineId: string, targetInstanceId?: string) => void;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
+  const queryClient = useQueryClient();
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [workflowSearch, setWorkflowSearch] = useState("");
   const [workflowTypeFilter, setWorkflowTypeFilter] = useState("all");
@@ -8151,6 +8157,7 @@ function WorkflowCatalog({
   const [workflowDraftRunState, setWorkflowDraftRunState] = useState<WorkflowDraftRunState>({});
   const [workflowDraftRunUrl, setWorkflowDraftRunUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   const [draftBuilderOpen, setDraftBuilderOpen] = useState(false);
+  const workflowDraftAutoSaveTimer = useRef<number | undefined>(undefined);
   const filteredWorkflows = useMemo(() => {
     const query = workflowSearch.trim().toLowerCase();
     return workflows.filter((item) => {
@@ -8228,6 +8235,14 @@ function WorkflowCatalog({
   const selectedDraftSimulationPrompt = edgeHandoffSimulationPrompt(selectedDraftSimulationState?.result);
   const selectedDraftEdgeSaveState = selectedDraftEdge ? draftEdgeSaveStates[selectedDraftEdge.id] : undefined;
   const selectedDraftAgentCanSave = edgeHandoffAgentCanSave(selectedDraftAgentEvaluation);
+  const workflowDraftAutoSaveKey = useMemo(() => JSON.stringify({
+    draft: { ...draft, positions: draftNodePositions },
+    evaluations: Object.fromEntries(
+      draft.edges
+        .map((edge) => [edge.id, draftAgentEvaluations[edge.id]?.evaluation])
+        .filter(([, evaluation]) => Boolean(evaluation))
+    ),
+  }), [draft, draftAgentEvaluations, draftNodePositions]);
   useEffect(() => {
     if (!selectedDraftEdge || !runtime || !activeInstanceId || !selectedDraftEdgeSourceNode || !selectedDraftEdgeTargetNode) return;
     const current = draftAgentEvaluations[selectedDraftEdge.id];
@@ -8285,6 +8300,24 @@ function WorkflowCatalog({
       setSelectedWorkflowId(preferred.workflowId);
     }
   }, [selectedWorkflowId, workflows]);
+  useEffect(() => {
+    if (!builderOnly || !draft.nodes.length || !draft.edges.length || !activeRuntime || !activeInstanceId || !selectedWorkflow?.workflowId) return;
+    if (workflowDraftAutoSaveTimer.current) window.clearTimeout(workflowDraftAutoSaveTimer.current);
+    workflowDraftAutoSaveTimer.current = window.setTimeout(() => {
+      void saveWorkflowDraftDefinition({ silent: true });
+    }, 900);
+    return () => {
+      if (workflowDraftAutoSaveTimer.current) window.clearTimeout(workflowDraftAutoSaveTimer.current);
+    };
+  }, [
+    activeInstanceId,
+    activeRuntime?.id,
+    builderOnly,
+    draft.edges.length,
+    draft.nodes.length,
+    selectedWorkflow?.workflowId,
+    workflowDraftAutoSaveKey,
+  ]);
   useEffect(() => {
     if (!routeEdgeId) return;
     if (!draft.edges.some((edge) => edge.id === routeEdgeId)) return;
@@ -8720,7 +8753,7 @@ function WorkflowCatalog({
       },
     };
   }
-  async function saveWorkflowDraftDefinition() {
+  async function saveWorkflowDraftDefinition(options: { silent?: boolean } = {}) {
     const workflowId = selectedWorkflow?.workflowId || "workflow";
     const instanceId = activeInstanceId || selectedInstanceId || selectedInstance?.instanceId || (provider.mode === "mock" ? "mock-instance" : "");
     const runtimeForDraft = activeRuntime || runtime || (provider.mode === "mock"
@@ -8728,16 +8761,28 @@ function WorkflowCatalog({
       : undefined);
     const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForDraft));
     if (!runtimeForDraft || !instanceId || (!provider.saveWorkflowDraft && !spiBase)) {
-      setWorkflowDraftRunState((current) => ({ ...current, error: "缺少 Runtime 或 Instance，不能保存 Workflow Draft。" }));
-      return;
+      const message = "缺少 Runtime 或 Instance，不能保存 Workflow Draft。";
+      setWorkflowDraftRunState((current) => ({ ...current, saving: false, autoSaving: false, error: options.silent ? current.error : message, autoSaveError: options.silent ? message : current.autoSaveError }));
+      return null;
     }
     if (!draft.nodes.length || !draft.edges.length) {
-      setWorkflowDraftRunState((current) => ({ ...current, error: "请先添加节点并创建至少一条 Edge。" }));
-      return;
+      const message = "请先添加节点并创建至少一条 Edge。";
+      setWorkflowDraftRunState((current) => ({ ...current, saving: false, autoSaving: false, error: options.silent ? current.error : message, autoSaveError: options.silent ? message : current.autoSaveError }));
+      return null;
     }
-    setWorkflowDraftRunState((current) => ({ ...current, saving: true, error: "" }));
+    setWorkflowDraftRunState((current) => ({
+      ...current,
+      saving: !options.silent,
+      autoSaving: Boolean(options.silent),
+      error: options.silent ? current.error : "",
+      autoSaveError: "",
+    }));
     try {
-      const payload = buildWorkflowDraftPayload();
+      const currentDraftId = workflowDraftRunState.draftId || "";
+      const payload = {
+        ...buildWorkflowDraftPayload(),
+        ...(currentDraftId ? { draft_id: currentDraftId } : {}),
+      };
       const raw = provider.saveWorkflowDraft
         ? await provider.saveWorkflowDraft(runtimeForDraft, instanceId, workflowId, payload)
         : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts`, payload);
@@ -8745,6 +8790,9 @@ function WorkflowCatalog({
       setWorkflowDraftRunState((current) => ({
         ...current,
         saving: false,
+        autoSaving: false,
+        autoSavedAt: new Date().toISOString(),
+        autoSaveError: "",
         error: "",
         draftId,
         draftPath: String(raw.draft_path || raw.draftPath || ""),
@@ -8752,51 +8800,18 @@ function WorkflowCatalog({
         runtimeSopResult: safeRecord(raw.runtime_sop_result),
         runtimeSopError: "",
       }));
-      setDraftCanvasMessage(`Workflow Draft 已保存：${draftId || draft.name}`);
+      if (!options.silent) setDraftCanvasMessage(`Workflow Draft 已保存：${draftId || draft.name}`);
+      return raw;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       setWorkflowDraftRunState((current) => ({
         ...current,
         saving: false,
-        error: error instanceof Error ? error.message : String(error),
+        autoSaving: false,
+        error: options.silent ? current.error : message,
+        autoSaveError: options.silent ? message : current.autoSaveError,
       }));
-    }
-  }
-  async function generateWorkflowDraftRuntimeSop() {
-    const workflowId = selectedWorkflow?.workflowId || "workflow";
-    const instanceId = activeInstanceId || selectedInstanceId || selectedInstance?.instanceId || (provider.mode === "mock" ? "mock-instance" : "");
-    const runtimeForDraft = activeRuntime || runtime || (provider.mode === "mock"
-      ? ({ id: "mock-runtime", name: "mock-runtime", endpoint: "", status: "active", localStatus: "ok" } as Runtime)
-      : undefined);
-    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForDraft));
-    const draftId = workflowDraftRunState.draftId || "";
-    if (!runtimeForDraft || !instanceId || (!provider.generateWorkflowDraftRuntimeSop && !spiBase)) {
-      setWorkflowDraftRunState((current) => ({ ...current, runtimeSopError: "缺少 Runtime 或 Instance，不能生成 Runtime SOP。" }));
-      return;
-    }
-    if (!draftId) {
-      setWorkflowDraftRunState((current) => ({ ...current, runtimeSopError: "请先保存 Workflow Draft。" }));
-      return;
-    }
-    setWorkflowDraftRunState((current) => ({ ...current, generating: true, runtimeSopError: "" }));
-    try {
-      const payload = { draft_id: draftId, draft_path: workflowDraftRunState.draftPath || "" };
-      const raw = provider.generateWorkflowDraftRuntimeSop
-        ? await provider.generateWorkflowDraftRuntimeSop(runtimeForDraft, instanceId, workflowId, payload)
-        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts/${encodeURIComponent(draftId)}/runtime-sop`, payload);
-      if (String(raw.status || "") === "failed") throw new Error(String(raw.reason || raw.message || "Runtime SOP generation failed"));
-      setWorkflowDraftRunState((current) => ({
-        ...current,
-        generating: false,
-        runtimeSopError: "",
-        runtimeSopResult: raw,
-      }));
-      setDraftCanvasMessage(`Runtime SOP 已生成：${String(raw.runtime_sop_path || raw.runtimeSopPath || "")}`);
-    } catch (error) {
-      setWorkflowDraftRunState((current) => ({
-        ...current,
-        generating: false,
-        runtimeSopError: error instanceof Error ? error.message : String(error),
-      }));
+      return null;
     }
   }
   async function runWorkflowDraftDefinition() {
@@ -8806,22 +8821,29 @@ function WorkflowCatalog({
       ? ({ id: "mock-runtime", name: "mock-runtime", endpoint: "", status: "active", localStatus: "ok" } as Runtime)
       : undefined);
     const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForDraft));
-    const draftId = workflowDraftRunState.draftId || "";
     if (!runtimeForDraft || !instanceId || (!provider.runWorkflowDraft && !spiBase)) {
       setWorkflowDraftRunState((current) => ({ ...current, runError: "缺少 Runtime 或 Instance，不能运行 Workflow Draft。" }));
       return;
     }
-    if (!draftId) {
-      setWorkflowDraftRunState((current) => ({ ...current, runError: "请先保存 Workflow Draft。" }));
+    if (!draft.edges.length) {
+      setWorkflowDraftRunState((current) => ({ ...current, runError: "请先创建至少一条 Edge。" }));
       return;
     }
-    const runtimeSopPath = String(workflowDraftRunState.runtimeSopResult?.runtime_sop_path || workflowDraftRunState.runtimeSopResult?.runtimeSopPath || "");
+    if (draft.edges.length && workflowDraftAiReadyCount < draft.edges.length) {
+      setWorkflowDraftRunState((current) => ({ ...current, runError: "还有 Edge 没有通过 Edge Handoff Agent 评估，不能试运行草稿工作流。" }));
+      return;
+    }
+    const saved = await saveWorkflowDraftDefinition({ silent: true });
+    const draftId = String(saved?.draft_id || saved?.draftId || workflowDraftRunState.draftId || "");
+    if (!draftId) {
+      setWorkflowDraftRunState((current) => ({ ...current, runError: "草稿自动保存失败，不能运行 Workflow Draft。" }));
+      return;
+    }
     setWorkflowDraftRunState((current) => ({ ...current, running: true, runError: "" }));
     try {
       const payload = {
         draft_id: draftId,
-        draft_path: workflowDraftRunState.draftPath || "",
-        runtime_sop_path: runtimeSopPath,
+        draft_path: String(saved?.draft_path || saved?.draftPath || workflowDraftRunState.draftPath || ""),
         repo: defaultInstance?.repo || selectedInstance?.repo || "",
         url: workflowDraftRunUrl,
         input: { url: workflowDraftRunUrl },
@@ -8836,6 +8858,7 @@ function WorkflowCatalog({
         runError: "",
         runResult: raw,
         pipelineId,
+        runtimeSopResult: safeRecord(raw.runtime_sop_result || raw.runtimeSopResult || current.runtimeSopResult),
       }));
       setDraftCanvasMessage(pipelineId ? `Workflow Draft 已启动：${pipelineId}` : "Workflow Draft 已启动");
       if (pipelineId) onOpenRun(workflowId, pipelineId, instanceId);
@@ -8844,6 +8867,56 @@ function WorkflowCatalog({
         ...current,
         running: false,
         runError: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }
+  async function publishWorkflowDraftDefinition() {
+    const workflowId = selectedWorkflow?.workflowId || "workflow";
+    const instanceId = activeInstanceId || selectedInstanceId || selectedInstance?.instanceId || (provider.mode === "mock" ? "mock-instance" : "");
+    const runtimeForDraft = activeRuntime || runtime || (provider.mode === "mock"
+      ? ({ id: "mock-runtime", name: "mock-runtime", endpoint: "", status: "active", localStatus: "ok" } as Runtime)
+      : undefined);
+    const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForDraft));
+    if (!runtimeForDraft || !instanceId || (!provider.publishWorkflowDraft && !spiBase)) {
+      setWorkflowDraftRunState((current) => ({ ...current, publishError: "缺少 Runtime 或 Instance，不能发布到当前 Runtime。" }));
+      return;
+    }
+    if (!draft.edges.length || workflowDraftAiReadyCount < draft.edges.length) {
+      setWorkflowDraftRunState((current) => ({ ...current, publishError: "发布前必须让所有 Edge 通过 Edge Handoff Agent 评估。" }));
+      return;
+    }
+    const saved = await saveWorkflowDraftDefinition({ silent: true });
+    const draftId = String(saved?.draft_id || saved?.draftId || workflowDraftRunState.draftId || "");
+    if (!draftId) {
+      setWorkflowDraftRunState((current) => ({ ...current, publishError: "草稿自动保存失败，不能发布。" }));
+      return;
+    }
+    setWorkflowDraftRunState((current) => ({ ...current, publishing: true, publishError: "" }));
+    try {
+      const payload = {
+        draft_id: draftId,
+        draft_path: String(saved?.draft_path || saved?.draftPath || workflowDraftRunState.draftPath || ""),
+        title: draft.name || `${workflowId} draft`,
+        description: draft.goal || "",
+        published_workflow_id: `${workflowId}-${draftId}`,
+      };
+      const raw = provider.publishWorkflowDraft
+        ? await provider.publishWorkflowDraft(runtimeForDraft, instanceId, workflowId, draftId, payload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts/${encodeURIComponent(draftId)}/publish-runtime`, payload);
+      if (String(raw.status || "") === "failed") throw new Error(String(raw.reason || raw.message || "Runtime publish failed"));
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        publishing: false,
+        publishError: "",
+        publishResult: raw,
+      }));
+      await queryClient.invalidateQueries({ queryKey: ["workflow-definitions"] });
+      setDraftCanvasMessage(`已发布到当前 Runtime：${String(raw.workflow_id || raw.workflowId || draftId)}`);
+    } catch (error) {
+      setWorkflowDraftRunState((current) => ({
+        ...current,
+        publishing: false,
+        publishError: error instanceof Error ? error.message : String(error),
       }));
     }
   }
@@ -9337,7 +9410,17 @@ function WorkflowCatalog({
   const workflowDraftAiReadyCount = draft.edges.filter((edge) => edgeHandoffAgentCanSave(draftAgentEvaluations[edge.id]?.evaluation)).length;
   const workflowDraftRuntimeSopPath = String(workflowDraftRunState.runtimeSopResult?.runtime_sop_path || workflowDraftRunState.runtimeSopResult?.runtimeSopPath || "");
   const workflowDraftSaveStatus = String(safeRecord(workflowDraftRunState.saveResult?.validation).status || "-");
-  const workflowDraftCanRun = Boolean(workflowDraftRunState.draftId && workflowDraftRuntimeSopPath && !workflowDraftRunState.running);
+  const workflowDraftAllEdgesReady = Boolean(draft.edges.length && workflowDraftAiReadyCount === draft.edges.length);
+  const workflowDraftCanRun = Boolean(workflowDraftAllEdgesReady && !workflowDraftRunState.running && !workflowDraftRunState.saving && !workflowDraftRunState.autoSaving);
+  const workflowDraftCanPublish = Boolean(workflowDraftAllEdgesReady && !workflowDraftRunState.publishing && !workflowDraftRunState.saving && !workflowDraftRunState.autoSaving);
+  const workflowDraftPublishedId = String(workflowDraftRunState.publishResult?.workflow_id || workflowDraftRunState.publishResult?.workflowId || "");
+  const workflowDraftSaveLabel = workflowDraftRunState.autoSaving
+    ? "自动保存中"
+    : workflowDraftRunState.autoSaveError
+      ? "自动保存失败"
+      : workflowDraftRunState.autoSavedAt || workflowDraftRunState.draftId
+        ? "已自动保存"
+        : "等待自动保存";
   return (
     <section className={`workflow-catalog-page ${builderOnly ? "workflow-builder-page" : ""}`}>
       {builderOnly ? (
@@ -9753,9 +9836,11 @@ function WorkflowCatalog({
                 )}
               </section>
 
-              <section className="flow-panel workflow-edge-detail-section">
+              <details className="flow-panel workflow-edge-detail-section workflow-edge-advanced-panel">
+                <summary><span>高级：Edge 草稿与源码 Patch</span><ChevronDown size={14} /></summary>
+                <div className="workflow-edge-advanced-body">
                 <div className="panel-head">
-                  <div><strong>草稿与 SOP 生成</strong><span>保存草稿后可试运行交接；正式 SOP 仍需 repo-first 落库。</span></div>
+                  <div><strong>兼容工具</strong><span>主流程会自动保存 Workflow Draft；这里仅用于调试旧 Edge 草稿和源码 Patch 生成。</span></div>
                   <div className="workflow-edge-detail-actions-inline">
                     <button
                       type="button"
@@ -9774,17 +9859,17 @@ function WorkflowCatalog({
                       onClick={() => generateSavedDraftRuntimeSop(selectedDraftEdge.id)}
                     >
                       {selectedDraftEdgeSaveState?.runtimeSopGenerating ? <Loader2 size={13} /> : <Workflow size={13} />}
-                      生成 Runtime SOP
+                      生成内部快照
                     </button>
                     <button
                       type="button"
-                      className="btn primary compact"
+                      className="ghost-btn compact"
                       disabled={!selectedDraftEdgeSaveState?.draftId || !selectedDraftEdgeSaveState?.runtimeSopResult || selectedDraftEdgeSaveState?.applying}
                       title={!selectedDraftEdgeSaveState?.runtimeSopResult ? "请先生成 Runtime SOP" : "生成正式 SOP 变更方案"}
                       onClick={() => applySavedDraftEdge(selectedDraftEdge.id)}
                     >
                       {selectedDraftEdgeSaveState?.applying ? <Loader2 size={13} /> : <GitBranch size={13} />}
-                      生成正式 SOP
+                      生成源码 Patch
                     </button>
                   </div>
                 </div>
@@ -9827,7 +9912,8 @@ function WorkflowCatalog({
                     <pre>{String(selectedDraftEdgeSaveState.applyResult.patch || "")}</pre>
                   </details>
                 ) : null}
-              </section>
+                </div>
+              </details>
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head">
@@ -9962,7 +10048,7 @@ function WorkflowCatalog({
         )}
         <div className="workflow-draft-notice">
           <AlertTriangle size={16} />
-          <span>发布 SOP 仍必须走 agent-brain-plugins repo-first 流程；当前页面只生成 Edge 设计草稿和连接评估。</span>
+          <span>这里所有编辑都会自动保存为当前 Instance 的 Workflow Draft。只有点击“发布到当前 Runtime”后，才会出现在 Workflow Definition List；源码 SOP 仍保持不变。</span>
         </div>
         <div className="workflow-draft-concept-strip">
           <article>
@@ -9992,39 +10078,39 @@ function WorkflowCatalog({
         <section className="workflow-draft-run-panel">
           <div className="workflow-draft-run-head">
             <div>
-              <strong>Workflow Draft 运行闭环</strong>
-              <span>先保存草稿，再生成当前 Runtime 可加载的 SOP 快照，最后基于快照启动真实 Workflow Run。</span>
+              <strong>Workflow Draft 验证与发布</strong>
+              <span>编辑自动保存；试运行会基于当前草稿启动真实 Workflow Run；验证通过后发布到当前 Runtime 的 Definition List。</span>
             </div>
             <div className="workflow-draft-run-actions">
-              <button type="button" className="ghost-btn compact" disabled={workflowDraftRunState.saving || !draft.edges.length} onClick={saveWorkflowDraftDefinition}>
-                {workflowDraftRunState.saving ? <Loader2 size={14} /> : <Save size={14} />}
-                保存草稿
-              </button>
-              <button type="button" className="btn compact" disabled={!workflowDraftRunState.draftId || workflowDraftRunState.generating} onClick={generateWorkflowDraftRuntimeSop}>
-                {workflowDraftRunState.generating ? <Loader2 size={14} /> : <Workflow size={14} />}
-                生成 Runtime SOP
-              </button>
-              <button type="button" className="btn primary compact" disabled={!workflowDraftCanRun} title={!workflowDraftRuntimeSopPath ? "请先生成 Runtime SOP 快照" : "基于草稿快照启动真实 Workflow Run"} onClick={runWorkflowDraftDefinition}>
+              <span className={`status-pill ${workflowDraftRunState.autoSaveError ? "failed" : workflowDraftRunState.autoSaving ? "waiting" : "done"}`}>
+                {workflowDraftRunState.autoSaving ? <Loader2 size={13} /> : workflowDraftRunState.autoSaveError ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
+                {workflowDraftSaveLabel}
+              </span>
+              <button type="button" className="btn primary compact" disabled={!workflowDraftCanRun} title={!workflowDraftAllEdgesReady ? "请先让所有 Edge 通过 Agent 评估" : "保存最新草稿并启动真实 Workflow Run"} onClick={runWorkflowDraftDefinition}>
                 {workflowDraftRunState.running ? <Loader2 size={14} /> : <Play size={14} />}
-                运行 Draft Workflow
+                试运行草稿工作流
+              </button>
+              <button type="button" className="btn compact" disabled={!workflowDraftCanPublish} title={!workflowDraftAllEdgesReady ? "请先让所有 Edge 通过 Agent 评估" : "发布到当前 Runtime 的 Workflow Definition List"} onClick={publishWorkflowDraftDefinition}>
+                {workflowDraftRunState.publishing ? <Loader2 size={14} /> : <Send size={14} />}
+                发布到当前 Runtime
               </button>
             </div>
           </div>
           <div className="workflow-draft-run-grid">
             <article className={workflowDraftRunState.draftId ? "ready" : ""}>
-              <span>1. Draft</span>
-              <strong>{workflowDraftRunState.draftId ? "已保存" : "未保存"}</strong>
+              <span>1. 草稿</span>
+              <strong>{workflowDraftSaveLabel}</strong>
               <small>{workflowDraftRunState.draftId || `${draft.nodes.length} nodes · ${draft.edges.length} edges · AI ready ${workflowDraftAiReadyCount}/${draft.edges.length}`}</small>
             </article>
-            <article className={workflowDraftRuntimeSopPath ? "ready" : ""}>
-              <span>2. Runtime SOP</span>
-              <strong>{workflowDraftRuntimeSopPath ? "已生成" : "未生成"}</strong>
-              <small>{workflowDraftRuntimeSopPath || `validation ${workflowDraftSaveStatus}`}</small>
-            </article>
             <article className={workflowDraftRunState.pipelineId ? "ready" : ""}>
-              <span>3. Workflow Run</span>
+              <span>2. 草稿试运行</span>
               <strong>{workflowDraftRunState.pipelineId ? shortId(workflowDraftRunState.pipelineId) : "未启动"}</strong>
-              <small>{workflowDraftRunState.pipelineId ? "已产生真实 pipeline_id" : "运行后会打开 Workflow Run 详情"}</small>
+              <small>{workflowDraftRunState.pipelineId ? "已产生真实 pipeline_id" : "运行会自动使用当前草稿快照"}</small>
+            </article>
+            <article className={workflowDraftPublishedId ? "ready" : ""}>
+              <span>3. Runtime 发布</span>
+              <strong>{workflowDraftPublishedId ? shortId(workflowDraftPublishedId) : "未发布"}</strong>
+              <small>{workflowDraftPublishedId ? "已加入当前 Runtime Definition List" : "发布不会修改源码 SOP 仓库"}</small>
             </article>
           </div>
           <div className="workflow-draft-run-input-row">
@@ -10044,13 +10130,20 @@ function WorkflowCatalog({
               <span>{workflowDraftRunState.error || workflowDraftRunState.runtimeSopError || workflowDraftRunState.runError}</span>
             </div>
           ) : null}
+          {workflowDraftRunState.publishError || workflowDraftRunState.autoSaveError ? (
+            <div className="workflow-draft-overview-error">
+              <AlertTriangle size={14} />
+              <span>{workflowDraftRunState.publishError || workflowDraftRunState.autoSaveError}</span>
+            </div>
+          ) : null}
           <details className="workflow-draft-runtime-brief">
-            <summary><span>运行闭环原始状态</span><ChevronDown size={14} /></summary>
+            <summary><span>调试数据</span><ChevronDown size={14} /></summary>
             <KeyValues data={{
               draft_id: workflowDraftRunState.draftId || "-",
               draft_path: workflowDraftRunState.draftPath || "-",
-              runtime_sop_path: workflowDraftRuntimeSopPath || "-",
+              internal_runtime_snapshot: workflowDraftRuntimeSopPath || "-",
               pipeline_id: workflowDraftRunState.pipelineId || "-",
+              published_workflow_id: workflowDraftPublishedId || "-",
               validation: workflowDraftSaveStatus,
             }} />
           </details>

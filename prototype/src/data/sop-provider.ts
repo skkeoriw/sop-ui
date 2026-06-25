@@ -1652,6 +1652,13 @@ export const sopProvider: SopDataProvider = {
     );
   },
 
+  async publishWorkflowDraft(runtime, instanceId, workflowId, draftId, input: WorkflowDraftRequest): Promise<WorkflowDraftResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/drafts/${encodeURIComponent(draftId)}/publish-runtime`,
+      input
+    );
+  },
+
   async getRuntimeInheritance(runtime, instanceId) {
     const raw = await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/config/inheritance`
