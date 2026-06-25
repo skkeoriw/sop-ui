@@ -1041,7 +1041,7 @@ export const mockProvider: SopDataProvider = {
     const prompt = `Use skill sop-${to} to execute this Node Execution Request.\n\n# Edge Draft Trial Request\n\n- edge_id: ${edgeId}\n- upstream: ${from}\n- downstream: ${to}\n- instruction: ${String(input.edge_handoff_instruction || edge.instruction || "")}\n\nResolved input source_url from synthetic upstream output.`;
     return {
       ok: true,
-      mode: "edge-handoff-simulation",
+      mode: "edge-handoff-probe",
       simulation_id: `${edgeId}-simulation-mock-${Date.now()}`,
       status: "passed",
       verdict: "can_handoff",
@@ -1079,8 +1079,25 @@ export const mockProvider: SopDataProvider = {
       hermes_request_preview: {
         format: "markdown",
         prompt,
-        source: "mock-edge-handoff-simulation",
+        source: "mock-edge-handoff-probe",
         executes_real_node: false,
+      },
+      handoff_probe: {
+        status: "passed",
+        understood_primary_input: { target_input: "source_url", value_preview: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+        understood_supporting_inputs: [],
+        missing_inputs: [],
+        risks: [],
+        downstream_execution_plan: "Use source_url as the primary input, then run the downstream skill only after the user starts a real Node Run.",
+        should_run_real_node: true,
+        summary: "Mock downstream agent understands the handoff.",
+      },
+      probe_trace: {
+        provider: "mock",
+        model: "handoff-probe-mock",
+        used_ai: true,
+        prompt,
+        response: "{\"status\":\"passed\"}",
       },
       warnings: [],
       blocking_reasons: [],

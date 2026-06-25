@@ -7923,6 +7923,94 @@ pre {
   gap: 8px;
 }
 
+.workflow-edge-primary-panel {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, .82fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.workflow-edge-primary-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-edge-primary-card.done {
+  border-color: #bbf7d0;
+  background: #f8fffb;
+}
+
+.workflow-edge-primary-card.failed,
+.workflow-edge-primary-card.stale {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.workflow-edge-guide-card {
+  grid-column: 1 / -1;
+}
+
+.workflow-edge-result-metrics {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workflow-edge-result-metrics span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.workflow-edge-result-metrics b {
+  min-width: 0;
+  color: var(--text);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.workflow-edge-candidate-apply {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.workflow-edge-candidate-apply span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workflow-draft-edge-instruction.compact textarea {
+  min-height: 112px;
+}
+
+.workflow-edge-prompt-preview.stale {
+  border-color: #fca5a5;
+  background: #1f1515;
+}
+
 .workflow-edge-detail-grid {
   min-width: 0;
   display: grid;
@@ -7968,6 +8056,10 @@ pre {
   gap: 10px;
 }
 
+.workflow-edge-detail-lists.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .workflow-edge-detail-lists > div {
   min-width: 0;
   display: grid;
@@ -8011,6 +8103,136 @@ pre {
   min-width: 0;
   display: grid;
   gap: 10px;
+}
+
+.workflow-edge-probe-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-edge-probe-summary article {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-edge-probe-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.workflow-edge-probe-summary pre,
+.workflow-edge-probe-summary p {
+  min-width: 0;
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.edge-evaluation-backdrop {
+  z-index: 80;
+}
+
+.edge-evaluation-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.edge-evaluation-steps {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.edge-evaluation-steps article {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.edge-evaluation-steps article.done {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.edge-evaluation-steps article span {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+.edge-evaluation-steps article strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.edge-evaluation-running {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  text-align: center;
+}
+
+.edge-evaluation-result-panel {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.edge-evaluation-guide-preview {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.edge-evaluation-guide-preview strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.edge-evaluation-guide-preview pre {
+  min-width: 0;
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .workflow-draft-sop-states {
@@ -8090,11 +8312,20 @@ pre {
   }
 
   .workflow-edge-detail-grid,
+  .workflow-edge-primary-panel,
   .workflow-edge-skill-meta-grid,
   .workflow-edge-detail-lists,
+  .workflow-edge-detail-lists.compact,
+  .workflow-edge-result-metrics,
+  .workflow-edge-probe-summary,
+  .edge-evaluation-steps,
   .workflow-draft-sop-states,
   .workflow-draft-edge-overview-card {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-edge-candidate-apply {
+    display: grid;
   }
 
   .workflow-edge-prompt-preview {

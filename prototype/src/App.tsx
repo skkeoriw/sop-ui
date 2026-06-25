@@ -176,11 +176,20 @@ type EdgeHandoffAgentState = {
   error?: string;
   evaluation?: EdgeHandoffAgentEvaluation;
   raw?: Record<string, unknown>;
+  candidateEvaluation?: EdgeHandoffAgentEvaluation;
+  candidateRaw?: Record<string, unknown>;
+  appliedAt?: string;
+  appliedInstructionSignature?: string;
+  appliedEdgeSignature?: string;
 };
 type EdgeHandoffSimulationState = {
   loading?: boolean;
   error?: string;
   result?: Record<string, unknown>;
+};
+type EdgeEvaluationDialogState = {
+  edgeId: string;
+  open: boolean;
 };
 type EdgeDraftSaveState = {
   loading?: boolean;
@@ -8154,6 +8163,7 @@ function WorkflowCatalog({
   const [draftAgentEvaluations, setDraftAgentEvaluations] = useState<Record<string, EdgeHandoffAgentState>>({});
   const [draftEdgeSimulationStates, setDraftEdgeSimulationStates] = useState<Record<string, EdgeHandoffSimulationState>>({});
   const [draftEdgeSaveStates, setDraftEdgeSaveStates] = useState<Record<string, EdgeDraftSaveState>>({});
+  const [edgeEvaluationDialog, setEdgeEvaluationDialog] = useState<EdgeEvaluationDialogState>({ edgeId: "", open: false });
   const [workflowDraftRunState, setWorkflowDraftRunState] = useState<WorkflowDraftRunState>({});
   const [workflowDraftRunUrl, setWorkflowDraftRunUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   const [draftBuilderOpen, setDraftBuilderOpen] = useState(false);
@@ -8230,11 +8240,17 @@ function WorkflowCatalog({
     : "";
   const selectedDraftAgentState = selectedDraftEdge ? draftAgentEvaluations[selectedDraftEdge.id] : undefined;
   const selectedDraftAgentEvaluation = selectedDraftAgentState?.evaluation;
+  const selectedDraftCandidateEvaluation = selectedDraftAgentState?.candidateEvaluation;
+  const selectedDraftAgentApplied = edgeHandoffAgentIsAppliedForEdge(selectedDraftEdge, selectedDraftAgentState);
+  const selectedDraftAgentStale = edgeHandoffAgentIsStaleForEdge(selectedDraftEdge, selectedDraftAgentState);
   const selectedDraftAgentGuidePrompt = edgeHandoffAgentGuidePrompt(selectedDraftAgentEvaluation);
   const selectedDraftSimulationState = selectedDraftEdge ? draftEdgeSimulationStates[selectedDraftEdge.id] : undefined;
   const selectedDraftSimulationPrompt = edgeHandoffSimulationPrompt(selectedDraftSimulationState?.result);
   const selectedDraftEdgeSaveState = selectedDraftEdge ? draftEdgeSaveStates[selectedDraftEdge.id] : undefined;
-  const selectedDraftAgentCanSave = edgeHandoffAgentCanSave(selectedDraftAgentEvaluation);
+  const selectedDraftAgentCanSave = edgeHandoffAgentCanSave(selectedDraftAgentEvaluation) && selectedDraftAgentApplied;
+  const evaluationDialogEdge = edgeEvaluationDialog.open ? draft.edges.find((edge) => edge.id === edgeEvaluationDialog.edgeId) : undefined;
+  const evaluationDialogState = evaluationDialogEdge ? draftAgentEvaluations[evaluationDialogEdge.id] : undefined;
+  const evaluationDialogCandidate = evaluationDialogState?.candidateEvaluation;
   const workflowDraftAutoSaveKey = useMemo(() => JSON.stringify({
     draft: { ...draft, positions: draftNodePositions },
     evaluations: Object.fromEntries(
@@ -8243,24 +8259,6 @@ function WorkflowCatalog({
         .filter(([, evaluation]) => Boolean(evaluation))
     ),
   }), [draft, draftAgentEvaluations, draftNodePositions]);
-  useEffect(() => {
-    if (!selectedDraftEdge || !runtime || !activeInstanceId || !selectedDraftEdgeSourceNode || !selectedDraftEdgeTargetNode) return;
-    const current = draftAgentEvaluations[selectedDraftEdge.id];
-    if (current?.loading || current?.evaluation || current?.error) return;
-    if (selectedDraftEdgeEvaluation?.status === "stale" || selectedDraftEdgeEvaluation?.status === "blocked") return;
-    const timer = window.setTimeout(() => {
-      void runDraftEdgeAgentEvaluation(selectedDraftEdge.id);
-    }, 450);
-    return () => window.clearTimeout(timer);
-  }, [
-    activeInstanceId,
-    draftAgentEvaluations,
-    runtime,
-    selectedDraftEdge,
-    selectedDraftEdgeEvaluation?.status,
-    selectedDraftEdgeSourceNode,
-    selectedDraftEdgeTargetNode,
-  ]);
   const activeDraftHandoffNode = activeDraftHandoffNodeId ? nodesById.get(activeDraftHandoffNodeId) : undefined;
   const activeDraftTargets = activeDraftHandoffNode
     ? draftNodes.filter((target) => target.nodeId !== activeDraftHandoffNode.nodeId && !draft.edges.some((edge) => edge.from === activeDraftHandoffNode.nodeId && edge.to === target.nodeId))
@@ -8403,6 +8401,9 @@ function WorkflowCatalog({
             ...(current[edgeId] || {}),
             evaluation: safeRecord(match.evaluation) as EdgeHandoffAgentEvaluation,
             raw: { evaluation: safeRecord(match.evaluation) },
+            appliedAt: safeToString(safeRecord(match.evaluation).evaluated_at) || new Date().toISOString(),
+            appliedInstructionSignature: workflowDraftEdgeInstructionSignature(restoredEdge),
+            appliedEdgeSignature: workflowDraftEdgeSignature(restoredEdge),
           },
         }));
         setDraftEdgeSaveStates((current) => ({
@@ -8678,6 +8679,32 @@ function WorkflowCatalog({
       return next;
     });
   }
+  function markDraftEdgeEvaluationStale(edgeId: string) {
+    setDraftAgentEvaluations((current) => {
+      if (!current[edgeId]) return current;
+      return {
+        ...current,
+        [edgeId]: {
+          ...current[edgeId],
+          candidateEvaluation: undefined,
+          candidateRaw: undefined,
+          error: "",
+        },
+      };
+    });
+    setDraftEdgeSimulationStates((current) => {
+      if (!current[edgeId]) return current;
+      const next = { ...current };
+      delete next[edgeId];
+      return next;
+    });
+    setDraftEdgeSaveStates((current) => {
+      if (!current[edgeId]) return current;
+      const next = { ...current };
+      delete next[edgeId];
+      return next;
+    });
+  }
   function buildDraftEdgePayload(edgeId: string, phase = "design") {
     const edge = draft.edges.find((item) => item.id === edgeId);
     if (!edge) return null;
@@ -8737,7 +8764,7 @@ function WorkflowCatalog({
   function buildWorkflowDraftPayload() {
     const evaluations = Object.fromEntries(
       draft.edges
-        .map((edge) => [edge.id, draftAgentEvaluations[edge.id]?.evaluation])
+        .map((edge) => [edge.id, edgeHandoffAgentIsAppliedForEdge(edge, draftAgentEvaluations[edge.id]) ? draftAgentEvaluations[edge.id]?.evaluation : undefined])
         .filter(([, evaluation]) => Boolean(evaluation))
     );
     return {
@@ -8934,14 +8961,16 @@ function WorkflowCatalog({
       setDraftAgentEvaluations((current) => ({
         ...current,
         [edgeId]: {
+          ...(current[edgeId] || {}),
           error: `缺少 ${missing || "运行上下文"}，不能运行 Edge Handoff Agent。`,
         },
       }));
       return;
     }
+    setEdgeEvaluationDialog({ edgeId, open: true });
     setDraftAgentEvaluations((current) => ({
       ...current,
-      [edgeId]: { ...(current[edgeId] || {}), loading: true, error: "" },
+      [edgeId]: { ...(current[edgeId] || {}), loading: true, error: "", candidateEvaluation: undefined, candidateRaw: undefined },
     }));
     try {
       const raw = provider.evaluateWorkflowEdge
@@ -8950,7 +8979,7 @@ function WorkflowCatalog({
       const evaluation = (raw.evaluation && typeof raw.evaluation === "object" ? raw.evaluation : raw) as EdgeHandoffAgentEvaluation;
       setDraftAgentEvaluations((current) => ({
         ...current,
-        [edgeId]: { loading: false, evaluation, raw },
+        [edgeId]: { ...(current[edgeId] || {}), loading: false, candidateEvaluation: evaluation, candidateRaw: raw, error: "" },
       }));
     } catch (error) {
       setDraftAgentEvaluations((current) => ({
@@ -8963,7 +8992,45 @@ function WorkflowCatalog({
       }));
     }
   }
+  function applyDraftEdgeAgentEvaluation(edgeId: string) {
+    const edge = draft.edges.find((item) => item.id === edgeId);
+    setDraftAgentEvaluations((current) => {
+      const state = current[edgeId];
+      if (!edge || !state?.candidateEvaluation) return current;
+      return {
+        ...current,
+        [edgeId]: {
+          ...state,
+          evaluation: state.candidateEvaluation,
+          raw: state.candidateRaw || state.raw,
+          appliedAt: new Date().toISOString(),
+          appliedInstructionSignature: workflowDraftEdgeInstructionSignature(edge),
+          appliedEdgeSignature: workflowDraftEdgeSignature(edge),
+          candidateEvaluation: undefined,
+          candidateRaw: undefined,
+          error: "",
+        },
+      };
+    });
+    setDraftEdgeSimulationStates((current) => {
+      if (!current[edgeId]) return current;
+      const next = { ...current };
+      delete next[edgeId];
+      return next;
+    });
+    setEdgeEvaluationDialog((current) => current.edgeId === edgeId ? { edgeId: "", open: false } : current);
+    setDraftCanvasMessage("Edge Handoff Agent 评估结果已确认应用。");
+  }
   async function runDraftEdgeSimulation(edgeId: string) {
+    const edge = draft.edges.find((item) => item.id === edgeId);
+    const agentState = draftAgentEvaluations[edgeId];
+    if (!edgeHandoffAgentCanSave(agentState?.evaluation) || !edgeHandoffAgentIsAppliedForEdge(edge, agentState)) {
+      setDraftEdgeSimulationStates((current) => ({
+        ...current,
+        [edgeId]: { ...(current[edgeId] || {}), error: "请先完成 Edge Handoff Agent 评估，并点击确认应用评估结果。" },
+      }));
+      return;
+    }
     const built = buildDraftEdgePayload(edgeId, "simulation");
     const runtimeForEdge = built?.runtime || activeRuntime;
     const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForEdge));
@@ -8977,7 +9044,7 @@ function WorkflowCatalog({
       setDraftEdgeSimulationStates((current) => ({
         ...current,
         [edgeId]: {
-          error: `缺少 ${missing || "运行上下文"}，不能运行交接包试运行。`,
+          error: `缺少 ${missing || "运行上下文"}，不能运行交接理解检查。`,
         },
       }));
       return;
@@ -8986,6 +9053,8 @@ function WorkflowCatalog({
     const runtimeSopPath = draftEdgeSaveStates[edgeId]?.runtimeSopResult?.runtimeSopPath || "";
     const payload = {
       ...built.payload,
+      mode: "handoff-probe",
+      handoff_probe: true,
       input_source: "generated-fixture",
       simulation_target: runtimeSopPath ? "runtime-sop" : "edge-draft",
       runtime_sop_path: runtimeSopPath,
@@ -9025,6 +9094,13 @@ function WorkflowCatalog({
       setDraftEdgeSaveStates((current) => ({
         ...current,
         [edgeId]: { error: "请先运行 Edge Handoff Agent 评估。" },
+      }));
+      return;
+    }
+    if (!edgeHandoffAgentIsAppliedForEdge(edge, agentState)) {
+      setDraftEdgeSaveStates((current) => ({
+        ...current,
+        [edgeId]: { error: "评估结果已过期或尚未确认应用，请重新评估并确认后再保存。" },
       }));
       return;
     }
@@ -9232,7 +9308,7 @@ function WorkflowCatalog({
     }
   }
   function reEvaluateDraftEdge(edgeId: string) {
-    clearDraftAgentEvaluation(edgeId);
+    markDraftEdgeEvaluationStale(edgeId);
     setDraft((current) => ({
       ...current,
       edges: current.edges.map((edge) => {
@@ -9251,7 +9327,7 @@ function WorkflowCatalog({
     }));
   }
   function updateDraftEdgeMode(edgeId: string, relayMode: string) {
-    clearDraftAgentEvaluation(edgeId);
+    markDraftEdgeEvaluationStale(edgeId);
     setDraft((current) => ({
       ...current,
       edges: current.edges.map((edge) => {
@@ -9267,7 +9343,7 @@ function WorkflowCatalog({
     }));
   }
   function updateDraftEdgeInstruction(edgeId: string, instruction: string) {
-    clearDraftAgentEvaluation(edgeId);
+    markDraftEdgeEvaluationStale(edgeId);
     setDraft((current) => ({
       ...current,
       edges: current.edges.map((edge) => edge.id === edgeId ? { ...edge, instruction } : edge),
@@ -9277,7 +9353,7 @@ function WorkflowCatalog({
     const fromNode = nodesById.get(sourceNodeId);
     const toNode = nodesById.get(targetNodeId);
     if (!fromNode || !toNode || !sourceOutput) return;
-    clearDraftAgentEvaluation(edgeId);
+    markDraftEdgeEvaluationStale(edgeId);
     setDraft((current) => ({
       ...current,
       edges: current.edges.map((edge) => {
@@ -9298,7 +9374,7 @@ function WorkflowCatalog({
     }));
   }
   function setDraftEdgeTargetInput(edgeId: string, sourceOutput: string, targetInput: string) {
-    clearDraftAgentEvaluation(edgeId);
+    markDraftEdgeEvaluationStale(edgeId);
     setDraft((current) => ({
       ...current,
       edges: current.edges.map((edge) => edge.id !== edgeId
@@ -9310,7 +9386,7 @@ function WorkflowCatalog({
     }));
   }
   function setDraftEdgeResolver(edgeId: string, sourceOutput: string, resolver: string) {
-    clearDraftAgentEvaluation(edgeId);
+    markDraftEdgeEvaluationStale(edgeId);
     setDraft((current) => ({
       ...current,
       edges: current.edges.map((edge) => edge.id !== edgeId
@@ -9407,7 +9483,7 @@ function WorkflowCatalog({
   const draftEdgeDisabledReason = workflowDraftEdgeDisabledReason(draft, draftFromNode, draftToNode, nodesById);
   const canAddEdge = !draftEdgeDisabledReason;
   const draftBuilderVisible = builderOnly || draftBuilderOpen;
-  const workflowDraftAiReadyCount = draft.edges.filter((edge) => edgeHandoffAgentCanSave(draftAgentEvaluations[edge.id]?.evaluation)).length;
+  const workflowDraftAiReadyCount = draft.edges.filter((edge) => edgeHandoffAgentCanSave(draftAgentEvaluations[edge.id]?.evaluation) && edgeHandoffAgentIsAppliedForEdge(edge, draftAgentEvaluations[edge.id])).length;
   const workflowDraftRuntimeSopPath = String(workflowDraftRunState.runtimeSopResult?.runtime_sop_path || workflowDraftRunState.runtimeSopResult?.runtimeSopPath || "");
   const workflowDraftSaveStatus = String(safeRecord(workflowDraftRunState.saveResult?.validation).status || "-");
   const workflowDraftAllEdgesReady = Boolean(draft.edges.length && workflowDraftAiReadyCount === draft.edges.length);
@@ -9593,10 +9669,10 @@ function WorkflowCatalog({
             <>
               <div className="flow-panel workflow-edge-detail-hero">
                 <div>
-                  <span className={`status-pill ${workflowDraftStatusTone(selectedDraftEdgeEvaluation.status)}`}>{workflowDraftStatusLabel(selectedDraftEdgeEvaluation.status)}</span>
+                  <span className={`status-pill ${selectedDraftAgentStale ? "stale" : edgeHandoffAgentStatusTone(selectedDraftAgentEvaluation?.status)}`}>{selectedDraftAgentStale ? "评估已过期" : edgeHandoffAgentStatusLabel(selectedDraftAgentEvaluation?.status)}</span>
                   <h2>{selectedDraftEdge.from} → {selectedDraftEdge.to}</h2>
                   <code>{selectedDraftEdge.id}</code>
-                  <p>{selectedDraftEdge.instruction || "这条 Edge 还没有交接说明。补充说明后再运行 Agent 评估和交接包试运行。"}</p>
+                  <p>{selectedDraftEdge.instruction || "这条 Edge 还没有交接说明。补充说明后再运行 Agent 评估和交接理解检查。"}</p>
                 </div>
                 <div className="workflow-edge-detail-actions">
                   <button type="button" className="ghost-btn compact" onClick={onOpenDraftBuilder}>
@@ -9607,10 +9683,72 @@ function WorkflowCatalog({
                   </button>
                   <button type="button" className="btn primary compact" disabled={selectedDraftAgentState?.loading} onClick={() => runDraftEdgeAgentEvaluation(selectedDraftEdge.id)}>
                     {selectedDraftAgentState?.loading ? <Loader2 size={14} /> : <Bot size={14} />}
-                    {selectedDraftAgentEvaluation ? "重新评估 Edge" : "运行 Edge 评估"}
+                    {selectedDraftAgentEvaluation ? "重新评估 Edge" : "评估 Edge"}
                   </button>
                 </div>
               </div>
+
+              <section className="workflow-edge-primary-panel">
+                <article className={`workflow-edge-primary-card ${selectedDraftAgentStale ? "stale" : edgeHandoffAgentStatusTone(selectedDraftAgentEvaluation?.status)}`}>
+                  <div className="panel-head">
+                    <div><strong>Edge Handoff Agent 评估结果</strong><span>先判断这条边能不能接，再决定是否进入 Probe 或真实运行。</span></div>
+                    <span className={`status-pill ${selectedDraftAgentStale ? "stale" : edgeHandoffAgentStatusTone(selectedDraftAgentEvaluation?.status)}`}>{selectedDraftAgentStale ? "评估过期" : edgeHandoffAgentStatusLabel(selectedDraftAgentEvaluation?.status)}</span>
+                  </div>
+                  <div className="workflow-edge-result-metrics">
+                    <span><b>{typeof selectedDraftAgentEvaluation?.confidence === "number" ? `${Math.round(selectedDraftAgentEvaluation.confidence * 100)}%` : "-"}</b>confidence</span>
+                    <span><b>{selectedDraftAgentEvaluation?.agent?.used_ai ? "AI" : selectedDraftAgentEvaluation ? "not AI" : "-"}</b>agent</span>
+                    <span><b>{selectedDraftAgentApplied ? "已确认" : selectedDraftCandidateEvaluation ? "待确认" : "未确认"}</b>应用状态</span>
+                  </div>
+                  {selectedDraftAgentStale ? (
+                    <div className="workflow-draft-agent-error">
+                      <AlertTriangle size={14} />
+                      <span>Edge 交接说明或接力配置已变化，当前评估和指导提示词基于旧版本生成。请重新评估并确认应用。</span>
+                    </div>
+                  ) : null}
+                  {selectedDraftAgentEvaluation?.summary ? <p>{selectedDraftAgentEvaluation.summary}</p> : <p>点击“评估 Edge”后，系统会读取上下游 Skill、交接说明和输入输出契约，调用 Edge Handoff Agent 生成结论。</p>}
+                  <div className="workflow-edge-detail-lists compact">
+                    <div>
+                      <strong>阻断 / 风险</strong>
+                      {selectedDraftAgentEvaluation?.blocking_reasons?.length ? selectedDraftAgentEvaluation.blocking_reasons.map((item, index) => <span key={`primary-blocking-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
+                    </div>
+                    <div>
+                      <strong>需要补充</strong>
+                      {selectedDraftAgentEvaluation?.required_user_inputs?.length ? selectedDraftAgentEvaluation.required_user_inputs.map((item, index) => <span key={`primary-required-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
+                    </div>
+                  </div>
+                  {selectedDraftCandidateEvaluation ? (
+                    <div className="workflow-edge-candidate-apply">
+                      <span>新的评估结果已生成，确认后才会写入本页面并允许 Probe/发布。</span>
+                      <button type="button" className="btn primary compact" onClick={() => applyDraftEdgeAgentEvaluation(selectedDraftEdge.id)}>
+                        <CheckCircle2 size={14} />确认应用评估结果
+                      </button>
+                    </div>
+                  ) : null}
+                </article>
+
+                <article className="workflow-edge-primary-card">
+                  <div className="panel-head"><div><strong>Edge 交接说明</strong><span>修改后会让当前评估结果过期，必须重新评估。</span></div></div>
+                  <label className="workflow-draft-edge-instruction compact">
+                    <textarea
+                      value={selectedDraftEdge.instruction || ""}
+                      onChange={(event) => updateDraftEdgeInstruction(selectedDraftEdge.id, event.target.value)}
+                      placeholder="说明下游 Agent 应该如何理解上游产物，例如：只读取 source_url，metadata_file 仅作为辅助上下文。"
+                    />
+                  </label>
+                </article>
+
+                <article className="workflow-edge-primary-card workflow-edge-guide-card">
+                  <div className="panel-head">
+                    <div><strong>下游实际提示词</strong><span>真实 Node Run 会携带的 Node Execution Guide。</span></div>
+                    <button type="button" className="ghost-btn compact" disabled={!selectedDraftAgentGuidePrompt || selectedDraftAgentStale} onClick={() => { void copyDraftText(selectedDraftAgentGuidePrompt, "Node Execution Guide"); }}>
+                      <Copy size={13} />复制
+                    </button>
+                  </div>
+                  {selectedDraftAgentGuidePrompt ? (
+                    <pre className={`workflow-edge-prompt-preview ${selectedDraftAgentStale ? "stale" : ""}`}>{selectedDraftAgentGuidePrompt}</pre>
+                  ) : <Empty text="确认应用评估结果后，这里会显示下游 Hermes / Skill 实际收到的指导提示词。" />}
+                </article>
+              </section>
 
               <div className="workflow-edge-detail-grid">
                 <section className="flow-panel">
@@ -9643,18 +9781,6 @@ function WorkflowCatalog({
                   </div>
                 </section>
               </div>
-
-              <section className="flow-panel workflow-edge-detail-section">
-                <div className="panel-head"><div><strong>Handoff Instruction</strong><span>这段说明属于 Edge，不属于上下游节点</span></div></div>
-                <label className="workflow-draft-edge-instruction">
-                  <span>Edge 交接说明</span>
-                  <textarea
-                    value={selectedDraftEdge.instruction || ""}
-                    onChange={(event) => updateDraftEdgeInstruction(selectedDraftEdge.id, event.target.value)}
-                    placeholder="说明下游 Agent 应该如何理解上游产物，例如：把 source_url 作为深度研究的视频 URL。"
-                  />
-                </label>
-              </section>
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head"><div><strong>Relay Contract</strong><span>定义上游产物如何形成下游输入；自动模式不持久化隐式 mappings。</span></div></div>
@@ -9917,37 +10043,50 @@ function WorkflowCatalog({
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head">
-                  <div><strong>Node Execution Guide</strong><span>下游 Hermes/Skill 执行时会携带的指导文档</span></div>
-                  <button type="button" className="ghost-btn compact" disabled={!selectedDraftAgentGuidePrompt} onClick={() => { void copyDraftText(selectedDraftAgentGuidePrompt, "Node Execution Guide"); }}>
-                    <Copy size={13} />复制
-                  </button>
-                </div>
-                {selectedDraftAgentGuidePrompt ? <pre className="workflow-edge-prompt-preview">{selectedDraftAgentGuidePrompt}</pre> : <Empty text="运行 Agent 评估后生成 Node Execution Guide。" />}
-              </section>
-
-              <section className="flow-panel workflow-edge-detail-section">
-                <div className="panel-head">
-                  <div><strong>试运行交接包</strong><span>运行对象是{selectedDraftEdgeSaveState?.runtimeSopResult ? " Runtime SOP 快照" : "当前 Edge 草稿"}；只验证上游产物能否解析成下游输入，不执行真实下游节点。</span></div>
-                  <button type="button" className="btn primary compact" disabled={selectedDraftSimulationState?.loading} onClick={() => runDraftEdgeSimulation(selectedDraftEdge.id)}>
-                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Play size={13} />}{selectedDraftEdgeSaveState?.runtimeSopResult ? "试运行 Runtime SOP 交接包" : "试运行交接包"}
+                  <div><strong>交接理解检查</strong><span>mock 上游产物后询问下游 Agent 是否理解输入；不执行真实 Skill。</span></div>
+                  <button type="button" className="btn primary compact" disabled={selectedDraftSimulationState?.loading || !selectedDraftAgentCanSave} title={!selectedDraftAgentCanSave ? "请先确认应用未过期的 Edge 评估结果" : "让下游 Agent 做执行前输入理解检查"} onClick={() => runDraftEdgeSimulation(selectedDraftEdge.id)}>
+                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Bot size={13} />}交接理解检查
                   </button>
                 </div>
                 <div className="workflow-draft-run-target-note">
-                  <strong>运行对象：{selectedDraftEdgeSaveState?.runtimeSopResult ? "Runtime SOP 快照" : "当前 Edge 草稿"}</strong>
-                  <span>会生成模拟上游产物、relay package、resolved inputs 和 Hermes 请求预览；不会执行真实节点，也不会写 active Runtime SOP 或正式 SOP。</span>
+                  <strong>检查对象：下游 Agent 输入理解</strong>
+                  <span>会生成模拟上游产物、resolved inputs 和 Hermes Probe Request；下游 Agent 只回答自己理解到的数据，不执行业务脚本。</span>
                 </div>
                 {selectedDraftSimulationState?.error ? <div className="workflow-draft-agent-error"><AlertTriangle size={14} /><span>{selectedDraftSimulationState.error}</span></div> : null}
                 {selectedDraftSimulationState?.result ? (
                   <div className="workflow-edge-simulation-result">
                     <KeyValues data={{
-                      run_target: selectedDraftEdgeSaveState?.runtimeSopResult ? "runtime sop snapshot" : "edge draft",
+                      check_target: "handoff probe",
                       status: String(selectedDraftSimulationState.result.status || "-"),
                       verdict: String(selectedDraftSimulationState.result.verdict || "-"),
                       simulation_id: String(selectedDraftSimulationState.result.simulation_id || "-"),
                       executes_real_node: String(safeRecord(selectedDraftSimulationState.result.hermes_request_preview).executes_real_node ?? false),
-                      runtime_sop_path: selectedDraftEdgeSaveState?.runtimeSopResult?.runtimeSopPath || "-",
-                      writes_active_runtime_sop: "false",
+                      should_run_real_node: String(safeRecord(selectedDraftSimulationState.result.handoff_probe).should_run_real_node ?? "-"),
+                      writes_runtime_state: "false",
                     }} />
+                    {selectedDraftSimulationState.result.handoff_probe ? (
+                      <div className="workflow-edge-probe-summary">
+                        <article>
+                          <span>下游理解的主输入</span>
+                          <pre>{JSON.stringify(safeRecord(selectedDraftSimulationState.result.handoff_probe).understood_primary_input || {}, null, 2)}</pre>
+                        </article>
+                        <article>
+                          <span>辅助上下文</span>
+                          <pre>{JSON.stringify(safeRecord(selectedDraftSimulationState.result.handoff_probe).understood_supporting_inputs || [], null, 2)}</pre>
+                        </article>
+                        <article>
+                          <span>风险 / 缺失</span>
+                          <pre>{JSON.stringify({
+                            missing_inputs: safeRecord(selectedDraftSimulationState.result.handoff_probe).missing_inputs || [],
+                            risks: safeRecord(selectedDraftSimulationState.result.handoff_probe).risks || [],
+                          }, null, 2)}</pre>
+                        </article>
+                        <article>
+                          <span>下游执行前计划</span>
+                          <p>{String(safeRecord(selectedDraftSimulationState.result.handoff_probe).downstream_execution_plan || safeRecord(selectedDraftSimulationState.result.handoff_probe).summary || "-")}</p>
+                        </article>
+                      </div>
+                    ) : null}
                     <div className="workflow-edge-detail-lists">
                       <div>
                         <strong>Target Resolution</strong>
@@ -9980,8 +10119,8 @@ function WorkflowCatalog({
                         )) : <span>无</span>}
                       </div>
                     </div>
-                    <details className="workflow-draft-runtime-brief" open>
-                      <summary><span>Handoff Simulation Trace</span><ChevronDown size={14} /></summary>
+                    <details className="workflow-draft-runtime-brief">
+                      <summary><span>Handoff Probe Trace</span><ChevronDown size={14} /></summary>
                       <pre>{JSON.stringify({
                         generated_fixture: selectedDraftSimulationState.result.generated_fixture || {},
                         relay_mappings: selectedDraftSimulationState.result.relay_mappings || [],
@@ -9992,20 +10131,22 @@ function WorkflowCatalog({
                         missing_inputs: selectedDraftSimulationState.result.missing_inputs || [],
                         warnings: selectedDraftSimulationState.result.warnings || [],
                         hermes_request_preview: selectedDraftSimulationState.result.hermes_request_preview || {},
+                        handoff_probe: selectedDraftSimulationState.result.handoff_probe || {},
+                        probe_trace: selectedDraftSimulationState.result.probe_trace || {},
                       }, null, 2)}</pre>
                     </details>
                   </div>
-                ) : <Empty text="点击试运行交接包后，会基于当前草稿生成模拟上游输出、relay package、resolved inputs 和 Hermes 请求预览。" />}
+                ) : <Empty text="点击交接理解检查后，会 mock 上游输出并询问下游 Agent 是否能正确理解输入。" />}
               </section>
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head">
-                  <div><strong>Hermes Request Preview</strong><span>下游 Agent 实际会看到的请求草案</span></div>
+                  <div><strong>Hermes Probe Request</strong><span>下游 Agent 做输入理解检查时收到的请求。</span></div>
                   <button type="button" className="ghost-btn compact" disabled={!selectedDraftSimulationPrompt} onClick={() => { void copyDraftText(selectedDraftSimulationPrompt, "Hermes Request Preview"); }}>
                     <Copy size={13} />复制
                   </button>
                 </div>
-                {selectedDraftSimulationPrompt ? <pre className="workflow-edge-prompt-preview">{selectedDraftSimulationPrompt}</pre> : <Empty text="先运行试运行交接包，生成 request preview。" />}
+                {selectedDraftSimulationPrompt ? <pre className="workflow-edge-prompt-preview">{selectedDraftSimulationPrompt}</pre> : <Empty text="先运行交接理解检查，生成 Hermes Probe Request。" />}
               </section>
             </>
           ) : (
@@ -10307,17 +10448,17 @@ function WorkflowCatalog({
                 <div className="workflow-draft-edge-overview-card">
                   <div>
                     <span>Edge Handoff Agent</span>
-                    <strong>{edgeHandoffAgentStatusLabel(selectedDraftAgentEvaluation?.status)}</strong>
+                    <strong>{selectedDraftAgentStale ? "评估过期" : edgeHandoffAgentStatusLabel(selectedDraftAgentEvaluation?.status)}</strong>
                     <small>
                       {typeof selectedDraftAgentEvaluation?.confidence === "number"
-                        ? `confidence ${Math.round(selectedDraftAgentEvaluation.confidence * 100)}%`
+                        ? `${selectedDraftAgentApplied ? "已确认" : "未确认"} · confidence ${Math.round(selectedDraftAgentEvaluation.confidence * 100)}%`
                         : "未生成正式评估"}
                     </small>
                   </div>
                   <div>
-                    <span>交接包试运行</span>
+                    <span>交接理解检查</span>
                     <strong>{selectedDraftSimulationState?.result ? String(selectedDraftSimulationState.result.status || "-") : "未试运行"}</strong>
-                    <small>基于当前 Edge 草稿，只验证交接包和 Hermes Request，不执行真实节点。</small>
+                    <small>下游 Agent 只判断自己是否理解输入，不执行真实 Skill。</small>
                   </div>
                 </div>
                 <div className="workflow-draft-edge-overview-actions">
@@ -10333,11 +10474,11 @@ function WorkflowCatalog({
                 ) : null}
                 <div className="workflow-draft-edge-next-step">
                   <strong>完整编辑与验证在 Edge Detail 中完成</strong>
-                  <span>交接说明、接力方式、Agent Trace、试运行交接包、Runtime SOP 和正式 SOP 生成都集中在详情页，避免 Builder 右侧信息过载。</span>
+                  <span>交接说明、评估确认、下游提示词、交接理解检查和 Agent Trace 都集中在详情页。</span>
                 </div>
                 <div className="workflow-draft-edge-actions">
-                  <button type="button" className="ghost-btn compact" onClick={() => reEvaluateDraftEdge(selectedDraftEdge.id)}>
-                    <RefreshCw size={14} />重新评估
+                  <button type="button" className="ghost-btn compact" onClick={() => runDraftEdgeAgentEvaluation(selectedDraftEdge.id)}>
+                    <RefreshCw size={14} />评估 Edge
                   </button>
                   <button type="button" className="ghost-btn compact" onClick={() => removeDraftEdge(selectedDraftEdge.id)}>
                     <Trash2 size={14} />删除
@@ -10430,6 +10571,91 @@ function WorkflowCatalog({
           </aside>
         </div>
       </section>}
+      {edgeEvaluationDialog.open && evaluationDialogEdge ? (
+        <div className="modal-backdrop edge-evaluation-backdrop" role="dialog" aria-modal="true">
+          <div className="trigger-modal edge-evaluation-modal">
+            <div className="modal-head">
+              <div>
+                <h2>Edge Handoff Agent 评估</h2>
+                <span>{evaluationDialogEdge.from} → {evaluationDialogEdge.to}</span>
+              </div>
+              <button type="button" className="ghost-btn compact" onClick={() => setEdgeEvaluationDialog({ edgeId: "", open: false })}>
+                <X size={15} />关闭
+              </button>
+            </div>
+            <div className="edge-evaluation-steps">
+              {[
+                "读取上游节点 Skill 元数据",
+                "读取下游节点 Skill 元数据",
+                "读取 Edge 交接说明",
+                "读取输入 / 输出契约",
+                "调用 Edge Handoff Agent",
+                "生成评估结果",
+                "生成 Node Execution Guide",
+              ].map((step, index) => (
+                <article key={step} className={evaluationDialogState?.loading || evaluationDialogCandidate ? "done" : "waiting"}>
+                  <span>{index + 1}</span>
+                  <strong>{step}</strong>
+                </article>
+              ))}
+            </div>
+            {evaluationDialogState?.loading ? (
+              <div className="edge-evaluation-running">
+                <Loader2 size={22} />
+                <strong>正在评估 Edge</strong>
+                <span>评估完成后请检查结果，再确认应用到页面。</span>
+              </div>
+            ) : null}
+            {evaluationDialogState?.error ? (
+              <div className="workflow-draft-agent-error">
+                <AlertTriangle size={14} />
+                <span>{evaluationDialogState.error}</span>
+              </div>
+            ) : null}
+            {evaluationDialogCandidate ? (
+              <div className="edge-evaluation-result-panel">
+                <div className="workflow-draft-agent-score">
+                  <span className={`status-pill ${edgeHandoffAgentStatusTone(evaluationDialogCandidate.status)}`}>{edgeHandoffAgentStatusLabel(evaluationDialogCandidate.status)}</span>
+                  <strong>{typeof evaluationDialogCandidate.score === "number" ? Math.round(evaluationDialogCandidate.score * 100) : "-"}%</strong>
+                  <small>confidence {typeof evaluationDialogCandidate.confidence === "number" ? Math.round(evaluationDialogCandidate.confidence * 100) : "-"}%</small>
+                  <small>{String(evaluationDialogCandidate.agent?.provider || "agent")} · {String(evaluationDialogCandidate.agent?.model || "model")} · {evaluationDialogCandidate.agent?.used_ai ? "AI" : "not AI"}</small>
+                </div>
+                {evaluationDialogCandidate.summary ? <p>{evaluationDialogCandidate.summary}</p> : null}
+                <div className="workflow-edge-detail-lists compact">
+                  <div>
+                    <strong>阻断原因</strong>
+                    {evaluationDialogCandidate.blocking_reasons?.length ? evaluationDialogCandidate.blocking_reasons.map((item, index) => <span key={`dialog-block-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
+                  </div>
+                  <div>
+                    <strong>需要补充</strong>
+                    {evaluationDialogCandidate.required_user_inputs?.length ? evaluationDialogCandidate.required_user_inputs.map((item, index) => <span key={`dialog-required-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
+                  </div>
+                </div>
+                <label className="workflow-draft-edge-instruction compact">
+                  <span>Edge 交接说明</span>
+                  <textarea
+                    value={evaluationDialogEdge.instruction || ""}
+                    onChange={(event) => updateDraftEdgeInstruction(evaluationDialogEdge.id, event.target.value)}
+                    placeholder="如果评估不符合预期，可以在这里修改说明后重新评估。"
+                  />
+                </label>
+                <div className="edge-evaluation-guide-preview">
+                  <strong>候选 Node Execution Guide</strong>
+                  <pre>{edgeHandoffAgentGuidePrompt(evaluationDialogCandidate) || "当前评估没有生成指导提示词。"}</pre>
+                </div>
+                <div className="modal-actions">
+                  <button type="button" className="ghost-btn" onClick={() => runDraftEdgeAgentEvaluation(evaluationDialogEdge.id)}>
+                    <RefreshCw size={15} />修改说明后重新评估
+                  </button>
+                  <button type="button" className="primary" disabled={!edgeHandoffAgentCanSave(evaluationDialogCandidate)} onClick={() => applyDraftEdgeAgentEvaluation(evaluationDialogEdge.id)}>
+                    <CheckCircle2 size={15} />确认应用评估结果
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -10636,6 +10862,41 @@ function edgeHandoffAgentGuidePrompt(evaluation?: EdgeHandoffAgentEvaluation) {
   return typeof guide?.prompt === "string" ? guide.prompt : "";
 }
 
+function workflowDraftStableSignature(value: unknown) {
+  return JSON.stringify(value ?? null);
+}
+
+function workflowDraftEdgeInstructionSignature(edge: WorkflowDraftEdge | undefined) {
+  return workflowDraftStableSignature({
+    edge_handoff_instruction: edge?.instruction || "",
+  });
+}
+
+function workflowDraftEdgeSignature(edge: WorkflowDraftEdge | undefined) {
+  return workflowDraftStableSignature({
+    id: edge?.id || "",
+    from: edge?.from || "",
+    to: edge?.to || "",
+    instruction: edge?.instruction || "",
+    sourceIntent: edge?.sourceIntent || "",
+    targetIntent: edge?.targetIntent || "",
+    fromSignature: edge?.fromSignature || "",
+    toSignature: edge?.toSignature || "",
+    relayMode: edge?.relayMode || "",
+    relayMappings: edge?.relayMappings || [],
+  });
+}
+
+function edgeHandoffAgentIsAppliedForEdge(edge: WorkflowDraftEdge | undefined, state?: EdgeHandoffAgentState) {
+  if (!edge || !state?.evaluation) return false;
+  return state.appliedInstructionSignature === workflowDraftEdgeInstructionSignature(edge)
+    && state.appliedEdgeSignature === workflowDraftEdgeSignature(edge);
+}
+
+function edgeHandoffAgentIsStaleForEdge(edge: WorkflowDraftEdge | undefined, state?: EdgeHandoffAgentState) {
+  return Boolean(state?.evaluation && !edgeHandoffAgentIsAppliedForEdge(edge, state));
+}
+
 function workflowDraftNodeSkillMeta(node: NodeRegistryItem | undefined) {
   return {
     name: workflowDraftNodeSkillId(node),
@@ -10654,6 +10915,8 @@ function workflowDraftNodeSkillMeta(node: NodeRegistryItem | undefined) {
 }
 
 function edgeHandoffSimulationPrompt(result?: Record<string, unknown>) {
+  const probeTrace = safeRecord(result?.probe_trace);
+  if (typeof probeTrace.prompt === "string" && probeTrace.prompt.trim()) return probeTrace.prompt;
   const preview = safeRecord(result?.hermes_request_preview);
   return typeof preview.prompt === "string" ? preview.prompt : "";
 }
