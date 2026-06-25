@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   BarChart3,
   Bot,
   Boxes,
@@ -83,7 +84,7 @@ import type {
 } from "./data/types";
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
-type AppView = "runtime" | "instance" | "workflows" | "workflow" | "nodes" | "machines" | "settings";
+type AppView = "runtime" | "instance" | "workflows" | "workflowBuilder" | "workflow" | "nodes" | "machines" | "settings";
 type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string; nodeRunId?: string; nodeRunList?: boolean };
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
 type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
@@ -434,6 +435,7 @@ function readRoute(): AppRoute {
   const empty = { nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
   if (parts[0] === "runtimes") {
     if (parts[2] === "workflows") return { view: "workflows", ...empty };
+    if (parts[2] === "instances" && parts[4] === "workflow-drafts") return { view: "workflowBuilder", ...empty };
     if (parts[2] === "instances" && parts[4] === "workflows" && !parts[5]) return { view: "workflows", ...empty };
     if (parts[2] === "instances" && parts[4] === "workflows") {
       const executionIndex = parts.indexOf("executions");
@@ -461,6 +463,7 @@ function readRoute(): AppRoute {
   if (parts[0] === "instances") return { view: parts[2] === "workflow" ? "workflow" : "instance", ...empty, pipelineId: decodeURIComponent(parts[4] || ""), nodeId: decodeURIComponent(parts[5] || "") };
   if (parts[0] === "runs") return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[1] || ""), nodeId: decodeURIComponent(parts[2] || "") };
   if (parts[0] === "workflows") return { view: "workflows", ...empty };
+  if (parts[0] === "workflow-drafts") return { view: "workflowBuilder", ...empty };
   if (parts[0] === "workflow") {
     const offset = parts[1] === "runs" ? 2 : 1;
     return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[offset] || ""), nodeId: decodeURIComponent(parts[offset + 1] || "") };
@@ -485,6 +488,7 @@ function routePath(view: AppView, entityId = "", secondaryId = "") {
   if (view === "runtime") return "/runtimes";
   if (view === "instance") return "/instances";
   if (view === "workflows") return "/workflows";
+  if (view === "workflowBuilder") return "/workflow-drafts";
   if (view === "nodes") return entityId ? `/nodes/${encodeURIComponent(entityId)}${secondaryId ? `/modules/${encodeURIComponent(secondaryId)}` : ""}` : "/nodes";
   if (view === "workflow") return entityId ? `/workflow/runs/${encodeURIComponent(entityId)}${secondaryId ? `/${encodeURIComponent(secondaryId)}` : ""}` : "/workflow";
   if (view === "machines") return "/machines";
@@ -5043,6 +5047,7 @@ export default function App() {
   const shouldLoadRuntimeScopedData =
     (viewMode === "runtime" && hasRuntimeRouteId) ||
     viewMode === "workflows" ||
+    viewMode === "workflowBuilder" ||
     viewMode === "instance" ||
     viewMode === "workflow" ||
     viewMode === "nodes" ||
@@ -5073,7 +5078,7 @@ export default function App() {
   const instanceSource = instancesQuery.data?.source || "";
   const instanceHasMore = Boolean(instancesQuery.data?.hasMore);
   const workflowDefaultInstance = instances.find((item) => !isManagementInstance(item)) || instances[0];
-  const instance = instances.find((item) => item.instanceId === instanceId) || (viewMode === "workflows" ? workflowDefaultInstance : undefined) || instances[0];
+  const instance = instances.find((item) => item.instanceId === instanceId) || (viewMode === "workflows" || viewMode === "workflowBuilder" ? workflowDefaultInstance : undefined) || instances[0];
   const switcherInstances = useMemo(() => {
     const query = instanceSwitchSearch.trim().toLowerCase();
     if (!query) return instances;
@@ -5095,7 +5100,7 @@ export default function App() {
   const workflowsQuery = useQuery({
     queryKey: ["workflow-definitions", mode, runtime?.id || ""],
     queryFn: async () => provider.listWorkflowDefinitions ? provider.listWorkflowDefinitions(runtime) : [],
-    enabled: viewMode === "workflows" || runtimeManagementOpen,
+    enabled: viewMode === "workflows" || viewMode === "workflowBuilder" || runtimeManagementOpen,
   });
   const workflowDefinitions = workflowsQuery.data || [];
   const currentRuntimeManagementDefaults = (): RuntimeManagementFormDefaults => ({
@@ -5366,12 +5371,12 @@ export default function App() {
   const nodesQuery = useQuery({
     queryKey: queryKeys.nodes(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodes(runtime!, instance!.instanceId),
-    enabled: Boolean(runtime && instance && (viewMode === "instance" || viewMode === "workflows" || viewMode === "nodes"))
+    enabled: Boolean(runtime && instance && (viewMode === "instance" || viewMode === "workflows" || viewMode === "workflowBuilder" || viewMode === "nodes"))
   });
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodeDrafts(runtime!, instance!.instanceId),
-    enabled: Boolean(runtime && instance && (viewMode === "nodes" || viewMode === "settings"))
+    enabled: Boolean(runtime && instance && (viewMode === "workflowBuilder" || viewMode === "nodes" || viewMode === "settings"))
   });
   const nodeDraftSchemaQuery = useQuery({
     queryKey: queryKeys.nodeDraftSchema(mode, runtime, instance?.instanceId || ""),
@@ -6011,6 +6016,7 @@ export default function App() {
     if (view === "runtime") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}`;
     if (view === "instance") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances`;
     if (view === "workflows") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows`;
+    if (view === "workflowBuilder") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflow-drafts`;
     if (view === "workflow") {
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}`;
       if (entityId) nextPath += `/executions/${encodeURIComponent(entityId)}`;
@@ -6065,9 +6071,9 @@ export default function App() {
       else if (route.nodeRunList) nextPath += `/runs`;
       else if (route.moduleId) nextPath += `/modules/${encodeURIComponent(route.moduleId)}`;
       nextRoute = { view: "nodes", nodeId: route.nodeId, pipelineId: "", artifactId: "", moduleId: route.moduleId, nodeRunId: route.nodeRunId, nodeRunList: route.nodeRunList };
-    } else if (viewMode === "workflows") {
-      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}/workflows`;
-      nextRoute = { view: "workflows", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
+    } else if (viewMode === "workflows" || viewMode === "workflowBuilder") {
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}/${viewMode === "workflowBuilder" ? "workflow-drafts" : "workflows"}`;
+      nextRoute = { view: viewMode, nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
     } else if (viewMode === "instance" && routeContext.instanceId) {
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}`;
       nextRoute = { view: "instance", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
@@ -6273,7 +6279,7 @@ export default function App() {
           <button type="button" className={`rail-nav-item ${viewMode === "instance" ? "active" : ""}`} onClick={() => navigateTo("instance")}>
             <LayoutDashboard size={17} /><span>Instance</span><small>{instanceTotal || instances.length || "-"} registry</small>
           </button>
-          <button type="button" className={`rail-nav-item ${viewMode === "workflows" || viewMode === "workflow" ? "active" : ""}`} onClick={() => navigateTo("workflows")}>
+          <button type="button" className={`rail-nav-item ${viewMode === "workflows" || viewMode === "workflowBuilder" || viewMode === "workflow" ? "active" : ""}`} onClick={() => navigateTo("workflows")}>
             <Workflow size={17} /><span>Workflow</span><small>{workflowDefinitions.length || "-"} definitions</small>
           </button>
           <button type="button" className={`rail-nav-item ${viewMode === "nodes" ? "active" : ""}`} onClick={() => navigateTo("nodes")}>
@@ -6391,7 +6397,7 @@ export default function App() {
       </aside>}
 
       <main className={`main ${viewMode === "nodes" ? "nodes-main" : ""}`}>
-        {viewMode === "workflows" ? (
+        {viewMode === "workflows" || viewMode === "workflowBuilder" ? (
           <WorkflowCatalog
             provider={provider}
             workflows={workflowDefinitions}
@@ -6402,9 +6408,12 @@ export default function App() {
             selectedInstanceId={instanceId}
             instances={instances}
             loading={workflowsQuery.isLoading}
+            builderOnly={viewMode === "workflowBuilder"}
             onOpenRuntime={(id) => selectRuntime(id)}
             onSelectInstance={switchActiveInstance}
             onOpenExecutions={(workflowId, targetInstanceId) => openWorkflowDefinitionForInstance(workflowId, targetInstanceId || instance?.instanceId || instanceId)}
+            onOpenDraftBuilder={() => navigateTo("workflowBuilder")}
+            onOpenCatalog={() => navigateTo("workflows")}
             onOpenManagement={openRuntimeManagement}
           />
         ) : viewMode === "runtime" && isRuntimeDirectory ? (
@@ -8040,9 +8049,12 @@ function WorkflowCatalog({
   selectedInstanceId,
   instances,
   loading,
+  builderOnly = false,
   onOpenRuntime,
   onSelectInstance,
   onOpenExecutions,
+  onOpenDraftBuilder,
+  onOpenCatalog,
   onOpenManagement,
 }: {
   provider: SopDataProvider;
@@ -8054,9 +8066,12 @@ function WorkflowCatalog({
   selectedInstanceId: string;
   instances: Instance[];
   loading: boolean;
+  builderOnly?: boolean;
   onOpenRuntime: (runtimeId: string) => void;
   onSelectInstance: (instanceId: string) => void;
   onOpenExecutions: (workflowId: string, targetInstanceId?: string) => void;
+  onOpenDraftBuilder: () => void;
+  onOpenCatalog: () => void;
   onOpenManagement: (action: RuntimeManagementAction) => void;
 }) {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
@@ -8258,6 +8273,44 @@ function WorkflowCatalog({
   }
   function clearDraftEdgeSelection() {
     setSelectedDraftEdgeId("");
+  }
+  function fallbackCopyText(value: string) {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    textarea.style.top = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      return document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+  async function copyDraftText(value: string, label: string) {
+    const text = String(value || "");
+    if (!text) {
+      setDraftCanvasMessage(`${label} 为空，无法复制。`);
+      return;
+    }
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else if (!fallbackCopyText(text)) {
+        throw new Error("clipboard fallback rejected");
+      }
+      setDraftCanvasMessage(`已复制 ${label}`);
+    } catch (error) {
+      try {
+        if (!fallbackCopyText(text)) throw error;
+        setDraftCanvasMessage(`已复制 ${label}`);
+      } catch {
+        setDraftCanvasMessage(`复制 ${label} 失败，请手动选中文本复制。`);
+      }
+    }
   }
   function addDraftEdgeBetween(fromNodeId: string, toNodeId: string) {
     const disabledReason = workflowDraftEdgeDisabledReason(draft, fromNodeId, toNodeId, nodesById);
@@ -8773,8 +8826,29 @@ function WorkflowCatalog({
   }
   const draftEdgeDisabledReason = workflowDraftEdgeDisabledReason(draft, draftFromNode, draftToNode, nodesById);
   const canAddEdge = !draftEdgeDisabledReason;
+  const draftBuilderVisible = builderOnly || draftBuilderOpen;
   return (
-    <section className="workflow-catalog-page">
+    <section className={`workflow-catalog-page ${builderOnly ? "workflow-builder-page" : ""}`}>
+      {builderOnly ? (
+        <section className="ops-page-header workflow-builder-header">
+          <div className="ops-page-title">
+            <span className="status-pill running"><Workflow size={14} />Workflow Draft Builder</span>
+            <div>
+              <h1>New Workflow Draft Builder</h1>
+              <p>{runtime?.displayName || runtime?.id || "No runtime selected"} · {activeInstanceId || "No instance selected"}</p>
+            </div>
+          </div>
+          <div className="ops-header-actions">
+            <button type="button" className="ghost-btn compact" onClick={onOpenCatalog}>
+              <ArrowLeft size={14} />Workflow Catalog
+            </button>
+            <span className="status-pill waiting">本地草稿</span>
+            <span>{draft.nodes.length} nodes</span>
+            <span>{draft.edges.length} edges</span>
+          </div>
+        </section>
+      ) : (
+        <>
       <section className="ops-page-header">
         <div className="ops-page-title">
           <span className="status-pill running"><Workflow size={14} />Workflow Catalog</span>
@@ -8783,7 +8857,10 @@ function WorkflowCatalog({
             <p>agent-brains SOP catalog · {runtime?.displayName || runtime?.id || "No runtime selected"}</p>
           </div>
         </div>
-        <div className="ops-header-chips">
+        <div className="ops-header-actions">
+          <button type="button" className="btn compact" disabled={!runtime || !defaultInstance} onClick={onOpenDraftBuilder}>
+            <Network size={14} />New Workflow Draft
+          </button>
           <span>{workflows.length || 0} definitions</span>
           <span>{selectedWorkflow?.interpreter || "interpreter pending"}</span>
           <span>{instances.length} instances</span>
@@ -8902,6 +8979,10 @@ function WorkflowCatalog({
                       <Play size={16} />
                       Open Workflow Detail
                     </button>
+                    <button type="button" className="btn" disabled={!runtime || !defaultInstance} onClick={onOpenDraftBuilder}>
+                      <Network size={16} />
+                      Open Draft Builder
+                    </button>
                   </div>
                 </div>
               )}
@@ -8909,23 +8990,27 @@ function WorkflowCatalog({
           ) : <Empty text="选择一个 Workflow Definition" />}
         </div>
       </section>
+        </>
+      )}
 
-      <section className={`flow-panel workflow-draft-builder ${draftBuilderOpen ? "open" : "collapsed"}`}>
+      {builderOnly && <section className={`flow-panel workflow-draft-builder ${draftBuilderVisible ? "open" : "collapsed"}`}>
         <div className="panel-head">
           <div>
             <strong>New Workflow Draft Builder</strong>
             <span>只用于新建/试验 Edge 草稿，不会修改当前已有 Workflow Definition。</span>
           </div>
           <div className="draft-builder-status">
-            <button type="button" className="ghost-btn compact" onClick={() => updateDraftBuilderOpen(!draftBuilderOpen)}>
-              <ChevronDown size={14} />{draftBuilderOpen ? "Hide Builder" : "Open Builder"}
-            </button>
+            {!builderOnly && (
+              <button type="button" className="ghost-btn compact" onClick={() => updateDraftBuilderOpen(!draftBuilderOpen)}>
+                <ChevronDown size={14} />{draftBuilderOpen ? "Hide Builder" : "Open Builder"}
+              </button>
+            )}
             <span className="status-pill waiting">本地草稿</span>
             <span>{draft.nodes.length} nodes</span>
             <span>{draft.edges.length} edges</span>
           </div>
         </div>
-        {!draftBuilderOpen && (
+        {!draftBuilderVisible && (
           <div className="workflow-draft-collapsed">
             <Info size={16} />
             <span>Edge Builder 已折叠。点击 Open Builder 才进入新 workflow 草稿设计；上方 Current Workflow 是现有 workflow 的只读入口。</span>
@@ -9093,7 +9178,7 @@ function WorkflowCatalog({
                 <div className="workflow-draft-context-bar">
                   <span>Runtime: <b>{runtime?.id || "not selected"}</b></span>
                   <span>Instance: <b>{activeInstanceId || "not selected"}</b></span>
-                  <button type="button" className="ghost-btn compact" onClick={() => navigator.clipboard?.writeText(selectedDraftEdge.id)}>
+                  <button type="button" className="ghost-btn compact" onClick={() => { void copyDraftText(selectedDraftEdge.id, "Edge ID"); }}>
                     <Copy size={13} />Copy Edge ID
                   </button>
                 </div>
@@ -9232,8 +9317,7 @@ function WorkflowCatalog({
                               className="ghost-btn compact"
                               onClick={(event) => {
                                 event.preventDefault();
-                                navigator.clipboard?.writeText(selectedDraftAgentGuidePrompt);
-                                setDraftCanvasMessage("已复制 Node Execution Guide");
+                                void copyDraftText(selectedDraftAgentGuidePrompt, "Node Execution Guide");
                               }}
                             >
                               <Copy size={13} />复制
@@ -9330,8 +9414,7 @@ function WorkflowCatalog({
                               onClick={(event) => {
                                 event.preventDefault();
                                 const text = buildEdgeDraftApplyPlanText(selectedDraftEdgeSaveState.applyPlan);
-                                navigator.clipboard?.writeText(text);
-                                setDraftCanvasMessage("已复制 Edge 落库方案");
+                                void copyDraftText(text, "Edge 落库方案");
                               }}
                             >
                               <Copy size={13} />复制方案
@@ -9381,8 +9464,7 @@ function WorkflowCatalog({
                                     className="ghost-btn compact"
                                     onClick={(event) => {
                                       event.preventDefault();
-                                      navigator.clipboard?.writeText(selectedDraftEdgeSaveState.applyPlan?.applyScript || "");
-                                      setDraftCanvasMessage("已复制 Edge 落库脚本");
+                                      void copyDraftText(selectedDraftEdgeSaveState.applyPlan?.applyScript || "", "Edge 落库脚本");
                                     }}
                                   >
                                     <Copy size={13} />复制脚本
@@ -9644,7 +9726,7 @@ function WorkflowCatalog({
             )}
           </aside>
         </div>
-      </section>
+      </section>}
     </section>
   );
 }
