@@ -8387,7 +8387,18 @@ function WorkflowCatalog({
   }, [activeInstanceId, activeRuntime, builderOnly, draft.edges, draftEdgeSaveStates, nodesById, routeEdgeId, selectedWorkflow?.workflowId]);
   useEffect(() => {
     try {
-      window.localStorage.setItem(WORKFLOW_DRAFT_STORAGE_KEY, JSON.stringify({ ...draft, positions: draftNodePositions }));
+      window.localStorage.setItem(WORKFLOW_DRAFT_STORAGE_KEY, JSON.stringify({
+        ...draft,
+        edges: draft.edges.map((edge) => {
+          const relayMode = edge.relayMode || "auto_by_target_inputs";
+          return {
+            ...edge,
+            relayMode,
+            relayMappings: relayMode === "selected_outputs" ? edge.relayMappings || [] : [],
+          };
+        }),
+        positions: draftNodePositions,
+      }));
     } catch {
       // Locked-down browsers can reject localStorage; the draft still works in memory.
     }
@@ -8627,13 +8638,19 @@ function WorkflowCatalog({
     const instanceId = activeInstanceId || selectedInstanceId || selectedInstance?.instanceId || instances[0]?.instanceId || "draft-instance";
     if (!activeRuntime || !instanceId) return null;
     const rulePrecheck = draftEdgeEvaluations.get(edge.id) || evaluateWorkflowDraftEdge(edge, nodesById);
-    const mappings = workflowDraftBuildRelayMappings(
-      downstream,
-      edge.relayMode === "selected_outputs"
-        ? (edge.relayMappings || []).map((item) => item.sourceOutput).filter(Boolean)
-        : nodeOutputContractRows(upstream).map((item) => item.name),
-      edge.relayMappings || [],
-    );
+    const relayMode = edge.relayMode || "auto_by_target_inputs";
+    const mappings = relayMode === "selected_outputs"
+      ? workflowDraftBuildRelayMappings(
+        downstream,
+        (edge.relayMappings || []).map((item) => item.sourceOutput).filter(Boolean),
+        edge.relayMappings || [],
+      )
+      : [];
+    const payloadEdge = {
+      ...edge,
+      relayMode,
+      relayMappings: relayMode === "selected_outputs" ? edge.relayMappings || [] : [],
+    };
     return {
       edge,
       upstream,
@@ -8650,10 +8667,10 @@ function WorkflowCatalog({
         upstream_node_id: edge.from,
         downstream_node_id: edge.to,
         edge_handoff_instruction: edge.instruction || "",
-        relay_mode: edge.relayMode || "auto_by_target_inputs",
+        relay_mode: relayMode,
         relay_mappings: mappings,
         rule_precheck: rulePrecheck,
-        edge,
+        edge: payloadEdge,
         runtime_context: {
           runtime_id: activeRuntime.id,
           instance_id: instanceId,
@@ -8721,7 +8738,7 @@ function WorkflowCatalog({
       setDraftEdgeSimulationStates((current) => ({
         ...current,
         [edgeId]: {
-          error: `缺少 ${missing || "运行上下文"}，不能运行交接试运行。`,
+          error: `缺少 ${missing || "运行上下文"}，不能运行交接包试运行。`,
         },
       }));
       return;
@@ -8786,13 +8803,19 @@ function WorkflowCatalog({
       }));
       return;
     }
-    const mappings = workflowDraftBuildRelayMappings(
-      nodesById.get(edge.to),
-      edge.relayMode === "selected_outputs"
-        ? (edge.relayMappings || []).map((item) => item.sourceOutput).filter(Boolean)
-        : nodeOutputContractRows(nodesById.get(edge.from)).map((item) => item.name),
-      edge.relayMappings || [],
-    );
+    const relayMode = edge.relayMode || "auto_by_target_inputs";
+    const mappings = relayMode === "selected_outputs"
+      ? workflowDraftBuildRelayMappings(
+        nodesById.get(edge.to),
+        (edge.relayMappings || []).map((item) => item.sourceOutput).filter(Boolean),
+        edge.relayMappings || [],
+      )
+      : [];
+    const payloadEdge = {
+      ...edge,
+      relayMode,
+      relayMappings: relayMode === "selected_outputs" ? edge.relayMappings || [] : [],
+    };
     const payload = {
       edge_id: edge.id,
       workflow_id: workflowId,
@@ -8801,9 +8824,9 @@ function WorkflowCatalog({
       upstream_node_id: edge.from,
       downstream_node_id: edge.to,
       edge_handoff_instruction: edge.instruction || "",
-      relay_mode: edge.relayMode || "auto_by_target_inputs",
+      relay_mode: relayMode,
       relay_mappings: mappings,
-      edge,
+      edge: payloadEdge,
       evaluation,
     };
     setDraftEdgeSaveStates((current) => ({
@@ -9067,16 +9090,15 @@ function WorkflowCatalog({
         const fromNode = nodesById.get(sourceNodeId);
         const toNode = nodesById.get(targetNodeId);
         if (!fromNode || !toNode) return edge;
+        const relayMode = edge.relayMode || "auto_by_target_inputs";
         const rawMappings = (edge.relayMappings || []).filter((item) => item.sourceOutput).filter((item) => toNode ? !!item.targetInput || item.sourceOutput : true);
-        const outputRows = nodeOutputContractRows(fromNode);
-        const mappingSources = edge.relayMode === "selected_outputs"
-          ? rawMappings.map((item) => item.sourceOutput)
-          : outputRows.map((item) => item.name);
-        const mapped = workflowDraftBuildRelayMappings(toNode, mappingSources, rawMappings);
+        const mapped = relayMode === "selected_outputs"
+          ? workflowDraftBuildRelayMappings(toNode, rawMappings.map((item) => item.sourceOutput), rawMappings)
+          : [];
         return {
           ...edge,
           relayMappings: mapped,
-          relayMode: edge.relayMode || "auto_by_target_inputs",
+          relayMode,
         };
       }),
     }));
@@ -9319,7 +9341,7 @@ function WorkflowCatalog({
                   <span className={`status-pill ${workflowDraftStatusTone(selectedDraftEdgeEvaluation.status)}`}>{workflowDraftStatusLabel(selectedDraftEdgeEvaluation.status)}</span>
                   <h2>{selectedDraftEdge.from} → {selectedDraftEdge.to}</h2>
                   <code>{selectedDraftEdge.id}</code>
-                  <p>{selectedDraftEdge.instruction || "这条 Edge 还没有交接说明。补充说明后再运行 Agent 评估和交接试运行。"}</p>
+                  <p>{selectedDraftEdge.instruction || "这条 Edge 还没有交接说明。补充说明后再运行 Agent 评估和交接包试运行。"}</p>
                 </div>
                 <div className="workflow-edge-detail-actions">
                   <button type="button" className="ghost-btn compact" onClick={onOpenDraftBuilder}>
@@ -9330,11 +9352,7 @@ function WorkflowCatalog({
                   </button>
                   <button type="button" className="btn primary compact" disabled={selectedDraftAgentState?.loading} onClick={() => runDraftEdgeAgentEvaluation(selectedDraftEdge.id)}>
                     {selectedDraftAgentState?.loading ? <Loader2 size={14} /> : <Bot size={14} />}
-                    {selectedDraftAgentEvaluation ? "重新评估" : "运行评估"}
-                  </button>
-                  <button type="button" className="btn compact" disabled={selectedDraftSimulationState?.loading} onClick={() => runDraftEdgeSimulation(selectedDraftEdge.id)}>
-                    {selectedDraftSimulationState?.loading ? <Loader2 size={14} /> : <Play size={14} />}
-                    交接试运行
+                    {selectedDraftAgentEvaluation ? "重新评估 Edge" : "运行 Edge 评估"}
                   </button>
                 </div>
               </div>
@@ -9384,6 +9402,122 @@ function WorkflowCatalog({
               </section>
 
               <section className="flow-panel workflow-edge-detail-section">
+                <div className="panel-head"><div><strong>Relay Contract</strong><span>定义上游产物如何形成下游输入；自动模式不持久化隐式 mappings。</span></div></div>
+                <div className="node-relay-mode-panel">
+                  <div>
+                    <strong>接力方式</strong>
+                    <span>{nodeRunRelayModeHelp(selectedDraftEdgeMode)}</span>
+                  </div>
+                  <div className="segmented compact">
+                    <button
+                      type="button"
+                      className={selectedDraftEdgeMode === "auto_by_target_inputs" ? "active" : ""}
+                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "auto_by_target_inputs")}
+                    >
+                      按下游需要
+                    </button>
+                    <button
+                      type="button"
+                      className={selectedDraftEdgeMode === "selected_outputs" ? "active" : ""}
+                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "selected_outputs")}
+                    >
+                      只传选中
+                    </button>
+                    <button
+                      type="button"
+                      className={selectedDraftEdgeMode === "all_outputs" ? "active" : ""}
+                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "all_outputs")}
+                    >
+                      整包
+                    </button>
+                  </div>
+                </div>
+
+                <div className="node-relay-outputs-panel">
+                  <div className="section-title"><span>上游可交付内容</span><span>{selectedDraftEdgeSourceOutputs.length}</span></div>
+                  <div className="node-relay-output-list">
+                    {selectedDraftEdgeSourceOutputs.map((output) => (
+                      <label key={output.name} className={`node-relay-output-row ${selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeSelectedOutputs.includes(output.name) ? "active" : ""}`}>
+                        {selectedDraftEdgeMode === "selected_outputs" ? (
+                          <input
+                            type="checkbox"
+                            checked={selectedDraftEdgeSelectedOutputs.includes(output.name)}
+                            onChange={() => toggleDraftEdgeSourceOutput(selectedDraftEdge.id, selectedDraftEdge.from, selectedDraftEdge.to, output.name)}
+                          />
+                        ) : <span className="dot done" />}
+                        <span>
+                          <strong>{output.name}</strong>
+                          <small>{contractContentLabel(contractRecord(output.spec), output.type)} · {output.path || "运行时生成"}</small>
+                        </span>
+                      </label>
+                    ))}
+                    {!selectedDraftEdgeSourceOutputs.length ? <Empty text="当前节点没有输出契约；切换到手动模式会无法直接选中任何输出。" /> : null}
+                  </div>
+                  {selectedDraftEdgeMode === "selected_outputs" && !selectedDraftEdgeSelectedOutputs.length ? <small className="field-hint bad">请至少选择一个上游输出。</small> : null}
+                  {selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeSelectedOutputs.length > 0 && !selectedDraftEdgeTargetInputs.length ? <small className="field-hint bad">目标节点没有输入契约，不能配置手动接力映射。</small> : null}
+                  {selectedDraftEdgeMode !== "selected_outputs" && selectedDraftEdgeSourceOutputs.length ? <small className="field-hint">{nodeRunRelayModeLabel(selectedDraftEdgeMode)} 会在后端按目标输入合成接力包，不把自动 mappings 保存进 Edge 草稿。</small> : null}
+                </div>
+
+                {selectedDraftEdgeTargetInputs.length ? (
+                  <div className="node-relay-mapping-panel">
+                    <div className="section-title"><span>下游接收要求</span><span>{selectedDraftEdgeTargetInputs.length}</span></div>
+                    <div className="node-run-input-preview-rows">
+                      {selectedDraftEdgeTargetInputs.map((row) => {
+                        const spec = contractRecord(row.spec);
+                        return (
+                          <article key={row.name}>
+                            <div>
+                              <strong>{row.name}</strong>
+                              <code>{contractContentLabel(spec, "自动")}{row.required ? " · 必填" : " · 可选"}</code>
+                            </div>
+                            <small>{String(spec.description || spec.intent || spec.purpose || "没有补充说明")}</small>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeMappings.length ? (
+                  <div className="node-relay-mapping-panel">
+                    <div className="section-title"><span>选中输出如何交给下游</span><span>{selectedDraftEdgeMappings.length}</span></div>
+                    <div className="node-relay-mapping-head">
+                      <span>上游交付</span>
+                      <span />
+                      <span>下游接收</span>
+                      <span>解析方式</span>
+                    </div>
+                    {selectedDraftEdgeMappings.map((mapping) => {
+                      const targetRows = selectedDraftEdgeTargetInputs;
+                      const targetSpec = targetRows.find((row) => row.name === mapping.targetInput)?.spec;
+                      const resolvers = contractResolvers(targetSpec);
+                      return (
+                        <article key={mapping.sourceOutput} className="node-relay-mapping-row">
+                          <code>{mapping.sourceOutput}</code>
+                          <span>→</span>
+                          <select
+                            value={mapping.targetInput || ""}
+                            onChange={(event) => setDraftEdgeTargetInput(selectedDraftEdge.id, mapping.sourceOutput, event.target.value)}
+                            disabled={!targetRows.length}
+                          >
+                            <option value="">选择目标输入</option>
+                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · 必填" : " · 可选"}</option>)}
+                          </select>
+                          <select
+                            value={mapping.resolver || ""}
+                            onChange={(event) => setDraftEdgeResolver(selectedDraftEdge.id, mapping.sourceOutput, event.target.value)}
+                          >
+                            <option value="">自动选择</option>
+                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{relayResolverLabel(resolver.id)}</option>)}
+                          </select>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </section>
+
+              <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head"><div><strong>Evaluation Report</strong><span>Edge Handoff Agent 的完整判断</span></div></div>
                 {selectedDraftAgentState?.error ? (
                   <div className="workflow-draft-agent-error"><AlertTriangle size={14} /><span>{selectedDraftAgentState.error}</span></div>
@@ -9417,6 +9551,30 @@ function WorkflowCatalog({
                         <pre>{JSON.stringify(selectedDraftAgentEvaluation.resolved_handoff, null, 2)}</pre>
                       </details>
                     ) : null}
+                    <details className="workflow-draft-runtime-brief workflow-draft-agent-trace" open>
+                      <summary><span>Agent Evaluation Trace</span><ChevronDown size={14} /></summary>
+                      <KeyValues data={{
+                        trace_type: "edge-handoff-agent",
+                        evaluation_id: String(safeRecord(selectedDraftAgentState?.raw).edge_id || selectedDraftEdge.id),
+                        evaluated_at: selectedDraftAgentEvaluation.evaluated_at || "-",
+                        provider: String(selectedDraftAgentEvaluation.agent?.provider || "-"),
+                        model: String(selectedDraftAgentEvaluation.agent?.model || "-"),
+                        used_ai: selectedDraftAgentEvaluation.agent?.used_ai ? "true" : "false",
+                        status: selectedDraftAgentEvaluation.status || "-",
+                        decision: selectedDraftAgentEvaluation.decision || "-",
+                        latency: String(safeRecord(selectedDraftAgentState?.raw).latency_ms || "unknown"),
+                      }} />
+                      <details className="workflow-draft-advanced-json">
+                        <summary>查看 Agent 请求 / 响应原文</summary>
+                        <pre>{JSON.stringify({
+                          request: safeRecord(selectedDraftAgentState?.raw).request || {},
+                          config: safeRecord(selectedDraftAgentState?.raw).config || {},
+                          evaluation: selectedDraftAgentEvaluation,
+                          stderr: safeRecord(selectedDraftAgentState?.raw).stderr || "",
+                          error: selectedDraftAgentState?.error || "",
+                        }, null, 2)}</pre>
+                      </details>
+                    </details>
                   </div>
                 ) : (
                   <Empty text="还没有 Agent 评估。点击上方“运行评估”。" />
@@ -9511,9 +9669,9 @@ function WorkflowCatalog({
 
               <section className="flow-panel workflow-edge-detail-section">
                 <div className="panel-head">
-                  <div><strong>交接试运行</strong><span>运行对象是{selectedDraftEdgeSaveState?.runtimeSopResult ? " Runtime SOP 快照" : "当前 Edge 草稿"}；只验证交接，不执行真实下游节点。</span></div>
+                  <div><strong>试运行交接包</strong><span>运行对象是{selectedDraftEdgeSaveState?.runtimeSopResult ? " Runtime SOP 快照" : "当前 Edge 草稿"}；只验证上游产物能否解析成下游输入，不执行真实下游节点。</span></div>
                   <button type="button" className="btn primary compact" disabled={selectedDraftSimulationState?.loading} onClick={() => runDraftEdgeSimulation(selectedDraftEdge.id)}>
-                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Play size={13} />}{selectedDraftEdgeSaveState?.runtimeSopResult ? "试运行 Runtime SOP" : "试运行当前草稿"}
+                    {selectedDraftSimulationState?.loading ? <Loader2 size={13} /> : <Play size={13} />}{selectedDraftEdgeSaveState?.runtimeSopResult ? "试运行 Runtime SOP 交接包" : "试运行交接包"}
                   </button>
                 </div>
                 <div className="workflow-draft-run-target-note">
@@ -9534,10 +9692,22 @@ function WorkflowCatalog({
                     }} />
                     <div className="workflow-edge-detail-lists">
                       <div>
+                        <strong>Target Resolution</strong>
+                        {edgeHandoffSimulationRows(selectedDraftSimulationState.result, "target_resolutions").length ? edgeHandoffSimulationRows(selectedDraftSimulationState.result, "target_resolutions").map((item, index) => (
+                          <span key={`target-${index}`}>{String(item.target_input || "-")} · {item.resolved ? "resolved" : "missing"}{item.resolved_source_output ? ` · ${String(item.resolved_source_output)}` : ""}</span>
+                        )) : <span>无</span>}
+                      </div>
+                      <div>
                         <strong>Resolved Inputs</strong>
                         {edgeHandoffSimulationRows(selectedDraftSimulationState.result, "resolved_inputs").map((item, index) => (
                           <span key={`resolved-${index}`}>{String(item.source_output || "-")} → {String(item.target_input || "-")} · {String(item.value_preview || item.value || "")}</span>
                         ))}
+                      </div>
+                      <div>
+                        <strong>Fallback Failures</strong>
+                        {edgeHandoffSimulationRows(selectedDraftSimulationState.result, "fallback_failures").length ? edgeHandoffSimulationRows(selectedDraftSimulationState.result, "fallback_failures").map((item, index) => (
+                          <span key={`fallback-${index}`}>{String(item.source_output || "-")} → {String(item.target_input || "-")} · {String(item.resolver || "-")} · {String(item.reason || "")}</span>
+                        )) : <span>无</span>}
                       </div>
                       <div>
                         <strong>Missing Inputs</strong>
@@ -9545,13 +9715,29 @@ function WorkflowCatalog({
                           <span key={`missing-${index}`}>{edgeHandoffAgentListText(item)}</span>
                         )) : <span>无</span>}
                       </div>
+                      <div>
+                        <strong>Warnings</strong>
+                        {edgeHandoffSimulationValues(selectedDraftSimulationState.result, "warnings").length ? edgeHandoffSimulationValues(selectedDraftSimulationState.result, "warnings").map((item, index) => (
+                          <span key={`warning-${index}`}>{String(item)}</span>
+                        )) : <span>无</span>}
+                      </div>
                     </div>
-                    <details className="workflow-draft-runtime-brief">
-                      <summary><span>Relay Package</span><ChevronDown size={14} /></summary>
-                      <pre>{JSON.stringify(selectedDraftSimulationState.result.relay_package || {}, null, 2)}</pre>
+                    <details className="workflow-draft-runtime-brief" open>
+                      <summary><span>Handoff Simulation Trace</span><ChevronDown size={14} /></summary>
+                      <pre>{JSON.stringify({
+                        generated_fixture: selectedDraftSimulationState.result.generated_fixture || {},
+                        relay_mappings: selectedDraftSimulationState.result.relay_mappings || [],
+                        relay_package: selectedDraftSimulationState.result.relay_package || {},
+                        resolved_inputs: selectedDraftSimulationState.result.resolved_inputs || [],
+                        target_resolutions: selectedDraftSimulationState.result.target_resolutions || [],
+                        fallback_failures: selectedDraftSimulationState.result.fallback_failures || [],
+                        missing_inputs: selectedDraftSimulationState.result.missing_inputs || [],
+                        warnings: selectedDraftSimulationState.result.warnings || [],
+                        hermes_request_preview: selectedDraftSimulationState.result.hermes_request_preview || {},
+                      }, null, 2)}</pre>
                     </details>
                   </div>
-                ) : <Empty text="点击试运行后，会基于当前草稿生成模拟上游输出、relay package、resolved inputs 和 Hermes 请求预览。" />}
+                ) : <Empty text="点击试运行交接包后，会基于当前草稿生成模拟上游输出、relay package、resolved inputs 和 Hermes 请求预览。" />}
               </section>
 
               <section className="flow-panel workflow-edge-detail-section">
@@ -9561,7 +9747,7 @@ function WorkflowCatalog({
                     <Copy size={13} />复制
                   </button>
                 </div>
-                {selectedDraftSimulationPrompt ? <pre className="workflow-edge-prompt-preview">{selectedDraftSimulationPrompt}</pre> : <Empty text="先运行交接试运行，生成真实 request preview。" />}
+                {selectedDraftSimulationPrompt ? <pre className="workflow-edge-prompt-preview">{selectedDraftSimulationPrompt}</pre> : <Empty text="先运行试运行交接包，生成 request preview。" />}
               </section>
             </>
           ) : (
@@ -9768,25 +9954,10 @@ function WorkflowCatalog({
                     <Copy size={13} />Copy Edge ID
                   </button>
                 </div>
-                <div className="workflow-draft-skill-pair">
-                  <article>
-                    <span>上游 Skill 说明</span>
-                    <strong>{workflowDraftNodeSkillId(selectedDraftEdgeSourceNode)}</strong>
-                    <p>{workflowDraftNodeSkillSummary(selectedDraftEdgeSourceNode)}</p>
-                    <details>
-                      <summary>查看 Skill 摘要</summary>
-                      <pre>{workflowDraftNodeSkillDetail(selectedDraftEdgeSourceNode)}</pre>
-                    </details>
-                  </article>
-                  <article>
-                    <span>下游 Skill 说明</span>
-                    <strong>{workflowDraftNodeSkillId(selectedDraftEdgeTargetNode)}</strong>
-                    <p>{workflowDraftNodeSkillSummary(selectedDraftEdgeTargetNode)}</p>
-                    <details>
-                      <summary>查看 Skill 摘要</summary>
-                      <pre>{workflowDraftNodeSkillDetail(selectedDraftEdgeTargetNode)}</pre>
-                    </details>
-                  </article>
+                <div className="workflow-draft-edge-brief">
+                  <span>上游 Skill：<b>{workflowDraftNodeSkillId(selectedDraftEdgeSourceNode)}</b></span>
+                  <span>下游 Skill：<b>{workflowDraftNodeSkillId(selectedDraftEdgeTargetNode)}</b></span>
+                  <span>交接说明：{selectedDraftEdge.instruction || "未填写"}</span>
                 </div>
                 <div className="workflow-draft-edge-report">
                   <article>
@@ -9813,7 +9984,7 @@ function WorkflowCatalog({
                     </small>
                   </div>
                   <div>
-                    <span>交接试运行</span>
+                    <span>交接包试运行</span>
                     <strong>{selectedDraftSimulationState?.result ? String(selectedDraftSimulationState.result.status || "-") : "未试运行"}</strong>
                     <small>基于当前 Edge 草稿，只验证交接包和 Hermes Request，不执行真实节点。</small>
                   </div>
@@ -9822,14 +9993,6 @@ function WorkflowCatalog({
                   <button type="button" className="btn primary compact" onClick={() => onOpenDraftEdgeDetail(selectedDraftEdge.id)}>
                     <PanelRightOpen size={14} />打开 Edge 详情
                   </button>
-                  <button type="button" className="ghost-btn compact" disabled={selectedDraftAgentState?.loading} onClick={() => runDraftEdgeAgentEvaluation(selectedDraftEdge.id)}>
-                    {selectedDraftAgentState?.loading ? <Loader2 size={14} /> : <Bot size={14} />}
-                    运行 Agent 评估
-                  </button>
-                  <button type="button" className="ghost-btn compact" disabled={selectedDraftSimulationState?.loading} onClick={() => runDraftEdgeSimulation(selectedDraftEdge.id)}>
-                    {selectedDraftSimulationState?.loading ? <Loader2 size={14} /> : <Play size={14} />}
-                    交接试运行
-                  </button>
                 </div>
                 {selectedDraftAgentState?.error || selectedDraftSimulationState?.error ? (
                   <div className="workflow-draft-overview-error">
@@ -9837,458 +10000,10 @@ function WorkflowCatalog({
                     <span>{selectedDraftAgentState?.error || selectedDraftSimulationState?.error}</span>
                   </div>
                 ) : null}
-                {workflowDraftNodeEffectNote(selectedDraftEdgeTargetNode) ? (
-                  <div className="workflow-draft-effect-note">
-                    <span>下游副作用</span>
-                    <strong>{workflowDraftNodeEffectTitle(selectedDraftEdgeTargetNode)}</strong>
-                    <p>{workflowDraftNodeEffectNote(selectedDraftEdgeTargetNode)}</p>
-                  </div>
-                ) : null}
-                <label className="workflow-draft-edge-instruction">
-                  <span>Edge 交接说明（原“粘合剂”）</span>
-                  <textarea
-                    value={selectedDraftEdge.instruction || ""}
-                    onChange={(event) => updateDraftEdgeInstruction(selectedDraftEdge.id, event.target.value)}
-                    placeholder="说明这条边要让下游 Agent 如何理解上游产物，例如：把 metadata_file 里的 title 作为 Telegram 消息正文。"
-                  />
-                  <small>这段说明属于 Edge，不属于上游或下游节点。运行时会和上下游 Skill 说明、输入输出契约一起合成给下游 Agent 的指导提示词。</small>
-                </label>
-                <div className="workflow-draft-agent-panel">
-                  <div className="workflow-draft-agent-head">
-                    <div>
-                      <strong>Edge Handoff Agent</strong>
-                      <span>用 Runtime 上的专用 Agent 评估这条 Edge，并生成下游 Node Execution Guide。</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn primary compact"
-                      disabled={selectedDraftAgentState?.loading}
-                      onClick={() => runDraftEdgeAgentEvaluation(selectedDraftEdge.id)}
-                    >
-                      {selectedDraftAgentState?.loading ? <Loader2 size={14} /> : <Bot size={14} />}
-                      {selectedDraftAgentEvaluation ? "重新运行 Agent 评估" : "运行 Agent 评估"}
-                    </button>
-                  </div>
-                  {selectedDraftAgentState?.error ? (
-                    <div className="workflow-draft-agent-error">
-                      <AlertTriangle size={14} />
-                      <span>{selectedDraftAgentState.error}</span>
-                    </div>
-                  ) : null}
-                  {selectedDraftAgentEvaluation ? (
-                    <div className="workflow-draft-agent-result">
-                      <div className="workflow-draft-agent-score">
-                        <span className={`status-pill ${edgeHandoffAgentStatusTone(selectedDraftAgentEvaluation.status)}`}>
-                          {edgeHandoffAgentStatusLabel(selectedDraftAgentEvaluation.status)}
-                        </span>
-                        <strong>{typeof selectedDraftAgentEvaluation.score === "number" ? Math.round(selectedDraftAgentEvaluation.score * 100) : "-"}%</strong>
-                        <small>confidence {typeof selectedDraftAgentEvaluation.confidence === "number" ? Math.round(selectedDraftAgentEvaluation.confidence * 100) : "-"}%</small>
-                        {selectedDraftAgentEvaluation.agent ? (
-                          <small>{String(selectedDraftAgentEvaluation.agent.provider || "agent")} · {String(selectedDraftAgentEvaluation.agent.model || "model pending")} · {selectedDraftAgentEvaluation.agent.used_ai ? "AI" : "not AI"}</small>
-                        ) : null}
-                      </div>
-                      {selectedDraftAgentEvaluation.summary ? <p>{selectedDraftAgentEvaluation.summary}</p> : null}
-                      {selectedDraftAgentEvaluation.agent?.error ? (
-                        <div className="workflow-draft-agent-error">
-                          <AlertTriangle size={14} />
-                          <span>{String(selectedDraftAgentEvaluation.agent.error)}</span>
-                        </div>
-                      ) : null}
-                      {selectedDraftAgentEvaluation.required_user_inputs?.length ? (
-                        <div className="workflow-draft-agent-list">
-                          <strong>需要补充</strong>
-                          {selectedDraftAgentEvaluation.required_user_inputs.map((item, index) => (
-                            <span key={`input-${index}`}>{edgeHandoffAgentListText(item)}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {selectedDraftAgentEvaluation.blocking_reasons?.length ? (
-                        <div className="workflow-draft-agent-list">
-                          <strong>阻断原因</strong>
-                          {selectedDraftAgentEvaluation.blocking_reasons.map((item, index) => (
-                            <span key={`blocking-${index}`}>{edgeHandoffAgentListText(item)}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {selectedDraftAgentEvaluation.suggested_edge_instruction ? (
-                        <div className="workflow-draft-agent-suggestion">
-                          <div>
-                            <strong>建议 Edge 说明</strong>
-                            <span>{selectedDraftAgentEvaluation.suggested_edge_instruction}</span>
-                          </div>
-                          <button type="button" className="ghost-btn compact" onClick={() => updateDraftEdgeInstruction(selectedDraftEdge.id, selectedDraftAgentEvaluation.suggested_edge_instruction || "")}>
-                            <Edit3 size={14} />应用到 Edge
-                          </button>
-                        </div>
-                      ) : null}
-                      {Array.isArray(selectedDraftAgentEvaluation.test_plan) && selectedDraftAgentEvaluation.test_plan.length ? (
-                        <div className="workflow-draft-agent-list">
-                          <strong>验证计划</strong>
-                          {selectedDraftAgentEvaluation.test_plan.map((item, index) => (
-                            <span key={`test-${index}`}>{edgeHandoffAgentListText(item)}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {selectedDraftAgentGuidePrompt ? (
-                        <details className="workflow-draft-runtime-brief workflow-draft-agent-guide" open>
-                          <summary>
-                            <span>Node Execution Guide</span>
-                            <button
-                              type="button"
-                              className="ghost-btn compact"
-                              onClick={(event) => {
-                                event.preventDefault();
-                                void copyDraftText(selectedDraftAgentGuidePrompt, "Node Execution Guide");
-                              }}
-                            >
-                              <Copy size={13} />复制
-                            </button>
-                          </summary>
-                          <pre>{selectedDraftAgentGuidePrompt}</pre>
-                        </details>
-                      ) : null}
-                      <div className="workflow-draft-agent-save">
-                        <div>
-                          <strong>保存草稿</strong>
-                          <span>写入当前 Instance 的 `raw/workflow-drafts`，保存设计，不改正式 SOP。</span>
-                        </div>
-                        <button
-                          type="button"
-                          className="ghost-btn compact"
-                          disabled={!selectedDraftAgentCanSave || selectedDraftEdgeSaveState?.loading}
-                          title={selectedDraftAgentCanSave ? "保存已评估 Edge 草稿" : "需要 ready/trial_ready、used_ai=true 且包含 Node Execution Guide"}
-                          onClick={() => saveDraftEdgeDefinition(selectedDraftEdge.id)}
-                        >
-                          {selectedDraftEdgeSaveState?.loading ? <Loader2 size={13} /> : <CheckCircle2 size={13} />}
-                          保存草稿
-                        </button>
-                      </div>
-                      {selectedDraftEdgeSaveState?.error ? (
-                        <div className="workflow-draft-agent-error">
-                          <AlertTriangle size={14} />
-                          <span>{selectedDraftEdgeSaveState.error}</span>
-                        </div>
-                      ) : null}
-                      {selectedDraftEdgeSaveState?.draftId ? (
-                        <div className="workflow-draft-agent-saved">
-                          <strong>{selectedDraftEdgeSaveState.draftId}</strong>
-                          <span>{selectedDraftEdgeSaveState.draftPath || "raw/workflow-drafts/{draft_id}"}</span>
-                          <small>save_target: {String(selectedDraftEdgeSaveState.changeRequest?.save_target || "agent-brain-plugins")}</small>
-                        </div>
-                      ) : null}
-                      {selectedDraftEdgeSaveState?.draftId ? (
-                        <div className={`workflow-draft-apply-card ${selectedDraftEdgeSaveState.applyResult?.status || ""}`}>
-                          <div>
-                            <strong>生成 Runtime SOP</strong>
-                            <span>把草稿编译为当前 Instance 的 Runtime SOP 快照，用于验证；不覆盖 active sop.yaml。</span>
-                          </div>
-                          <button
-                            type="button"
-                            className="btn primary compact"
-                            disabled={selectedDraftEdgeSaveState.runtimeSopGenerating}
-                            onClick={() => generateSavedDraftRuntimeSop(selectedDraftEdge.id)}
-                          >
-                            {selectedDraftEdgeSaveState.runtimeSopGenerating ? <Loader2 size={13} className="spin" /> : <Workflow size={13} />}
-                            {selectedDraftEdgeSaveState.runtimeSopResult ? "重新生成 Runtime SOP" : "生成 Runtime SOP"}
-                          </button>
-                          {selectedDraftEdgeSaveState.runtimeSopError ? (
-                            <div className="workflow-draft-agent-error workflow-draft-apply-message">
-                              <AlertTriangle size={14} />
-                              <span>{selectedDraftEdgeSaveState.runtimeSopError}</span>
-                            </div>
-                          ) : null}
-                          {selectedDraftEdgeSaveState.runtimeSopResult ? (
-                            <div className="workflow-draft-apply-result">
-                              <span className={`status-pill ${edgeRuntimeSopStatusTone(selectedDraftEdgeSaveState.runtimeSopResult.status)}`}>
-                                {edgeRuntimeSopStatusLabel(selectedDraftEdgeSaveState.runtimeSopResult.status)}
-                              </span>
-                              <KeyValues data={{
-                                runtime_sop_path: selectedDraftEdgeSaveState.runtimeSopResult.runtimeSopPath || "-",
-                                active_runtime_sop_changed: selectedDraftEdgeSaveState.runtimeSopResult.activeRuntimeSopChanged ? "yes" : "no",
-                                change_count: selectedDraftEdgeSaveState.runtimeSopResult.changeCount ?? "-",
-                              }} />
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {selectedDraftEdgeSaveState?.draftId ? (
-                        <div className={`workflow-draft-apply-card ${selectedDraftEdgeSaveState.applyResult?.status || ""}`}>
-                          <div>
-                            <strong>生成正式 SOP</strong>
-                            <span>生成 `candidate_sop.yaml` 和 diff；不直接修改 Runtime 机器源码，后续在开发机 repo-first 提交。</span>
-                          </div>
-                          <button
-                            type="button"
-                            className="btn primary compact"
-                            disabled={!selectedDraftEdgeSaveState.runtimeSopResult || selectedDraftEdgeSaveState.applying}
-                            title={!selectedDraftEdgeSaveState.runtimeSopResult ? "请先生成 Runtime SOP" : "生成正式 SOP 变更方案"}
-                            onClick={() => applySavedDraftEdge(selectedDraftEdge.id)}
-                          >
-                            {selectedDraftEdgeSaveState.applying ? <Loader2 size={13} className="spin" /> : <GitBranch size={13} />}
-                            {selectedDraftEdgeSaveState.applyResult ? "重新生成正式 SOP" : "生成正式 SOP"}
-                          </button>
-                          {selectedDraftEdgeSaveState.applyError ? (
-                            <div className="workflow-draft-agent-error workflow-draft-apply-message">
-                              <AlertTriangle size={14} />
-                              <span>{selectedDraftEdgeSaveState.applyError}</span>
-                            </div>
-                          ) : null}
-                          {selectedDraftEdgeSaveState.applyResult ? (
-                            <div className="workflow-draft-apply-result">
-                              <span className={`status-pill ${edgeDraftApplyStatusTone(selectedDraftEdgeSaveState.applyResult.status)}`}>
-                                {edgeDraftApplyStatusLabel(selectedDraftEdgeSaveState.applyResult.status)}
-                              </span>
-                              <KeyValues data={{
-                                edge: `${String(selectedDraftEdgeSaveState.applyResult.edge?.from || selectedDraftEdge.from)} -> ${String(selectedDraftEdgeSaveState.applyResult.edge?.to || selectedDraftEdge.to)}`,
-                                change_count: selectedDraftEdgeSaveState.applyResult.changeCount ?? "-",
-                                repo_first_required: selectedDraftEdgeSaveState.applyResult.repoFirstRequired ? "yes" : "no",
-                                production_dag_changed: selectedDraftEdgeSaveState.applyResult.productionDagChanged ? "yes" : "no",
-                                hash_before: selectedDraftEdgeSaveState.applyResult.hashBefore || "-",
-                                hash_after: selectedDraftEdgeSaveState.applyResult.hashAfter || "-",
-                                target: String(selectedDraftEdgeSaveState.applyResult.targets?.project_template_sop_yaml || selectedDraftEdgeSaveState.applyPlan?.projectTemplateSopYaml || "-"),
-                                patch_path: selectedDraftEdgeSaveState.applyResult.patchPath || "-",
-                                candidate_sop: selectedDraftEdgeSaveState.applyResult.candidateSopPath || "-",
-                              }} />
-                              <details className="workflow-draft-advanced-json">
-                                <summary>查看 patch / before / after</summary>
-                                <pre>{JSON.stringify({
-                                  patch: selectedDraftEdgeSaveState.applyResult.patch || "",
-                                  before: selectedDraftEdgeSaveState.applyResult.before || [],
-                                  after: selectedDraftEdgeSaveState.applyResult.after || [],
-                                }, null, 2)}</pre>
-                              </details>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      {selectedDraftEdgeSaveState?.applyPlan ? (
-                        <details className="workflow-draft-runtime-brief workflow-draft-agent-plan">
-                          <summary>
-                            <span>Advanced: 手工落库方案</span>
-                            <button
-                              type="button"
-                              className="ghost-btn compact"
-                              onClick={(event) => {
-                                event.preventDefault();
-                                const text = buildEdgeDraftApplyPlanText(selectedDraftEdgeSaveState.applyPlan);
-                                void copyDraftText(text, "Edge 落库方案");
-                              }}
-                            >
-                              <Copy size={13} />复制方案
-                            </button>
-                          </summary>
-                          <div className="workflow-draft-apply-plan-data">
-                            <KeyValues data={{
-                              edge_id: selectedDraftEdgeSaveState.applyPlan.edgeId,
-                              workflow_id: selectedDraftEdgeSaveState.applyPlan.workflowId,
-                              draft_path: selectedDraftEdgeSaveState.applyPlan.draftPath,
-                              save_target: selectedDraftEdgeSaveState.applyPlan.saveTarget,
-                              save_owner: selectedDraftEdgeSaveState.applyPlan.saveOwner,
-                              runtime_sop_file: selectedDraftEdgeSaveState.applyPlan.runtimeSopFile,
-                              project_template_sop_yaml: selectedDraftEdgeSaveState.applyPlan.projectTemplateSopYaml,
-                              project_workflow_id: selectedDraftEdgeSaveState.applyPlan.projectWorkflowId,
-                              targets: selectedDraftEdgeSaveState.applyPlan.targetsText,
-                            }} />
-                            {selectedDraftEdgeSaveState.applyPlan.targetValidationIssues.length ? (
-                              <div className="field-hint" style={{ color: "#b91c1c" }}>
-                                <strong>change_request.targets 缺失风险</strong>
-                                {selectedDraftEdgeSaveState.applyPlan.targetValidationIssues.map((item) => (
-                                  <div key={item}>- {item}</div>
-                                ))}
-                              </div>
-                            ) : null}
-                            {selectedDraftEdgeSaveState.applyPlan.targetValidationWarnings.length ? (
-                              <div className="field-hint" style={{ color: "#7c2d12" }}>
-                                <strong>change_request.targets 预检提示（执行时校验）</strong>
-                                {selectedDraftEdgeSaveState.applyPlan.targetValidationWarnings.map((item) => (
-                                  <div key={item}>- {item}</div>
-                                ))}
-                              </div>
-                            ) : null}
-                            <div className="field-hint" style={{ marginTop: 6 }}>
-                              <strong>执行清单（建议）</strong>
-                              <div>主流程请使用上方生成正式 SOP。真实落库必须回到开发机仓库修改、测试、commit、push。</div>
-                            </div>
-                            <div className="field-hint" style={{ marginBottom: 8 }}>
-                              说明：如果正式 SOP 变更方案生成失败，再用这里的 Change Request 和 Proposal 定位原因。
-                            </div>
-                            {selectedDraftEdgeSaveState.applyPlan.applyScript ? (
-                              <details className="workflow-draft-advanced-json workflow-draft-apply-script">
-                                <summary>落库执行脚本</summary>
-                                <div className="workflow-draft-apply-script-actions">
-                                  <button
-                                    type="button"
-                                    className="ghost-btn compact"
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      void copyDraftText(selectedDraftEdgeSaveState.applyPlan?.applyScript || "", "Edge 落库脚本");
-                                    }}
-                                  >
-                                    <Copy size={13} />复制脚本
-                                  </button>
-                                </div>
-                                <pre>{selectedDraftEdgeSaveState.applyPlan.applyScript}</pre>
-                              </details>
-                            ) : null}
-                            <div className="workflow-draft-apply-commands">
-                              <div className="section-title"><span>落库命令（按顺序）</span><span>{selectedDraftEdgeSaveState.applyPlan.applyCommands.length}</span></div>
-                              {(selectedDraftEdgeSaveState.applyPlan.applyCommands.length ? selectedDraftEdgeSaveState.applyPlan.applyCommands : ["No commands"]).map((command, index) => (
-                                <article key={`${command}-${index}`}>
-                                  <code>{command}</code>
-                                </article>
-                              ))}
-                            </div>
-                            {selectedDraftEdgeSaveState.applyPlan.changeRequestText ? (
-                              <details className="workflow-draft-advanced-json">
-                                <summary>Change Request</summary>
-                                <pre>{selectedDraftEdgeSaveState.applyPlan.changeRequestText}</pre>
-                              </details>
-                            ) : null}
-                            {selectedDraftEdgeSaveState.applyPlan.proposedText ? (
-                              <details className="workflow-draft-advanced-json">
-                                <summary>Change Proposal</summary>
-                                <pre>{selectedDraftEdgeSaveState.applyPlan.proposedText}</pre>
-                              </details>
-                            ) : null}
-                          </div>
-                        </details>
-                      ) : null}
-                      {selectedDraftAgentEvaluation.resolved_handoff && Object.keys(selectedDraftAgentEvaluation.resolved_handoff).length ? (
-                        <details className="workflow-draft-runtime-brief">
-                          <summary><span>Agent 解析出的交接结构</span><ChevronDown size={14} /></summary>
-                          <pre>{JSON.stringify(selectedDraftAgentEvaluation.resolved_handoff, null, 2)}</pre>
-                        </details>
-                      ) : null}
-                    </div>
-                  ) : !selectedDraftAgentState?.loading ? (
-                    <div className="workflow-draft-empty-guide">
-                      <strong>还没有 Agent 评估</strong>
-                      <span>上面的规则预检只负责发现明显问题；真正的连接判断、执行指导文档和反面 case 必须运行 Edge Handoff Agent。</span>
-                    </div>
-                  ) : (
-                    <div className="workflow-draft-empty-guide">
-                      <strong>Agent 正在评估这条 Edge</strong>
-                      <span>Runtime 会结合上下游 Skill 说明、输入输出契约、Edge 交接说明和当前工作流目标生成结构化报告。</span>
-                    </div>
-                  )}
+                <div className="workflow-draft-edge-next-step">
+                  <strong>完整编辑与验证在 Edge Detail 中完成</strong>
+                  <span>交接说明、接力方式、Agent Trace、试运行交接包、Runtime SOP 和正式 SOP 生成都集中在详情页，避免 Builder 右侧信息过载。</span>
                 </div>
-                <details className="workflow-draft-runtime-brief">
-                  <summary><span>规则生成的提示词草稿</span><ChevronDown size={14} /></summary>
-                  <pre>{selectedDraftEdgeAgentPrompt}</pre>
-                </details>
-
-                <div className="node-relay-mode-panel">
-                  <div>
-                    <strong>接力方式</strong>
-                    <span>{nodeRunRelayModeHelp(selectedDraftEdgeMode)}</span>
-                  </div>
-                  <div className="segmented compact">
-                    <button
-                      type="button"
-                      className={selectedDraftEdgeMode === "auto_by_target_inputs" ? "active" : ""}
-                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "auto_by_target_inputs")}
-                    >
-                      按下游需要
-                    </button>
-                    <button
-                      type="button"
-                      className={selectedDraftEdgeMode === "selected_outputs" ? "active" : ""}
-                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "selected_outputs")}
-                    >
-                      只传选中
-                    </button>
-                    <button
-                      type="button"
-                      className={selectedDraftEdgeMode === "all_outputs" ? "active" : ""}
-                      onClick={() => updateDraftEdgeMode(selectedDraftEdge.id, "all_outputs")}
-                    >
-                      整包
-                    </button>
-                  </div>
-                </div>
-
-                <div className="node-relay-outputs-panel">
-                  <div className="section-title"><span>上游可交付内容</span><span>{selectedDraftEdgeSourceOutputs.length}</span></div>
-                  <div className="node-relay-output-list">
-                    {selectedDraftEdgeSourceOutputs.map((output) => (
-                      <label key={output.name} className={`node-relay-output-row ${selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeSelectedOutputs.includes(output.name) ? "active" : ""}`}>
-                        {selectedDraftEdgeMode === "selected_outputs" ? (
-                          <input
-                            type="checkbox"
-                            checked={selectedDraftEdgeSelectedOutputs.includes(output.name)}
-                            onChange={() => toggleDraftEdgeSourceOutput(selectedDraftEdge.id, selectedDraftEdge.from, selectedDraftEdge.to, output.name)}
-                          />
-                        ) : <span className="dot done" />}
-                        <span>
-                          <strong>{output.name}</strong>
-                          <small>{contractContentLabel(contractRecord(output.spec), output.type)} · {output.path || "运行时生成"}</small>
-                        </span>
-                      </label>
-                    ))}
-                    {!selectedDraftEdgeSourceOutputs.length ? <Empty text="当前节点没有输出契约；切换到手动模式会无法直接选中任何输出。" /> : null}
-                  </div>
-                  {selectedDraftEdgeMode === "selected_outputs" && !selectedDraftEdgeSelectedOutputs.length ? <small className="field-hint bad">请至少选择一个上游输出。</small> : null}
-                  {selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeSelectedOutputs.length > 0 && !selectedDraftEdgeTargetInputs.length ? <small className="field-hint bad">目标节点没有输入契约，不能配置手动接力映射。</small> : null}
-                  {selectedDraftEdgeMode !== "selected_outputs" && selectedDraftEdgeSourceOutputs.length ? <small className="field-hint">{nodeRunRelayModeLabel(selectedDraftEdgeMode)} 会在后端按目标输入合成接力包。</small> : null}
-                </div>
-
-                {selectedDraftEdgeTargetInputs.length ? (
-                  <div className="node-relay-mapping-panel">
-                    <div className="section-title"><span>下游接收要求</span><span>{selectedDraftEdgeTargetInputs.length}</span></div>
-                    <div className="node-run-input-preview-rows">
-                      {selectedDraftEdgeTargetInputs.map((row) => {
-                        const spec = contractRecord(row.spec);
-                        return (
-                          <article key={row.name}>
-                            <div>
-                              <strong>{row.name}</strong>
-                              <code>{contractContentLabel(spec, "自动")}{row.required ? " · 必填" : " · 可选"}</code>
-                            </div>
-                            <small>{String(spec.description || spec.intent || spec.purpose || "没有补充说明")}</small>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-
-                {selectedDraftEdgeMode === "selected_outputs" && selectedDraftEdgeMappings.length ? (
-                  <div className="node-relay-mapping-panel">
-                    <div className="section-title"><span>选中输出如何交给下游</span><span>{selectedDraftEdgeMappings.length}</span></div>
-                    <div className="node-relay-mapping-head">
-                      <span>上游交付</span>
-                      <span />
-                      <span>下游接收</span>
-                      <span>解析方式</span>
-                    </div>
-                    {selectedDraftEdgeMappings.map((mapping) => {
-                      const targetRows = selectedDraftEdgeTargetInputs;
-                      const targetSpec = targetRows.find((row) => row.name === mapping.targetInput)?.spec;
-                      const resolvers = contractResolvers(targetSpec);
-                      return (
-                        <article key={mapping.sourceOutput} className="node-relay-mapping-row">
-                          <code>{mapping.sourceOutput}</code>
-                          <span>→</span>
-                          <select
-                            value={mapping.targetInput || ""}
-                            onChange={(event) => setDraftEdgeTargetInput(selectedDraftEdge.id, mapping.sourceOutput, event.target.value)}
-                            disabled={!targetRows.length}
-                          >
-                            <option value="">选择目标输入</option>
-                            {targetRows.map((row) => <option key={row.name} value={row.name}>{row.name}{row.required ? " · 必填" : " · 可选"}</option>)}
-                          </select>
-                          <select
-                            value={mapping.resolver || ""}
-                            onChange={(event) => setDraftEdgeResolver(selectedDraftEdge.id, mapping.sourceOutput, event.target.value)}
-                          >
-                            <option value="">自动选择</option>
-                            {resolvers.map((resolver) => <option key={resolver.id} value={resolver.id}>{relayResolverLabel(resolver.id)}</option>)}
-                          </select>
-                        </article>
-                      );
-                    })}
-                  </div>
-                ) : null}
                 <div className="workflow-draft-edge-actions">
                   <button type="button" className="ghost-btn compact" onClick={() => reEvaluateDraftEdge(selectedDraftEdge.id)}>
                     <RefreshCw size={14} />重新评估
@@ -10423,17 +10138,9 @@ function readWorkflowDraftFromStorage(): WorkflowDraftState {
       edges: Array.isArray(parsed.edges)
         ? parsed.edges
           .filter((item) => item && typeof item.from === "string" && typeof item.to === "string")
-          .map((item, index) => ({
-            id: typeof item.id === "string" && item.id ? item.id : `edge-${index}`,
-            from: item.from,
-            to: item.to,
-            sourceIntent: typeof item.sourceIntent === "string" ? item.sourceIntent : "",
-            targetIntent: typeof item.targetIntent === "string" ? item.targetIntent : "",
-            instruction: typeof item.instruction === "string" ? item.instruction : "",
-            fromSignature: typeof item.fromSignature === "string" ? item.fromSignature : "",
-            toSignature: typeof item.toSignature === "string" ? item.toSignature : "",
-            relayMode: typeof item.relayMode === "string" ? item.relayMode : undefined,
-            relayMappings: Array.isArray(item.relayMappings)
+          .map((item, index) => {
+            const relayMode = typeof item.relayMode === "string" ? item.relayMode : "auto_by_target_inputs";
+            const relayMappings = relayMode === "selected_outputs" && Array.isArray(item.relayMappings)
               ? item.relayMappings
                 .map((relayItem: unknown) => {
                   if (!relayItem || typeof relayItem !== "object") return null;
@@ -10447,8 +10154,20 @@ function readWorkflowDraftFromStorage(): WorkflowDraftState {
                   } as WorkflowDraftRelayMapping;
                 })
                 .filter(Boolean) as WorkflowDraftRelayMapping[]
-              : [],
-          }))
+              : [];
+            return {
+              id: typeof item.id === "string" && item.id ? item.id : `edge-${index}`,
+              from: item.from,
+              to: item.to,
+              sourceIntent: typeof item.sourceIntent === "string" ? item.sourceIntent : "",
+              targetIntent: typeof item.targetIntent === "string" ? item.targetIntent : "",
+              instruction: typeof item.instruction === "string" ? item.instruction : "",
+              fromSignature: typeof item.fromSignature === "string" ? item.fromSignature : "",
+              toSignature: typeof item.toSignature === "string" ? item.toSignature : "",
+              relayMode,
+              relayMappings,
+            };
+          })
         : [],
       positions: parsed.positions && typeof parsed.positions === "object" && !Array.isArray(parsed.positions)
         ? parsed.positions as Record<string, { x: number; y: number }>
@@ -10611,6 +10330,11 @@ function edgeHandoffSimulationPrompt(result?: Record<string, unknown>) {
 function edgeHandoffSimulationRows(result: Record<string, unknown> | undefined, key: string) {
   const rows = result?.[key];
   return Array.isArray(rows) ? rows.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))) : [];
+}
+
+function edgeHandoffSimulationValues(result: Record<string, unknown> | undefined, key: string) {
+  const rows = result?.[key];
+  return Array.isArray(rows) ? rows : [];
 }
 
 function safeRecord(value: unknown): Record<string, unknown> {

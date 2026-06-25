@@ -7626,6 +7626,31 @@ pre {
   line-height: 1.35;
 }
 
+.workflow-draft-edge-brief,
+.workflow-draft-edge-next-step {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-draft-edge-brief span,
+.workflow-draft-edge-next-step span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-edge-brief b,
+.workflow-draft-edge-next-step strong {
+  color: var(--text);
+}
+
 .workflow-draft-effect-note {
   min-width: 0;
   display: grid;
