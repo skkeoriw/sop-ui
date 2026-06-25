@@ -1599,6 +1599,13 @@ export const sopProvider: SopDataProvider = {
     );
   },
 
+  async simulateWorkflowEdge(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/simulate`,
+      input
+    );
+  },
+
   async createWorkflowEdgeDraft(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
     return postJsonResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/drafts`,

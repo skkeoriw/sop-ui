@@ -7670,6 +7670,242 @@ pre {
   background: #f8fbff;
 }
 
+.workflow-draft-edge-overview-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workflow-draft-edge-overview-card > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-draft-edge-overview-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.workflow-draft-edge-overview-card strong,
+.workflow-draft-edge-overview-card small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-edge-overview-card strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.workflow-draft-edge-overview-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.workflow-draft-edge-overview-actions {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workflow-draft-overview-error {
+  min-width: 0;
+  display: flex;
+  align-items: start;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #991b1b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workflow-draft-inspector .workflow-draft-skill-pair,
+.workflow-draft-inspector .workflow-draft-effect-note,
+.workflow-draft-inspector .workflow-draft-edge-instruction,
+.workflow-draft-inspector .workflow-draft-agent-panel,
+.workflow-draft-inspector .workflow-draft-runtime-brief,
+.workflow-draft-inspector .node-relay-mode-panel,
+.workflow-draft-inspector .node-relay-outputs-panel,
+.workflow-draft-inspector .node-relay-mapping-panel,
+.workflow-draft-inspector .workflow-draft-edge-actions {
+  display: none;
+}
+
+.workflow-edge-detail-page {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.workflow-edge-detail-hero {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.workflow-edge-detail-hero > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.workflow-edge-detail-hero h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 24px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.workflow-edge-detail-hero p,
+.workflow-edge-detail-hero code {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workflow-edge-detail-hero p {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.workflow-edge-detail-actions,
+.workflow-edge-detail-actions-inline {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.workflow-edge-detail-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, .95fr) minmax(0, 1.35fr);
+  gap: 14px;
+}
+
+.workflow-edge-skill-meta-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-edge-skill-meta-grid article {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-edge-skill-meta-grid article > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.workflow-edge-detail-section {
+  min-width: 0;
+}
+
+.workflow-edge-detail-section .workflow-draft-edge-instruction {
+  margin: 0;
+}
+
+.workflow-edge-detail-lists {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-edge-detail-lists > div {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-edge-detail-lists strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.workflow-edge-detail-lists span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.workflow-edge-prompt-preview {
+  min-width: 0;
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.workflow-edge-simulation-result {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.edge-detail-agent-result {
+  gap: 12px;
+}
+
+@media (max-width: 760px) {
+  .workflow-edge-detail-hero {
+    display: grid;
+  }
+
+  .workflow-edge-detail-actions,
+  .workflow-edge-detail-actions-inline {
+    justify-content: flex-start;
+  }
+
+  .workflow-edge-detail-grid,
+  .workflow-edge-skill-meta-grid,
+  .workflow-edge-detail-lists,
+  .workflow-draft-edge-overview-card {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-edge-prompt-preview {
+    max-height: 340px;
+  }
+}
+
 .workflow-draft-agent-head {
   min-width: 0;
   display: flex;

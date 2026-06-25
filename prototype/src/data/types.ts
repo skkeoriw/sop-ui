@@ -483,6 +483,7 @@ export interface NodeContract extends NodeClassification {
 export interface NodeRegistryItem extends NodeConfig {
   description?: string;
   case?: string;
+  version?: string;
   skill?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   actions?: Record<string, unknown>;
@@ -928,6 +929,7 @@ export interface SopDataProvider {
   getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
   evaluateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
+  simulateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   createWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   applyWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   getRuntimeInheritance(runtime: Runtime, instanceId: string): Promise<RuntimeInheritancePreview>;

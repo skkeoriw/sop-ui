@@ -1029,6 +1029,61 @@ export const mockProvider: SopDataProvider = {
     };
   },
 
+  async simulateWorkflowEdge(_target, _instanceId, _workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    await delay();
+    const edge = (input.edge && typeof input.edge === "object" ? input.edge : {}) as Record<string, unknown>;
+    const from = String(input.upstream_node_id || edge.from || "youtube-fetch");
+    const to = String(input.downstream_node_id || edge.to || "youtube-deep-research");
+    const edgeId = String(input.edge_id || edge.id || `${from}-to-${to}`);
+    const prompt = `Use skill sop-${to} to execute this Node Execution Request.\n\n# Edge Handoff Simulation Request\n\n- edge_id: ${edgeId}\n- upstream: ${from}\n- downstream: ${to}\n- instruction: ${String(input.edge_handoff_instruction || edge.instruction || "")}\n\nResolved input source_url from generated fixture.`;
+    return {
+      ok: true,
+      mode: "edge-handoff-simulation",
+      simulation_id: `${edgeId}-simulation-mock-${Date.now()}`,
+      status: "passed",
+      verdict: "can_handoff",
+      edge_id: edgeId,
+      generated_fixture: {
+        source: "generated-fixture",
+        items: [
+          {
+            name: "source_url",
+            kind: "scalar",
+            value_type: "url",
+            value: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            path: "raw/node-runs/{source_node_run_id}/outputs/files/source-url.txt",
+          },
+        ],
+      },
+      relay_package: {
+        edge_id: edgeId,
+        source_node: from,
+        target_node: to,
+        status: "passed",
+        items: [{ source_output: "source_url", target_input: "source_url", resolver: "direct", resolved: true }],
+        missing_inputs: [],
+      },
+      resolved_inputs: [
+        {
+          target_input: "source_url",
+          source_output: "source_url",
+          resolver: "direct",
+          resolved: true,
+          value_preview: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+      ],
+      missing_inputs: [],
+      hermes_request_preview: {
+        format: "markdown",
+        prompt,
+        source: "mock-edge-handoff-simulation",
+        executes_real_node: false,
+      },
+      warnings: [],
+      blocking_reasons: [],
+    };
+  },
+
   async createWorkflowEdgeDraft(_target, _instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
     await delay();
     const edge = (input.edge && typeof input.edge === "object" ? input.edge : {}) as Record<string, unknown>;
