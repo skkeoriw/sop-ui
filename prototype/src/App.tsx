@@ -6010,7 +6010,7 @@ export default function App() {
     let nextPath = routePath(view, entityId, secondaryId);
     if (view === "runtime") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}`;
     if (view === "instance") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances`;
-    if (view === "workflows") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/workflows`;
+    if (view === "workflows") nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows`;
     if (view === "workflow") {
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(baseInstance)}/workflows/${encodeURIComponent(baseWorkflow)}`;
       if (entityId) nextPath += `/executions/${encodeURIComponent(entityId)}`;
@@ -6065,6 +6065,9 @@ export default function App() {
       else if (route.nodeRunList) nextPath += `/runs`;
       else if (route.moduleId) nextPath += `/modules/${encodeURIComponent(route.moduleId)}`;
       nextRoute = { view: "nodes", nodeId: route.nodeId, pipelineId: "", artifactId: "", moduleId: route.moduleId, nodeRunId: route.nodeRunId, nodeRunList: route.nodeRunList };
+    } else if (viewMode === "workflows") {
+      nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}/workflows`;
+      nextRoute = { view: "workflows", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
     } else if (viewMode === "instance" && routeContext.instanceId) {
       nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(nextInstanceId)}`;
       nextRoute = { view: "instance", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" };
@@ -8241,8 +8244,20 @@ function WorkflowCatalog({
       return next;
     });
     if (selectedDraftNodeId === nodeId) setSelectedDraftNodeId("");
-    if (selectedDraftEdge && (selectedDraftEdge.from === nodeId || selectedDraftEdge.to === nodeId)) setSelectedDraftEdgeId("");
+    if (selectedDraftEdge && (selectedDraftEdge.from === nodeId || selectedDraftEdge.to === nodeId)) clearDraftEdgeSelection();
     if (activeDraftHandoffNodeId === nodeId) setActiveDraftHandoffNodeId("");
+  }
+  function updateDraftBuilderOpen(nextOpen: boolean) {
+    setDraftBuilderOpen(nextOpen);
+  }
+  function selectDraftEdge(edgeId: string) {
+    setSelectedDraftEdgeId(edgeId);
+    setSelectedDraftNodeId("");
+    setActiveDraftHandoffNodeId("");
+    setDraftBuilderOpen(true);
+  }
+  function clearDraftEdgeSelection() {
+    setSelectedDraftEdgeId("");
   }
   function addDraftEdgeBetween(fromNodeId: string, toNodeId: string) {
     const disabledReason = workflowDraftEdgeDisabledReason(draft, fromNodeId, toNodeId, nodesById);
@@ -8271,9 +8286,7 @@ function WorkflowCatalog({
     }));
     setDraftFromNode(fromNodeId);
     setDraftToNode(toNodeId);
-    setSelectedDraftNodeId("");
-    setSelectedDraftEdgeId(nextEdgeId);
-    setActiveDraftHandoffNodeId("");
+    selectDraftEdge(nextEdgeId);
     const evaluation = evaluateWorkflowDraftEdge({
       id: nextEdgeId,
       from: fromNodeId,
@@ -8328,14 +8341,12 @@ function WorkflowCatalog({
     }));
     setDraftFromNode(fromNodeId);
     setDraftToNode(toNodeId);
-    setSelectedDraftNodeId("");
-    setSelectedDraftEdgeId(nextEdgeId);
-    setActiveDraftHandoffNodeId("");
+    selectDraftEdge(nextEdgeId);
     setDraftCanvasMessage(`已添加并连接：${fromNodeId} -> ${toNodeId}`);
   }
   function startDraftNodeHandoff(nodeId: string) {
     setSelectedDraftNodeId(nodeId);
-    setSelectedDraftEdgeId("");
+    clearDraftEdgeSelection();
     setDraftFromNode(nodeId);
     setActiveDraftHandoffNodeId(nodeId);
     setDraftCanvasMessage(`从 ${nodeId} 选择下游节点`);
@@ -8355,7 +8366,7 @@ function WorkflowCatalog({
       delete next[edgeId];
       return next;
     });
-    if (selectedDraftEdgeId === edgeId) setSelectedDraftEdgeId("");
+    if (selectedDraftEdgeId === edgeId) clearDraftEdgeSelection();
   }
   function clearDraftAgentEvaluation(edgeId: string) {
     setDraftAgentEvaluations((current) => {
@@ -8705,7 +8716,7 @@ function WorkflowCatalog({
     setDraftFromNode("");
     setDraftToNode("");
     setSelectedDraftNodeId("");
-    setSelectedDraftEdgeId("");
+    clearDraftEdgeSelection();
     setActiveDraftHandoffNodeId("");
     setDraftNodePositions({});
     setDraftAgentEvaluations({});
@@ -8749,7 +8760,7 @@ function WorkflowCatalog({
     setDraftFromNode(nextNodes[0]?.nodeId || "");
     setDraftToNode(nextNodes[1]?.nodeId || "");
     setSelectedDraftNodeId(nextNodes[0]?.nodeId || "");
-    setSelectedDraftEdgeId("");
+    clearDraftEdgeSelection();
     setActiveDraftHandoffNodeId("");
     setDraftAgentEvaluations({});
     setDraftEdgeSaveStates({});
@@ -8906,7 +8917,7 @@ function WorkflowCatalog({
             <span>只用于新建/试验 Edge 草稿，不会修改当前已有 Workflow Definition。</span>
           </div>
           <div className="draft-builder-status">
-            <button type="button" className="ghost-btn compact" onClick={() => setDraftBuilderOpen((open) => !open)}>
+            <button type="button" className="ghost-btn compact" onClick={() => updateDraftBuilderOpen(!draftBuilderOpen)}>
               <ChevronDown size={14} />{draftBuilderOpen ? "Hide Builder" : "Open Builder"}
             </button>
             <span className="status-pill waiting">本地草稿</span>
@@ -9002,11 +9013,10 @@ function WorkflowCatalog({
                   onConnect={connectDraftNodes}
                   onNodeClick={(_, node) => {
                     setSelectedDraftNodeId(node.id);
-                    setSelectedDraftEdgeId("");
+                    clearDraftEdgeSelection();
                   }}
                   onEdgeClick={(_, edge) => {
-                    setSelectedDraftEdgeId(edge.id);
-                    setSelectedDraftNodeId("");
+                    selectDraftEdge(edge.id);
                     const draftEdge = draft.edges.find((item) => item.id === edge.id);
                     if (draftEdge) {
                       syncDraftEdgeDefaults(draftEdge.id, draftEdge.from, draftEdge.to);
@@ -9016,7 +9026,7 @@ function WorkflowCatalog({
                   }}
                   onPaneClick={() => {
                     setSelectedDraftNodeId("");
-                    setSelectedDraftEdgeId("");
+                    clearDraftEdgeSelection();
                     setActiveDraftHandoffNodeId("");
                   }}
                   onNodeDragStop={(_, node) => {
@@ -9074,8 +9084,18 @@ function WorkflowCatalog({
             {selectedDraftEdge && selectedDraftEdgeEvaluation ? (
               <article className={`workflow-draft-edge-card selected ${selectedDraftEdgeEvaluation.status}`}>
                 <div className="workflow-draft-edge-head">
-                  <strong>{selectedDraftEdge.from} → {selectedDraftEdge.to}</strong>
+                  <div>
+                    <strong>{selectedDraftEdge.from} → {selectedDraftEdge.to}</strong>
+                    <code>{selectedDraftEdge.id}</code>
+                  </div>
                   <span className={`status-pill ${workflowDraftStatusTone(selectedDraftEdgeEvaluation.status)}`}>{workflowDraftStatusLabel(selectedDraftEdgeEvaluation.status)}</span>
+                </div>
+                <div className="workflow-draft-context-bar">
+                  <span>Runtime: <b>{runtime?.id || "not selected"}</b></span>
+                  <span>Instance: <b>{activeInstanceId || "not selected"}</b></span>
+                  <button type="button" className="ghost-btn compact" onClick={() => navigator.clipboard?.writeText(selectedDraftEdge.id)}>
+                    <Copy size={13} />Copy Edge ID
+                  </button>
                 </div>
                 <div className="workflow-draft-skill-pair">
                   <article>
@@ -9603,8 +9623,7 @@ function WorkflowCatalog({
                       type="button"
                       className={`workflow-draft-edge-row ${evaluation.status}`}
                       onClick={() => {
-                        setSelectedDraftEdgeId(edge.id);
-                        setSelectedDraftNodeId("");
+                        selectDraftEdge(edge.id);
                         setDraftFromNode(edge.from);
                         setDraftToNode(edge.to);
                       }}
