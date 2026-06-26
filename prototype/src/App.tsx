@@ -9574,7 +9574,18 @@ function WorkflowCatalog({
   const workflowDraftRuntimeSopPath = String(workflowDraftRunState.runtimeSopResult?.runtime_sop_path || workflowDraftRunState.runtimeSopResult?.runtimeSopPath || "");
   const workflowDraftSaveStatus = String(safeRecord(workflowDraftRunState.saveResult?.validation).status || "-");
   const workflowDraftAllEdgesReady = Boolean(draft.edges.length && workflowDraftAiReadyCount === draft.edges.length);
-  const workflowDraftCanRun = Boolean(workflowDraftAllEdgesReady && !workflowDraftRunState.running && !workflowDraftRunState.saving && !workflowDraftRunState.autoSaving);
+  const workflowDraftRunBlockedReason = workflowDraftRunState.running
+    ? "正在启动草稿工作流。"
+    : workflowDraftRunState.saving || workflowDraftRunState.autoSaving
+      ? "草稿正在保存，请保存完成后再试运行。"
+      : !draft.nodes.length
+        ? "当前草稿没有节点。请先生成默认草稿，或从节点库添加节点。"
+        : !draft.edges.length
+          ? "当前草稿没有 Edge。请先连接两个节点，定义 agent 之间如何交接。"
+          : !workflowDraftAllEdgesReady
+            ? `还有 ${Math.max(0, draft.edges.length - workflowDraftAiReadyCount)} 条 Edge 没有通过 Edge Handoff Agent 评估。`
+            : "";
+  const workflowDraftCanRun = Boolean(!workflowDraftRunBlockedReason);
   const workflowDraftCanPublish = Boolean(workflowDraftAllEdgesReady && !workflowDraftRunState.publishing && !workflowDraftRunState.saving && !workflowDraftRunState.autoSaving);
   const workflowDraftPublishedId = String(workflowDraftRunState.publishResult?.workflow_id || workflowDraftRunState.publishResult?.workflowId || "");
   const workflowDraftSaveLabel = workflowDraftRunState.autoSaving
@@ -10389,7 +10400,7 @@ function WorkflowCatalog({
                 {workflowDraftRunState.autoSaving ? <Loader2 size={13} /> : workflowDraftRunState.autoSaveError ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}
                 {workflowDraftSaveLabel}
               </span>
-              <button type="button" className="btn primary compact" disabled={!workflowDraftCanRun} title={!workflowDraftAllEdgesReady ? "请先让所有 Edge 通过 Agent 评估" : "保存最新草稿并启动真实 Workflow Run"} onClick={runWorkflowDraftDefinition}>
+              <button type="button" className="btn primary compact" disabled={!workflowDraftCanRun} title={workflowDraftRunBlockedReason || "保存最新草稿并启动真实 Workflow Run"} onClick={runWorkflowDraftDefinition}>
                 {workflowDraftRunState.running ? <Loader2 size={14} /> : <Play size={14} />}
                 试运行草稿工作流
               </button>
@@ -10468,6 +10479,12 @@ function WorkflowCatalog({
             <div className="workflow-draft-overview-error">
               <AlertTriangle size={14} />
               <span>{workflowDraftRunState.error || workflowDraftRunState.runtimeSopError || workflowDraftRunState.runError}</span>
+            </div>
+          ) : null}
+          {workflowDraftRunBlockedReason && !workflowDraftRunState.runError ? (
+            <div className="workflow-draft-run-prerequisite">
+              <AlertTriangle size={14} />
+              <span>当前不能直接试运行：{workflowDraftRunBlockedReason}</span>
             </div>
           ) : null}
           {workflowDraftRunState.publishError || workflowDraftRunState.autoSaveError ? (

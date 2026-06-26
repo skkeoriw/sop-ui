@@ -7174,6 +7174,25 @@ pre {
   background: #fff;
 }
 
+.workflow-draft-run-prerequisite {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workflow-draft-run-prerequisite span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .workflow-draft-layout {
   min-width: 0;
   display: grid;
