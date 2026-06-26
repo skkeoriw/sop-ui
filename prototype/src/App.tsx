@@ -8947,6 +8947,31 @@ function WorkflowCatalog({
       }));
     }
   }
+  async function waitForDraftEdgeEvaluation(
+    runtimeForEdge: Runtime,
+    instanceId: string,
+    workflowId: string,
+    raw: Record<string, unknown>,
+    spiBase: string
+  ): Promise<Record<string, unknown>> {
+    const evaluationId = safeToString(raw.evaluation_id || raw.evaluationId);
+    const status = safeToString(raw.status);
+    if (!evaluationId || !["queued", "running"].includes(status)) return raw;
+    const startedAt = Date.now();
+    let current = raw;
+    while (Date.now() - startedAt < 90000) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      current = provider.getWorkflowEdgeEvaluation
+        ? await provider.getWorkflowEdgeEvaluation(runtimeForEdge, instanceId, workflowId, evaluationId)
+        : await getWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/evaluations/${encodeURIComponent(evaluationId)}`);
+      const currentStatus = safeToString(current.status);
+      if (currentStatus === "done" || currentStatus === "failed") {
+        const result = safeRecord(current.result);
+        return Object.keys(result).length ? result : current;
+      }
+    }
+    throw new Error(`Edge Handoff Agent 评估仍在运行：${evaluationId}`);
+  }
   async function runDraftEdgeAgentEvaluation(edgeId: string) {
     const built = buildDraftEdgePayload(edgeId, "design");
     const runtimeForEdge = built?.runtime || activeRuntime;
@@ -8973,9 +8998,11 @@ function WorkflowCatalog({
       [edgeId]: { ...(current[edgeId] || {}), loading: true, error: "", candidateEvaluation: undefined, candidateRaw: undefined },
     }));
     try {
-      const raw = provider.evaluateWorkflowEdge
-        ? await provider.evaluateWorkflowEdge(runtimeForEdge, built.instanceId, built.workflowId, built.payload)
-        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(built.instanceId)}/workflows/${encodeURIComponent(built.workflowId)}/edges/evaluate`, built.payload);
+      const asyncPayload = { ...built.payload, async: true };
+      const startedRaw = provider.evaluateWorkflowEdge
+        ? await provider.evaluateWorkflowEdge(runtimeForEdge, built.instanceId, built.workflowId, asyncPayload)
+        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(built.instanceId)}/workflows/${encodeURIComponent(built.workflowId)}/edges/evaluate`, asyncPayload);
+      const raw = await waitForDraftEdgeEvaluation(runtimeForEdge, built.instanceId, built.workflowId, startedRaw, spiBase);
       const evaluation = (raw.evaluation && typeof raw.evaluation === "object" ? raw.evaluation : raw) as EdgeHandoffAgentEvaluation;
       setDraftAgentEvaluations((current) => ({
         ...current,
@@ -11652,6 +11679,21 @@ async function postWorkflowEdgeJson(url: string, payload: Record<string, unknown
   if (!response.ok) {
     const result = mapEdgeDraftApplyResult(raw);
     throw new Error(edgeDraftApplyErrorText(result, raw, text, response.status));
+  }
+  return raw;
+}
+
+async function getWorkflowEdgeJson(url: string): Promise<Record<string, unknown>> {
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  const text = await response.text();
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = text ? JSON.parse(text) as Record<string, unknown> : {};
+  } catch {
+    raw = { detail: text };
+  }
+  if (!response.ok) {
+    throw new Error(edgeDraftApplyErrorText(mapEdgeDraftApplyResult(raw), raw, text, response.status));
   }
   return raw;
 }

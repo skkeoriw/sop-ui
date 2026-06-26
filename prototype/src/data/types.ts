@@ -932,6 +932,7 @@ export interface SopDataProvider {
   getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
   evaluateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
+  getWorkflowEdgeEvaluation?(runtime: Runtime, instanceId: string, workflowId: string, evaluationId: string): Promise<WorkflowEdgeResult>;
   simulateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   createWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   generateWorkflowEdgeRuntimeSop?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;

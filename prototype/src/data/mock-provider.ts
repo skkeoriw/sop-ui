@@ -1032,6 +1032,25 @@ export const mockProvider: SopDataProvider = {
     };
   },
 
+  async getWorkflowEdgeEvaluation(_target, _instanceId, _workflowId, evaluationId): Promise<WorkflowEdgeResult> {
+    await delay();
+    return {
+      ok: true,
+      status: "done",
+      mode: "edge-handoff-agent-evaluation-job",
+      evaluation_id: evaluationId,
+      evaluation: {
+        status: "ready",
+        summary: "Mock Edge Handoff Agent 异步评估已完成。",
+        warnings: [],
+        required_user_inputs: [],
+        resolved_handoff: { relay_mappings: [{ source_output: "source_url", target_input: "source_url", resolver: "direct" }] },
+        node_execution_guide: { format: "markdown", prompt: "Use the resolved Edge input and run the downstream skill." },
+        agent: { provider: "mock", model: "edge-handoff-agent-mock", used_ai: true },
+      },
+    };
+  },
+
   async simulateWorkflowEdge(_target, _instanceId, _workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
     await delay();
     const edge = (input.edge && typeof input.edge === "object" ? input.edge : {}) as Record<string, unknown>;
