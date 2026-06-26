@@ -321,6 +321,7 @@ const RUNTIME_HOST_ARCHITECTURE_DOC_URL = "https://pub-6c235832628e401093619867c
 const DEFAULT_HERMES_SMOKE_ROUTE = "sop-runtime-hermes-smoke";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
 const WORKFLOW_DRAFT_STORAGE_KEY = "sop-ui.workflow-draft-builder.v1";
+const DEFAULT_WORKFLOW_DRAFT_SOURCE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 const WORKFLOW_DRAFT_NODE_PRIORITY = ["youtube-fetch", "youtube-deep-research", "wiki-build"];
 type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
 type RuntimeManagementConfigPreview = RuntimeInheritancePreview & {
@@ -8169,7 +8170,10 @@ function WorkflowCatalog({
   const [draftEdgeSaveStates, setDraftEdgeSaveStates] = useState<Record<string, EdgeDraftSaveState>>({});
   const [edgeEvaluationDialog, setEdgeEvaluationDialog] = useState<EdgeEvaluationDialogState>({ edgeId: "", open: false });
   const [workflowDraftRunState, setWorkflowDraftRunState] = useState<WorkflowDraftRunState>({});
-  const [workflowDraftRunUrl, setWorkflowDraftRunUrl] = useState("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+  const [workflowDraftRunInputValues, setWorkflowDraftRunInputValues] = useState<Record<string, string>>({
+    source_url: DEFAULT_WORKFLOW_DRAFT_SOURCE_URL,
+    url: DEFAULT_WORKFLOW_DRAFT_SOURCE_URL,
+  });
   const [draftBuilderOpen, setDraftBuilderOpen] = useState(false);
   const workflowDraftAutoSaveTimer = useRef<number | undefined>(undefined);
   const filteredWorkflows = useMemo(() => {
@@ -8191,6 +8195,17 @@ function WorkflowCatalog({
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.nodeId, node])), [nodes]);
   const draftNodeIds = useMemo(() => new Set(draft.nodes.map((node) => node.nodeId)), [draft.nodes]);
   const draftNodes = draft.nodes.map((item) => nodesById.get(item.nodeId)).filter(Boolean) as NodeRegistryItem[];
+  const workflowDraftStartNodes = useMemo(() => {
+    const targetNodeIds = new Set(draft.edges.map((edge) => edge.to));
+    return draft.nodes
+      .map((item) => nodesById.get(item.nodeId))
+      .filter((node): node is NodeRegistryItem => Boolean(node && !targetNodeIds.has(node.nodeId)));
+  }, [draft.edges, draft.nodes, nodesById]);
+  const workflowDraftStartInputRows = useMemo(() => workflowDraftStartNodes.flatMap((node) => (
+    workflowDraftInputContractRows(node)
+      .filter((row) => row.required)
+      .map((row) => ({ ...row, node }))
+  )), [workflowDraftStartNodes]);
   const draftCandidatePool = useMemo(() => [...nodes]
     .filter((node) => !draftNodeIds.has(node.nodeId))
     .sort((left, right) => {
@@ -8884,6 +8899,18 @@ function WorkflowCatalog({
       setWorkflowDraftRunState((current) => ({ ...current, runError: "还有 Edge 没有通过 Edge Handoff Agent 评估，不能试运行草稿工作流。" }));
       return;
     }
+    const runInputs = workflowDraftBuildRunInputPayload(workflowDraftStartInputRows, workflowDraftRunInputValues);
+    const missingInputs = workflowDraftStartInputRows
+      .filter((row) => row.required && !workflowDraftRunInputValue(workflowDraftRunInputValues, row.node.nodeId, row.name).trim())
+      .map((row) => `${row.node.title || row.node.nodeId}.${row.name}`);
+    if (missingInputs.length) {
+      setWorkflowDraftRunState((current) => ({ ...current, runError: `首节点入参缺失：${missingInputs.join("、")}` }));
+      return;
+    }
+    if (!runInputs.primaryUrl) {
+      setWorkflowDraftRunState((current) => ({ ...current, runError: "当前触发器仍需要视频 URL。请在首节点入参里填写 source_url/url。" }));
+      return;
+    }
     const saved = await saveWorkflowDraftDefinition({ silent: true });
     const draftId = String(saved?.draft_id || saved?.draftId || workflowDraftRunState.draftId || "");
     if (!draftId) {
@@ -8896,8 +8923,11 @@ function WorkflowCatalog({
         draft_id: draftId,
         draft_path: String(saved?.draft_path || saved?.draftPath || workflowDraftRunState.draftPath || ""),
         repo: defaultInstance?.repo || selectedInstance?.repo || "",
-        url: workflowDraftRunUrl,
-        input: { url: workflowDraftRunUrl },
+        url: runInputs.primaryUrl,
+        source_url: runInputs.primaryUrl,
+        input: runInputs.flat,
+        first_node_inputs: runInputs.byNode,
+        entry_nodes: workflowDraftStartNodes.map((node) => node.nodeId),
       };
       const raw = provider.runWorkflowDraft
         ? await provider.runWorkflowDraft(runtimeForDraft, instanceId, workflowId, draftId, payload)
@@ -10387,15 +10417,52 @@ function WorkflowCatalog({
             </article>
           </div>
           <div className="workflow-draft-run-input-row">
-            <label>
-              <span>运行输入 URL</span>
-              <input value={workflowDraftRunUrl} onChange={(event) => setWorkflowDraftRunUrl(event.target.value)} placeholder="https://www.youtube.com/watch?v=..." />
-            </label>
-            {workflowDraftRunState.pipelineId ? (
-              <button type="button" className="ghost-btn compact" onClick={() => onOpenRun(selectedWorkflow?.workflowId || "workflow", workflowDraftRunState.pipelineId || "", activeInstanceId)}>
-                <PanelRightOpen size={14} />打开运行详情
-              </button>
-            ) : null}
+            <div className="workflow-draft-start-inputs">
+              <div className="workflow-draft-start-inputs-head">
+                <div>
+                  <strong>首节点入参</strong>
+                  <span>{workflowDraftStartNodes.length ? `入口节点：${workflowDraftStartNodes.map((node) => node.title || node.nodeId).join("、")}` : "先在画布中添加节点和 Edge"}</span>
+                </div>
+                <span className="status-pill waiting">真实 Workflow Run 输入</span>
+              </div>
+              {workflowDraftStartInputRows.length ? (
+                <div className="workflow-draft-start-input-grid">
+                  {workflowDraftStartInputRows.map((row) => {
+                    const key = workflowDraftRunInputKey(row.node.nodeId, row.name);
+                    return (
+                      <label key={key}>
+                        <span>{workflowDraftRunInputLabel(row.name, row.spec)}</span>
+                        <input
+                          value={workflowDraftRunInputValue(workflowDraftRunInputValues, row.node.nodeId, row.name)}
+                          onChange={(event) => setWorkflowDraftRunInputValues((current) => ({
+                            ...current,
+                            [key]: event.target.value,
+                            [row.name]: event.target.value,
+                            ...(row.name === "source_url" || row.name === "url" ? { source_url: event.target.value, url: event.target.value } : {}),
+                          }))}
+                          placeholder={workflowDraftRunInputPlaceholder(row.name, row.spec)}
+                        />
+                        <small>{row.node.nodeId} · {workflowDraftRunInputMeta(row.name, row.spec)}</small>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="workflow-draft-start-empty">当前草稿没有可识别的首节点必填入参；运行时会使用草稿快照和默认触发上下文。</div>
+              )}
+            </div>
+            <div className="workflow-draft-run-open">
+              {workflowDraftRunState.pipelineId ? (
+                <>
+                  <span>真实运行已启动，节点执行状态在运行详情页查看。</span>
+                  <button type="button" className="ghost-btn compact" onClick={() => onOpenRun(selectedWorkflow?.workflowId || "workflow", workflowDraftRunState.pipelineId || "", activeInstanceId)}>
+                    <PanelRightOpen size={14} />打开运行详情
+                  </button>
+                </>
+              ) : (
+                <span>点击“试运行草稿工作流”后会生成真实 pipeline_id。</span>
+              )}
+            </div>
           </div>
           {workflowDraftRunState.error || workflowDraftRunState.runtimeSopError || workflowDraftRunState.runError ? (
             <div className="workflow-draft-overview-error">
@@ -12071,6 +12138,63 @@ function workflowDraftInputContractRows(node: NodeRegistryItem | undefined) {
     if (!seen.has(name)) rows.push({ name, spec, required: false });
   });
   return rows;
+}
+
+function workflowDraftRunInputKey(nodeId: string, inputName: string) {
+  return `${nodeId}.${inputName}`;
+}
+
+function workflowDraftRunInputValue(values: Record<string, string>, nodeId: string, inputName: string) {
+  const keyed = values[workflowDraftRunInputKey(nodeId, inputName)];
+  if (keyed !== undefined) return keyed;
+  if (values[inputName] !== undefined) return values[inputName];
+  if ((inputName === "source_url" || inputName === "url") && values.source_url) return values.source_url;
+  if ((inputName === "source_url" || inputName === "url") && values.url) return values.url;
+  return "";
+}
+
+function workflowDraftRunInputLabel(inputName: string, spec: unknown) {
+  const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+  const label = safeToString(record.label || record.title || record.description || record.intent);
+  if (label) return label;
+  if (inputName === "source_url" || inputName === "url") return "YouTube 视频 URL";
+  return inputName;
+}
+
+function workflowDraftRunInputMeta(inputName: string, spec: unknown) {
+  const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+  const type = safeToString(record.kind || record.type || "text");
+  const valueType = safeToString(record.value_type || record.valueType || "");
+  const source = safeToString(record.from || record.source || "");
+  return [inputName, type, valueType, source ? `默认来自 ${source}` : ""].filter(Boolean).join(" · ");
+}
+
+function workflowDraftRunInputPlaceholder(inputName: string, spec: unknown) {
+  const record = spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+  const placeholder = safeToString(record.placeholder || record.example);
+  if (placeholder) return placeholder;
+  if (inputName === "source_url" || inputName === "url") return "https://www.youtube.com/watch?v=...";
+  return "填写首节点启动所需输入";
+}
+
+function workflowDraftBuildRunInputPayload(
+  rows: Array<{ node: NodeRegistryItem; name: string; spec: unknown; required: boolean }>,
+  values: Record<string, string>,
+) {
+  const flat: Record<string, string> = {};
+  const byNode: Record<string, Record<string, string>> = {};
+  rows.forEach((row) => {
+    const value = workflowDraftRunInputValue(values, row.node.nodeId, row.name).trim();
+    if (!value) return;
+    flat[row.name] = value;
+    byNode[row.node.nodeId] = { ...(byNode[row.node.nodeId] || {}), [row.name]: value };
+  });
+  const primaryUrl = flat.source_url || flat.url || Object.entries(flat).find(([name, value]) => /url/i.test(name) && value)?.[1] || "";
+  if (primaryUrl) {
+    flat.source_url = flat.source_url || primaryUrl;
+    flat.url = flat.url || primaryUrl;
+  }
+  return { flat, byNode, primaryUrl };
 }
 
 function workflowDraftRelayModeLabel(mode: string | undefined) {

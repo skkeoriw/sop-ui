@@ -7087,12 +7087,55 @@ pre {
 .workflow-draft-run-input-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 220px;
   gap: 8px;
-  align-items: end;
+  align-items: stretch;
 }
 
-.workflow-draft-run-input-row label {
+.workflow-draft-start-inputs {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.workflow-draft-start-inputs-head {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.workflow-draft-start-inputs-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.workflow-draft-start-inputs-head strong {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.workflow-draft-start-inputs-head span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-start-input-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.workflow-draft-start-input-grid label {
   min-width: 0;
   display: grid;
   gap: 5px;
@@ -7101,7 +7144,7 @@ pre {
   font-weight: 750;
 }
 
-.workflow-draft-run-input-row input {
+.workflow-draft-start-input-grid input {
   min-width: 0;
   padding: 8px 10px;
   border: 1px solid #cbd5e1;
@@ -7109,6 +7152,26 @@ pre {
   background: #fff;
   color: var(--text);
   font-size: 12px;
+}
+
+.workflow-draft-start-input-grid small,
+.workflow-draft-start-empty,
+.workflow-draft-run-open span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-run-open {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
 }
 
 .workflow-draft-layout {
