@@ -8985,9 +8985,9 @@ function WorkflowCatalog({
     let current = raw;
     while (Date.now() - startedAt < 90000) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
-      current = provider.getWorkflowEdgeEvaluation
-        ? await provider.getWorkflowEdgeEvaluation(runtimeForEdge, instanceId, workflowId, evaluationId)
-        : await getWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/evaluations/${encodeURIComponent(evaluationId)}`);
+      current = spiBase
+        ? await getWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/evaluations/${encodeURIComponent(evaluationId)}`)
+        : await provider.getWorkflowEdgeEvaluation!(runtimeForEdge, instanceId, workflowId, evaluationId);
       const currentStatus = safeToString(current.status);
       if (currentStatus === "done" || currentStatus === "failed") {
         const result = safeRecord(current.result);
@@ -9001,11 +9001,11 @@ function WorkflowCatalog({
     const runtimeForEdge = built?.runtime || activeRuntime;
     const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForEdge));
     const canUseProvider = Boolean(provider.evaluateWorkflowEdge);
-    if (!runtimeForEdge || !built || (!canUseProvider && !spiBase)) {
+    if (!runtimeForEdge || !built || (!spiBase && !canUseProvider)) {
       const missing = [
         !runtimeForEdge ? "runtime" : "",
         !built ? "edge-payload" : "",
-        !canUseProvider && !spiBase ? "spi-base-url" : "",
+        !spiBase && !canUseProvider ? "spi-base-url" : "",
       ].filter(Boolean).join(", ");
       setDraftAgentEvaluations((current) => ({
         ...current,
@@ -9029,9 +9029,9 @@ function WorkflowCatalog({
         const edgePayload = safeRecord(asyncPayload.edge);
         asyncPayload.edge = { ...edgePayload, instruction: overrideInstruction };
       }
-      const startedRaw = provider.evaluateWorkflowEdge
-        ? await provider.evaluateWorkflowEdge(runtimeForEdge, built.instanceId, built.workflowId, asyncPayload)
-        : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(built.instanceId)}/workflows/${encodeURIComponent(built.workflowId)}/edges/evaluate`, asyncPayload);
+      const startedRaw = spiBase
+        ? await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(built.instanceId)}/workflows/${encodeURIComponent(built.workflowId)}/edges/evaluate`, asyncPayload)
+        : await provider.evaluateWorkflowEdge!(runtimeForEdge, built.instanceId, built.workflowId, asyncPayload);
       const raw = await waitForDraftEdgeEvaluation(runtimeForEdge, built.instanceId, built.workflowId, startedRaw, spiBase);
       const evaluation = (raw.evaluation && typeof raw.evaluation === "object" ? raw.evaluation : raw) as EdgeHandoffAgentEvaluation;
       setDraftAgentEvaluations((current) => ({
@@ -11860,14 +11860,19 @@ function buildEdgeDraftApplyPlanText(plan?: EdgeDraftApplyPlan) {
 }
 
 async function postWorkflowEdgeJson(url: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    throw new Error(`请求 Edge API 失败：${url} (${error instanceof Error ? error.message : String(error)})`);
+  }
   const text = await response.text();
   let raw: Record<string, unknown> = {};
   try {
@@ -11883,7 +11888,12 @@ async function postWorkflowEdgeJson(url: string, payload: Record<string, unknown
 }
 
 async function getWorkflowEdgeJson(url: string): Promise<Record<string, unknown>> {
-  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { Accept: "application/json" } });
+  } catch (error) {
+    throw new Error(`轮询 Edge 评估失败：${url} (${error instanceof Error ? error.message : String(error)})`);
+  }
   const text = await response.text();
   let raw: Record<string, unknown> = {};
   try {
