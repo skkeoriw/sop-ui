@@ -120,6 +120,30 @@ async function postJson(url: string, body: unknown): Promise<void> {
   }
 }
 
+function postJsonErrorMessage(status: number, text: string): string {
+  try {
+    const data = JSON.parse(text) as Record<string, unknown>;
+    const validation = data.validation as Record<string, unknown> | undefined;
+    const errors = (validation?.errors as Array<Record<string, unknown>> | undefined) || [];
+    if (errors.length) {
+      return `${status}: ${errors.map((error) => `${error.field}: ${error.message}`).join("; ")}`;
+    }
+    const evaluation = data.evaluation as Record<string, unknown> | undefined;
+    const reasons = (evaluation?.blocking_reasons as Array<Record<string, unknown>> | undefined) || [];
+    const reasonText = reasons
+      .map((reason) => String(reason.message || reason.code || "").trim())
+      .filter(Boolean)
+      .join("; ");
+    const summary = String(evaluation?.summary || data.detail || data.error || "").trim();
+    const stderr = String(data.stderr || "").trim();
+    const parts = [summary, reasonText, stderr].filter(Boolean);
+    if (parts.length) return `${status}: ${parts.join(" ")}`.slice(0, 800);
+    return `${status}: ${text.slice(0, 300)}`;
+  } catch {
+    return `${status}: ${text.slice(0, 300)}`;
+  }
+}
+
 async function postJsonResult<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
@@ -128,18 +152,7 @@ async function postJsonResult<T>(url: string, body: unknown): Promise<T> {
   });
   const text = await response.text();
   if (!response.ok) {
-    try {
-      const data = JSON.parse(text) as Record<string, unknown>;
-      const validation = data.validation as Record<string, unknown> | undefined;
-      const errors = (validation?.errors as Array<Record<string, unknown>> | undefined) || [];
-      if (errors.length) {
-        throw new Error(`${response.status}: ${errors.map((error) => `${error.field}: ${error.message}`).join("; ")}`);
-      }
-      throw new Error(`${response.status}: ${String(data.detail || text).slice(0, 300)}`);
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith(`${response.status}:`)) throw error;
-      throw new Error(`${response.status}: ${text.slice(0, 300)}`);
-    }
+    throw new Error(postJsonErrorMessage(response.status, text));
   }
   try {
     return JSON.parse(text) as T;
