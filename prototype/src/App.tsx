@@ -8260,6 +8260,14 @@ function WorkflowCatalog({
   const evaluationDialogEdge = edgeEvaluationDialog.open ? draft.edges.find((edge) => edge.id === edgeEvaluationDialog.edgeId) : undefined;
   const evaluationDialogState = evaluationDialogEdge ? draftAgentEvaluations[evaluationDialogEdge.id] : undefined;
   const evaluationDialogCandidate = evaluationDialogState?.candidateEvaluation;
+  const evaluationDialogTrace = safeRecord(evaluationDialogCandidate?.trace || safeRecord(evaluationDialogState?.candidateRaw).trace);
+  const evaluationDialogTraceRequest = safeRecord(evaluationDialogTrace.request);
+  const evaluationDialogTraceLlmRequest = safeRecord(evaluationDialogTrace.llm_request);
+  const evaluationDialogTraceLlm = safeRecord(evaluationDialogTrace.llm);
+  const evaluationDialogTraceParsed = safeRecord(evaluationDialogTrace.parsed);
+  const evaluationDialogTraceAttempts = Array.isArray(evaluationDialogTrace.attempts) ? evaluationDialogTrace.attempts : [];
+  const evaluationDialogTraceLastAttempt = safeRecord(evaluationDialogTraceAttempts[evaluationDialogTraceAttempts.length - 1]);
+  const evaluationDialogSuggestedInstruction = safeToString(evaluationDialogCandidate?.suggested_edge_instruction);
   const workflowDraftAutoSaveKey = useMemo(() => JSON.stringify({
     draft: { ...draft, positions: draftNodePositions },
     evaluations: Object.fromEntries(
@@ -10739,6 +10747,26 @@ function WorkflowCatalog({
                     {evaluationDialogCandidate.required_user_inputs?.length ? evaluationDialogCandidate.required_user_inputs.map((item, index) => <span key={`dialog-required-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
                   </div>
                 </div>
+                {evaluationDialogSuggestedInstruction ? (
+                  <div className="workflow-edge-candidate-apply">
+                    <span>推荐 Edge 交接说明：{evaluationDialogSuggestedInstruction}</span>
+                    <button
+                      type="button"
+                      className="btn primary compact"
+                      onClick={() => {
+                        updateDraftEdgeInstruction(evaluationDialogEdge.id, evaluationDialogSuggestedInstruction);
+                        setDraftAgentEvaluations((current) => {
+                          const next = { ...current };
+                          delete next[evaluationDialogEdge.id];
+                          return next;
+                        });
+                        void runDraftEdgeAgentEvaluation(evaluationDialogEdge.id, evaluationDialogSuggestedInstruction);
+                      }}
+                    >
+                      <CheckCircle2 size={14} />应用并重新评估
+                    </button>
+                  </div>
+                ) : null}
                 <label className="workflow-draft-edge-instruction compact">
                   <span>Edge 交接说明</span>
                   <textarea
@@ -10751,6 +10779,44 @@ function WorkflowCatalog({
                   <strong>候选 Node Execution Guide</strong>
                   <pre>{edgeHandoffAgentGuidePrompt(evaluationDialogCandidate) || "当前评估没有生成指导提示词。"}</pre>
                 </div>
+                <details className="workflow-draft-runtime-brief workflow-draft-agent-trace" open>
+                  <summary><span>Agent 输入 / 输出 Trace</span><ChevronDown size={14} /></summary>
+                  <KeyValues data={{
+                    evaluation_id: String(safeRecord(evaluationDialogState?.candidateRaw).evaluation_id || evaluationDialogEdge.id),
+                    provider: String(evaluationDialogTraceLlm.provider || evaluationDialogCandidate.agent?.provider || "-"),
+                    model: String(evaluationDialogTraceLlm.model || evaluationDialogCandidate.agent?.model || "-"),
+                    request_sent: Object.keys(evaluationDialogTraceLlmRequest).length ? "yes" : "no",
+                    response_received: evaluationDialogTrace.llm_content || evaluationDialogTraceLastAttempt.raw_response ? "yes" : "no",
+                    parsed_json: Object.keys(evaluationDialogTraceParsed).length ? "yes" : "no",
+                    error: String(evaluationDialogTrace.error || evaluationDialogCandidate.agent?.error || evaluationDialogState?.error || "-"),
+                  }} />
+                  {evaluationDialogTrace.llm_content || evaluationDialogTraceLastAttempt.raw_response ? (
+                    <details className="workflow-draft-advanced-json" open>
+                      <summary>Agent 原始回复</summary>
+                      <pre>{String(evaluationDialogTrace.llm_content || evaluationDialogTraceLastAttempt.raw_response || "")}</pre>
+                    </details>
+                  ) : null}
+                  {Object.keys(evaluationDialogTraceLlmRequest).length ? (
+                    <details className="workflow-draft-advanced-json">
+                      <summary>发给 Hermes / LLM 的请求体</summary>
+                      <pre>{JSON.stringify(evaluationDialogTraceLlmRequest, null, 2)}</pre>
+                    </details>
+                  ) : null}
+                  {Object.keys(evaluationDialogTraceRequest).length ? (
+                    <details className="workflow-draft-advanced-json">
+                      <summary>Edge Handoff Agent 输入</summary>
+                      <pre>{JSON.stringify(evaluationDialogTraceRequest, null, 2)}</pre>
+                    </details>
+                  ) : null}
+                  <details className="workflow-draft-advanced-json">
+                    <summary>全量 Trace / 原始接口返回</summary>
+                    <pre>{JSON.stringify({
+                      trace: evaluationDialogTrace,
+                      raw: evaluationDialogState?.candidateRaw || {},
+                      evaluation: evaluationDialogCandidate,
+                    }, null, 2)}</pre>
+                  </details>
+                </details>
                 <div className="modal-actions">
                   <button type="button" className="ghost-btn" onClick={() => runDraftEdgeAgentEvaluation(evaluationDialogEdge.id)}>
                     <RefreshCw size={15} />修改说明后重新评估
