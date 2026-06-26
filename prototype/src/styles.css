@@ -8002,6 +8002,11 @@ pre {
   line-height: 1.45;
 }
 
+.workflow-edge-candidate-apply.subtle {
+  border-color: var(--line);
+  background: #f8fafc;
+}
+
 .workflow-draft-edge-instruction.compact textarea {
   min-height: 112px;
 }

@@ -165,6 +165,9 @@ type EdgeHandoffAgentEvaluation = {
   warnings?: unknown[];
   required_user_inputs?: Array<Record<string, unknown>>;
   suggested_edge_instruction?: string;
+  recommended_edge_instruction?: string;
+  handoff_pattern?: string;
+  validation?: Record<string, unknown>;
   resolved_handoff?: Record<string, unknown>;
   node_execution_guide?: Record<string, unknown>;
   test_plan?: unknown[];
@@ -8248,7 +8251,9 @@ function WorkflowCatalog({
   const selectedDraftAgentTraceParsed = safeRecord(selectedDraftAgentTrace.parsed);
   const selectedDraftAgentTraceAttempts = Array.isArray(selectedDraftAgentTrace.attempts) ? selectedDraftAgentTrace.attempts : [];
   const selectedDraftAgentTraceLastAttempt = safeRecord(selectedDraftAgentTraceAttempts[selectedDraftAgentTraceAttempts.length - 1]);
-  const selectedDraftAgentSuggestedInstruction = safeToString(selectedDraftAgentEvaluation?.suggested_edge_instruction);
+  const selectedDraftAgentSuggestedInstruction = edgeHandoffRecommendedInstruction(selectedDraftAgentEvaluation);
+  const selectedDraftAgentPatternLabel = edgeHandoffPatternLabel(selectedDraftAgentEvaluation?.handoff_pattern);
+  const selectedDraftAgentValidationText = edgeHandoffValidationText(selectedDraftAgentEvaluation);
   const selectedDraftCandidateEvaluation = selectedDraftAgentState?.candidateEvaluation;
   const selectedDraftAgentApplied = edgeHandoffAgentIsAppliedForEdge(selectedDraftEdge, selectedDraftAgentState);
   const selectedDraftAgentStale = edgeHandoffAgentIsStaleForEdge(selectedDraftEdge, selectedDraftAgentState);
@@ -8267,7 +8272,9 @@ function WorkflowCatalog({
   const evaluationDialogTraceParsed = safeRecord(evaluationDialogTrace.parsed);
   const evaluationDialogTraceAttempts = Array.isArray(evaluationDialogTrace.attempts) ? evaluationDialogTrace.attempts : [];
   const evaluationDialogTraceLastAttempt = safeRecord(evaluationDialogTraceAttempts[evaluationDialogTraceAttempts.length - 1]);
-  const evaluationDialogSuggestedInstruction = safeToString(evaluationDialogCandidate?.suggested_edge_instruction);
+  const evaluationDialogSuggestedInstruction = edgeHandoffRecommendedInstruction(evaluationDialogCandidate);
+  const evaluationDialogPatternLabel = edgeHandoffPatternLabel(evaluationDialogCandidate?.handoff_pattern);
+  const evaluationDialogValidationText = edgeHandoffValidationText(evaluationDialogCandidate);
   const workflowDraftAutoSaveKey = useMemo(() => JSON.stringify({
     draft: { ...draft, positions: draftNodePositions },
     evaluations: Object.fromEntries(
@@ -9758,6 +9765,10 @@ function WorkflowCatalog({
                   {selectedDraftAgentEvaluation?.summary ? <p>{selectedDraftAgentEvaluation.summary}</p> : <p>点击“评估 Edge”后，系统会读取上下游 Skill、交接说明和输入输出契约，调用 Edge Handoff Agent 生成结论。</p>}
                   <div className="workflow-edge-detail-lists compact">
                     <div>
+                      <strong>交接范式</strong>
+                      <span>{selectedDraftAgentPatternLabel}</span>
+                    </div>
+                    <div>
                       <strong>阻断 / 风险</strong>
                       {selectedDraftAgentEvaluation?.blocking_reasons?.length ? selectedDraftAgentEvaluation.blocking_reasons.map((item, index) => <span key={`primary-blocking-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
                     </div>
@@ -9766,6 +9777,11 @@ function WorkflowCatalog({
                       {selectedDraftAgentEvaluation?.required_user_inputs?.length ? selectedDraftAgentEvaluation.required_user_inputs.map((item, index) => <span key={`primary-required-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
                     </div>
                   </div>
+                  {selectedDraftAgentValidationText ? (
+                    <div className="workflow-edge-candidate-apply subtle">
+                      <span>推荐校验：{selectedDraftAgentValidationText}</span>
+                    </div>
+                  ) : null}
                   {selectedDraftAgentSuggestedInstruction ? (
                     <div className="workflow-edge-candidate-apply">
                       <span>推荐 Edge 交接说明：{selectedDraftAgentSuggestedInstruction}</span>
@@ -10739,6 +10755,10 @@ function WorkflowCatalog({
                 {evaluationDialogCandidate.summary ? <p>{evaluationDialogCandidate.summary}</p> : null}
                 <div className="workflow-edge-detail-lists compact">
                   <div>
+                    <strong>交接范式</strong>
+                    <span>{evaluationDialogPatternLabel}</span>
+                  </div>
+                  <div>
                     <strong>阻断原因</strong>
                     {evaluationDialogCandidate.blocking_reasons?.length ? evaluationDialogCandidate.blocking_reasons.map((item, index) => <span key={`dialog-block-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
                   </div>
@@ -10747,6 +10767,11 @@ function WorkflowCatalog({
                     {evaluationDialogCandidate.required_user_inputs?.length ? evaluationDialogCandidate.required_user_inputs.map((item, index) => <span key={`dialog-required-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
                   </div>
                 </div>
+                {evaluationDialogValidationText ? (
+                  <div className="workflow-edge-candidate-apply subtle">
+                    <span>推荐校验：{evaluationDialogValidationText}</span>
+                  </div>
+                ) : null}
                 {evaluationDialogSuggestedInstruction ? (
                   <div className="workflow-edge-candidate-apply">
                     <span>推荐 Edge 交接说明：{evaluationDialogSuggestedInstruction}</span>
@@ -11034,6 +11059,33 @@ function edgeHandoffAgentStatusTone(status?: string) {
 function edgeHandoffAgentGuidePrompt(evaluation?: EdgeHandoffAgentEvaluation) {
   const guide = evaluation?.node_execution_guide;
   return typeof guide?.prompt === "string" ? guide.prompt : "";
+}
+
+function edgeHandoffRecommendedInstruction(evaluation?: EdgeHandoffAgentEvaluation) {
+  return safeToString(evaluation?.recommended_edge_instruction || evaluation?.suggested_edge_instruction);
+}
+
+function edgeHandoffPatternLabel(pattern?: string) {
+  const value = safeToString(pattern);
+  if (value === "direct_pass") return "直接传递";
+  if (value === "extract_field") return "字段提取";
+  if (value === "summarize_to_message") return "摘要成消息";
+  if (value === "aggregate_files") return "文件聚合";
+  if (value === "pass_directory") return "目录传递";
+  if (value === "optional_context") return "可选上下文";
+  if (value === "cannot_infer") return "无法推断";
+  return value || "-";
+}
+
+function edgeHandoffValidationText(evaluation?: EdgeHandoffAgentEvaluation) {
+  const validation = safeRecord(evaluation?.validation);
+  const required = Array.isArray(validation.required) ? validation.required.map(String).filter(Boolean) : [];
+  const onMissing = safeToString(validation.on_missing);
+  if (!required.length && !onMissing) return "";
+  return [
+    required.length ? `必须存在：${required.join("、")}` : "",
+    onMissing ? `缺失处理：${onMissing === "block" ? "阻断" : onMissing}` : "",
+  ].filter(Boolean).join("；");
 }
 
 function workflowDraftStableSignature(value: unknown) {
