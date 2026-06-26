@@ -169,6 +169,7 @@ type EdgeHandoffAgentEvaluation = {
   node_execution_guide?: Record<string, unknown>;
   test_plan?: unknown[];
   agent?: Record<string, unknown>;
+  trace?: Record<string, unknown>;
   evaluated_at?: string;
 };
 type EdgeHandoffAgentState = {
@@ -8240,6 +8241,14 @@ function WorkflowCatalog({
     : "";
   const selectedDraftAgentState = selectedDraftEdge ? draftAgentEvaluations[selectedDraftEdge.id] : undefined;
   const selectedDraftAgentEvaluation = selectedDraftAgentState?.evaluation;
+  const selectedDraftAgentTrace = safeRecord(selectedDraftAgentEvaluation?.trace || safeRecord(selectedDraftAgentState?.raw).trace);
+  const selectedDraftAgentTraceRequest = safeRecord(selectedDraftAgentTrace.request);
+  const selectedDraftAgentTraceLlmRequest = safeRecord(selectedDraftAgentTrace.llm_request);
+  const selectedDraftAgentTraceLlm = safeRecord(selectedDraftAgentTrace.llm);
+  const selectedDraftAgentTraceParsed = safeRecord(selectedDraftAgentTrace.parsed);
+  const selectedDraftAgentTraceAttempts = Array.isArray(selectedDraftAgentTrace.attempts) ? selectedDraftAgentTrace.attempts : [];
+  const selectedDraftAgentTraceLastAttempt = safeRecord(selectedDraftAgentTraceAttempts[selectedDraftAgentTraceAttempts.length - 1]);
+  const selectedDraftAgentSuggestedInstruction = safeToString(selectedDraftAgentEvaluation?.suggested_edge_instruction);
   const selectedDraftCandidateEvaluation = selectedDraftAgentState?.candidateEvaluation;
   const selectedDraftAgentApplied = edgeHandoffAgentIsAppliedForEdge(selectedDraftEdge, selectedDraftAgentState);
   const selectedDraftAgentStale = edgeHandoffAgentIsStaleForEdge(selectedDraftEdge, selectedDraftAgentState);
@@ -8972,7 +8981,7 @@ function WorkflowCatalog({
     }
     throw new Error(`Edge Handoff Agent 评估仍在运行：${evaluationId}`);
   }
-  async function runDraftEdgeAgentEvaluation(edgeId: string) {
+  async function runDraftEdgeAgentEvaluation(edgeId: string, overrideInstruction?: string) {
     const built = buildDraftEdgePayload(edgeId, "design");
     const runtimeForEdge = built?.runtime || activeRuntime;
     const spiBase = normalizeEndpoint(runtimeSpiBaseUrl(runtimeForEdge));
@@ -8998,7 +9007,13 @@ function WorkflowCatalog({
       [edgeId]: { ...(current[edgeId] || {}), loading: true, error: "", candidateEvaluation: undefined, candidateRaw: undefined },
     }));
     try {
-      const asyncPayload = { ...built.payload, async: true };
+      const asyncPayload: Record<string, unknown> = { ...built.payload, async: true };
+      if (overrideInstruction !== undefined) {
+        asyncPayload.edge_handoff_instruction = overrideInstruction;
+        asyncPayload.instruction = overrideInstruction;
+        const edgePayload = safeRecord(asyncPayload.edge);
+        asyncPayload.edge = { ...edgePayload, instruction: overrideInstruction };
+      }
       const startedRaw = provider.evaluateWorkflowEdge
         ? await provider.evaluateWorkflowEdge(runtimeForEdge, built.instanceId, built.workflowId, asyncPayload)
         : await postWorkflowEdgeJson(`${spiBase}/${encodeURIComponent(built.instanceId)}/workflows/${encodeURIComponent(built.workflowId)}/edges/evaluate`, asyncPayload);
@@ -9743,6 +9758,26 @@ function WorkflowCatalog({
                       {selectedDraftAgentEvaluation?.required_user_inputs?.length ? selectedDraftAgentEvaluation.required_user_inputs.map((item, index) => <span key={`primary-required-${index}`}>{edgeHandoffAgentListText(item)}</span>) : <span>无</span>}
                     </div>
                   </div>
+                  {selectedDraftAgentSuggestedInstruction ? (
+                    <div className="workflow-edge-candidate-apply">
+                      <span>推荐 Edge 交接说明：{selectedDraftAgentSuggestedInstruction}</span>
+                      <button
+                        type="button"
+                        className="btn primary compact"
+                        onClick={() => {
+                          updateDraftEdgeInstruction(selectedDraftEdge.id, selectedDraftAgentSuggestedInstruction);
+                          setDraftAgentEvaluations((current) => {
+                            const next = { ...current };
+                            delete next[selectedDraftEdge.id];
+                            return next;
+                          });
+                          void runDraftEdgeAgentEvaluation(selectedDraftEdge.id, selectedDraftAgentSuggestedInstruction);
+                        }}
+                      >
+                        <CheckCircle2 size={14} />应用并重新评估
+                      </button>
+                    </div>
+                  ) : null}
                   {selectedDraftCandidateEvaluation ? (
                     <div className="workflow-edge-candidate-apply">
                       <span>新的评估结果已生成，确认后才会写入本页面并允许 Probe/发布。</span>
@@ -9960,21 +9995,67 @@ function WorkflowCatalog({
                       </details>
                     ) : null}
                     <details className="workflow-draft-runtime-brief workflow-draft-agent-trace" open>
-                      <summary><span>Agent Evaluation Trace</span><ChevronDown size={14} /></summary>
+                      <summary><span>Agent 输入 / 输出 Trace</span><ChevronDown size={14} /></summary>
                       <KeyValues data={{
                         trace_type: "edge-handoff-agent",
-                        evaluation_id: String(safeRecord(selectedDraftAgentState?.raw).edge_id || selectedDraftEdge.id),
+                        evaluation_id: String(safeRecord(selectedDraftAgentState?.raw).evaluation_id || safeRecord(selectedDraftAgentState?.raw).edge_id || selectedDraftEdge.id),
                         evaluated_at: selectedDraftAgentEvaluation.evaluated_at || "-",
-                        provider: String(selectedDraftAgentEvaluation.agent?.provider || "-"),
-                        model: String(selectedDraftAgentEvaluation.agent?.model || "-"),
+                        provider: String(selectedDraftAgentTraceLlm.provider || selectedDraftAgentEvaluation.agent?.provider || "-"),
+                        model: String(selectedDraftAgentTraceLlm.model || selectedDraftAgentEvaluation.agent?.model || "-"),
+                        base_url: String(selectedDraftAgentTraceLlm.base_url || safeRecord(safeRecord(selectedDraftAgentState?.raw).config).base_url || "-"),
                         used_ai: selectedDraftAgentEvaluation.agent?.used_ai ? "true" : "false",
+                        request_sent: Object.keys(selectedDraftAgentTraceLlmRequest).length ? "yes" : "no",
+                        response_received: selectedDraftAgentTrace.llm_content || selectedDraftAgentTraceLastAttempt.raw_response ? "yes" : "no",
                         status: selectedDraftAgentEvaluation.status || "-",
                         decision: selectedDraftAgentEvaluation.decision || "-",
-                        latency: String(safeRecord(selectedDraftAgentState?.raw).latency_ms || "unknown"),
+                        error: String(selectedDraftAgentTrace.error || selectedDraftAgentEvaluation.agent?.error || selectedDraftAgentState?.error || "-"),
                       }} />
+                      <div className="workflow-edge-detail-lists compact">
+                        <div>
+                          <strong>发送给 Agent 的输入</strong>
+                          <span>{Object.keys(selectedDraftAgentTraceRequest).length ? "已记录 compact request" : "未记录"}</span>
+                        </div>
+                        <div>
+                          <strong>LLM 请求</strong>
+                          <span>{Object.keys(selectedDraftAgentTraceLlmRequest).length ? `stream=${String(selectedDraftAgentTraceLlmRequest.stream)} · max_tokens=${String(selectedDraftAgentTraceLlmRequest.max_tokens || "-")}` : "未记录"}</span>
+                        </div>
+                        <div>
+                          <strong>Agent 回复</strong>
+                          <span>{selectedDraftAgentTrace.llm_content ? "已记录 llm_content" : selectedDraftAgentTraceLastAttempt.raw_response ? "已记录 raw_response" : "未收到或未记录"}</span>
+                        </div>
+                        <div>
+                          <strong>解析结果</strong>
+                          <span>{Object.keys(selectedDraftAgentTraceParsed).length ? "已解析 JSON" : "未解析出结构化 JSON"}</span>
+                        </div>
+                      </div>
+                      {selectedDraftAgentTrace.llm_content || selectedDraftAgentTraceLastAttempt.raw_response ? (
+                        <details className="workflow-draft-advanced-json" open>
+                          <summary>Agent 原始回复</summary>
+                          <pre>{String(selectedDraftAgentTrace.llm_content || selectedDraftAgentTraceLastAttempt.raw_response || "")}</pre>
+                        </details>
+                      ) : null}
+                      {Object.keys(selectedDraftAgentTraceParsed).length ? (
+                        <details className="workflow-draft-advanced-json">
+                          <summary>解析后的评估 JSON</summary>
+                          <pre>{JSON.stringify(selectedDraftAgentTraceParsed, null, 2)}</pre>
+                        </details>
+                      ) : null}
+                      {Object.keys(selectedDraftAgentTraceLlmRequest).length ? (
+                        <details className="workflow-draft-advanced-json">
+                          <summary>发给 Hermes / LLM 的请求体</summary>
+                          <pre>{JSON.stringify(selectedDraftAgentTraceLlmRequest, null, 2)}</pre>
+                        </details>
+                      ) : null}
+                      {Object.keys(selectedDraftAgentTraceRequest).length ? (
+                        <details className="workflow-draft-advanced-json">
+                          <summary>Edge Handoff Agent 输入</summary>
+                          <pre>{JSON.stringify(selectedDraftAgentTraceRequest, null, 2)}</pre>
+                        </details>
+                      ) : null}
                       <details className="workflow-draft-advanced-json">
-                        <summary>查看 Agent 请求 / 响应原文</summary>
+                        <summary>全量 Trace / 原始接口返回</summary>
                         <pre>{JSON.stringify({
+                          trace: selectedDraftAgentTrace,
                           request: safeRecord(selectedDraftAgentState?.raw).request || {},
                           config: safeRecord(selectedDraftAgentState?.raw).config || {},
                           evaluation: selectedDraftAgentEvaluation,
