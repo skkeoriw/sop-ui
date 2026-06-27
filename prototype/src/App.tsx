@@ -954,6 +954,15 @@ function searchForNodeRunDetailPage() {
   return search ? `?${search}` : "";
 }
 
+function searchForWorkflowRunPage() {
+  if (typeof window === "undefined") return "";
+  const params = new URLSearchParams();
+  const mode = readSearchParam("mode");
+  if (mode) params.set("mode", mode);
+  const search = params.toString();
+  return search ? `?${search}` : "";
+}
+
 function nodeTestTone(status?: string) {
   if (status === "done") return "ok";
   if (status === "needs_input" || status === "skipped" || status === "waiting") return "warn";
@@ -6159,7 +6168,7 @@ export default function App() {
     let nextPath = `/runtimes/${encodeURIComponent(baseRuntime)}/instances/${encodeURIComponent(targetInstanceId)}/workflows/${encodeURIComponent(workflowId)}`;
     if (pipelineId) nextPath += `/executions/${encodeURIComponent(pipelineId)}`;
     if (nodeId) nextPath += `/${encodeURIComponent(nodeId)}`;
-    const nextUrl = `${nextPath}${window.location.search}`;
+    const nextUrl = `${nextPath}${searchForWorkflowRunPage()}`;
     if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
     setRoute({ view: "workflow", nodeId, pipelineId, artifactId: "", moduleId: "" });
     if (pipelineId) setSelectedRunId(pipelineId);
