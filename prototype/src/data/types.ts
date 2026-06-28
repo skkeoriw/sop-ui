@@ -439,6 +439,9 @@ export interface NodeConfig {
   mode?: string;
   needs?: string[];
   executor?: Record<string, unknown>;
+  entryInputs?: Record<string, unknown>;
+  handoff?: Record<string, unknown>;
+  workflowInputs?: Record<string, unknown>;
   inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
   optionalInputs?: Record<string, unknown>;
@@ -805,6 +808,9 @@ export interface NodeDraftInput {
   entry?: string;
   agent?: string;
   webhook_route?: string;
+  entry_input_name?: string;
+  input_type?: string;
+  input_value_type?: string;
   upstream?: string;
   upstream_output?: string;
   input_name?: string;

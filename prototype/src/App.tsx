@@ -5040,16 +5040,16 @@ export default function App() {
   const [draftLocalError, setDraftLocalError] = useState("");
   const [confirmRealDraft, setConfirmRealDraft] = useState(false);
   const [draftInput, setDraftInput] = useState<NodeDraftInput>({
-    skill_install_command: "bash <(curl -fsSL https://skill.vyibc.com/install-vyibc-face-consistent-album.sh)",
-    skill_id: "vyibc-face-consistent-album",
-    node_id: "youtube-cover-image",
-    title: "YouTube Cover Image",
-    description: "基于上游研究结果生成 YouTube 封面图候选。",
-    upstream: "youtube-deep-research",
-    upstream_output: "analysis_file",
-    input_name: "research_report",
-    output_name: "cover_images",
-    output_path: "raw/generated-images/{pipeline_id}/cover-images.json"
+    skill_install_command: "bash <(curl -fsSL 'https://skill.vyibc.com/install-chatgpt-remote-image-service.sh?v=202606251544')",
+    skill_id: "chatgpt-remote-image-service",
+    node_id: "chatgpt-remote-image-service",
+    title: "ChatGPT 远程生图服务",
+    description: "通过外部生图 skill 生成图片；上游关系由 Workflow Edge 决定。",
+    entry_input_name: "prompt",
+    input_type: "string",
+    input_value_type: "text",
+    output_name: "result",
+    output_path: "raw/node-runs/{run_id}/outputs/outputs/result.json"
   });
   const isRuntimeDirectory = viewMode === "runtime" && !hasRuntimeRouteId;
   const isInstanceDirectory = viewMode === "instance" && !routeContext.instanceId;
@@ -15236,8 +15236,14 @@ function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined
             install_command: node.executor?.install_command || "-",
           }} />
         </DetailBlock>
-        <DetailBlock title="Input Mapping">
-          <KeyValues data={(node.inputs as Record<string, unknown>) || {}} />
+        <DetailBlock title="Entry Inputs">
+          <KeyValues data={(node.entryInputs as Record<string, unknown>) || (node.inputs as Record<string, unknown>) || {}} />
+        </DetailBlock>
+        <DetailBlock title="Handoff">
+          <KeyValues data={(node.handoff as Record<string, unknown>) || {}} />
+        </DetailBlock>
+        <DetailBlock title="Workflow Bindings">
+          <KeyValues data={(node.workflowInputs as Record<string, unknown>) || {}} />
         </DetailBlock>
         <DetailBlock title="Output Declaration">
           <KeyValues data={(node.outputs as Record<string, unknown>) || {}} />
@@ -15377,11 +15383,24 @@ function NodeDraftDrawer({
             <label>Skill ID<input value={draftInput.skill_id} onChange={(event) => setDraftInput({ ...draftInput, skill_id: event.target.value })} /></label>
             <label>Node ID<input value={draftInput.node_id} onChange={(event) => setDraftInput({ ...draftInput, node_id: event.target.value })} /></label>
             <label>Title<input value={draftInput.title} onChange={(event) => setDraftInput({ ...draftInput, title: event.target.value })} /></label>
-            <label>Upstream<input value={draftInput.upstream || ""} onChange={(event) => setDraftInput({ ...draftInput, upstream: event.target.value })} /></label>
-            <label>Upstream output<input value={draftInput.upstream_output || ""} onChange={(event) => setDraftInput({ ...draftInput, upstream_output: event.target.value })} /></label>
-            <label>Input name<input value={draftInput.input_name || ""} onChange={(event) => setDraftInput({ ...draftInput, input_name: event.target.value })} /></label>
+            <label>Entry input<input value={draftInput.entry_input_name || draftInput.input_name || ""} onChange={(event) => setDraftInput({ ...draftInput, entry_input_name: event.target.value })} /></label>
+            <label>Input type<select value={draftInput.input_type || "string"} onChange={(event) => setDraftInput({ ...draftInput, input_type: event.target.value })}>
+              <option value="string">string</option>
+              <option value="file">file</option>
+              <option value="directory">directory</option>
+            </select></label>
+            <label>Value type<select value={draftInput.input_value_type || "text"} onChange={(event) => setDraftInput({ ...draftInput, input_value_type: event.target.value })}>
+              <option value="text">text</option>
+              <option value="url">url</option>
+              <option value="markdown">markdown</option>
+              <option value="json">json</option>
+            </select></label>
             <label>Output name<input value={draftInput.output_name || ""} onChange={(event) => setDraftInput({ ...draftInput, output_name: event.target.value })} /></label>
             <label>Output path<input value={draftInput.output_path || ""} onChange={(event) => setDraftInput({ ...draftInput, output_path: event.target.value })} /></label>
+          </div>
+          <div className="drawer-note">
+            <strong>Node 不绑定上游</strong>
+            <span>这里创建的是 Skill 节点定义；上游/下游关系在 Workflow Edge 里配置。</span>
           </div>
           <label>Description<textarea value={draftInput.description || ""} onChange={(event) => setDraftInput({ ...draftInput, description: event.target.value })} /></label>
           {mode === "real" && (
@@ -16926,8 +16945,14 @@ function NodeManagerInspector({ node, drafts, loading }: { node: NodeRegistryIte
               }} />
             </DetailBlock>
 
-            <DetailBlock title="Input Contract">
-              <KeyValues data={(node.inputs as Record<string, unknown>) || {}} />
+            <DetailBlock title="Entry Inputs">
+              <KeyValues data={(node.entryInputs as Record<string, unknown>) || (node.inputs as Record<string, unknown>) || {}} />
+            </DetailBlock>
+            <DetailBlock title="Handoff">
+              <KeyValues data={(node.handoff as Record<string, unknown>) || {}} />
+            </DetailBlock>
+            <DetailBlock title="Workflow Bindings">
+              <KeyValues data={(node.workflowInputs as Record<string, unknown>) || {}} />
             </DetailBlock>
             <DetailBlock title="Output Contract">
               <KeyValues data={(node.outputs as Record<string, unknown>) || {}} />
