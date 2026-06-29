@@ -310,6 +310,7 @@ export interface NodeDetail {
   title?: string;
   purpose?: string;
   branch?: string;
+  source?: string;
   retryable?: boolean;
   manualFixHint?: string;
   reportReason?: string;
@@ -435,6 +436,7 @@ export interface NodeConfig {
   title?: string;
   purpose?: string;
   branch?: string;
+  source?: string;
   retryable?: boolean;
   mode?: string;
   needs?: string[];
@@ -450,6 +452,8 @@ export interface NodeConfig {
   skillScript?: string | null;
   skillReadme?: string | null;
   manifest?: Record<string, unknown>;
+  sourceDigest?: Record<string, unknown>;
+  coverageReport?: Record<string, unknown>;
 }
 
 export type NodeDepClass = "independent" | "state_dependent" | "artifact_dependent";

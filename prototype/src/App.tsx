@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, memo, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, ReactNode, memo, useEffect, useMemo, useRef, useState } from "react";
 import { Background, Connection, Controls, Edge, Handle, MiniMap, Node, NodeProps, Position, ReactFlow } from "@xyflow/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -1361,7 +1361,59 @@ function buildRelayTargetNodes(nodes: NodeRegistryItem[], currentNodeId: string)
     });
 }
 
-function generatedNodeRunFixtureValue(inputName: string, sourceExpression = "") {
+function inputSpecRecord(spec: unknown): Record<string, unknown> {
+  return spec && typeof spec === "object" ? spec as Record<string, unknown> : {};
+}
+
+function inputSpecKind(spec: unknown) {
+  const record = inputSpecRecord(spec);
+  return String(record.input_kind || record.kind || record.type || record.value_type || "text").toLowerCase();
+}
+
+function inputSpecValueType(spec: unknown) {
+  const record = inputSpecRecord(spec);
+  return String(record.value_type || record.format || record.input_kind || record.kind || record.type || "text").toLowerCase();
+}
+
+function inputSpecRequired(spec: unknown, fallback = true) {
+  const record = inputSpecRecord(spec);
+  return record.required === undefined ? fallback : Boolean(record.required);
+}
+
+function inputSpecLabel(name: string, spec: unknown) {
+  const record = inputSpecRecord(spec);
+  return String(record.label || record.title || name.replace(/_/g, " ")).trim();
+}
+
+function inputSpecDescription(spec: unknown) {
+  const record = inputSpecRecord(spec);
+  return String(record.description || record.help || record.summary || "").trim();
+}
+
+function inputSpecEvidence(spec: unknown) {
+  const record = inputSpecRecord(spec);
+  const evidence = record.evidence;
+  if (Array.isArray(evidence)) return evidence.map(String).join("; ");
+  return String(evidence || record.cli_option || "").trim();
+}
+
+function inputSpecExample(spec: unknown) {
+  const record = inputSpecRecord(spec);
+  return String(record.example || record.placeholder || "").trim();
+}
+
+function nodeEntryInputEntries(node: NodeRegistryItem | undefined): Array<[string, unknown]> {
+  const entry = node?.entryInputs && Object.keys(node.entryInputs).length ? node.entryInputs : node?.inputs || {};
+  return Object.entries(entry);
+}
+
+function nodeHasEntryInputs(node: NodeRegistryItem | undefined) {
+  return nodeEntryInputEntries(node).length > 0;
+}
+
+function generatedNodeRunFixtureValue(inputName: string, sourceExpression = "", spec?: unknown) {
+  const example = inputSpecExample(spec);
+  if (example) return example;
   const name = inputName.toLowerCase();
   const source = sourceExpression.toLowerCase();
   if (name === "source_url" || name === "url" || source.endsWith(".source_url")) return DEFAULT_NODE_RUN_SOURCE_URL;
@@ -1533,7 +1585,7 @@ function nodeRunInputPreviewRows(
   selectedOutputs: string[] = [],
   relayMappings: NodeRunRelayMapping[] = [],
 ) {
-  const inputs = Object.entries(node?.inputs || {});
+  const inputs = nodeEntryInputEntries(node);
   if (!inputs.length) {
     return [{
       key: "no-inputs",
@@ -1573,25 +1625,26 @@ function nodeRunInputPreviewRows(
     }
     if (inputSource === "manual") {
       const value = manualInputs[name] || "";
+      const required = inputSpecRequired(spec);
       return {
         key: name,
         name,
         value: value ? (isSecretField(name) ? "已填写，已隐藏" : value) : "未填写",
         source,
         logic: "使用本次页面手动输入值，不修改 Instance 或 Settings。",
-        missing: !value,
+        missing: required && !value,
       };
     }
-    const fixture = generatedNodeRunFixtureValue(name, source);
+    const fixture = generatedNodeRunFixtureValue(name, source, spec);
     return {
       key: name,
       name,
-      value: fixture || "运行时按契约生成",
+      value: fixture || "没有可用示例",
       source,
       logic: inputSource === "deepseek-mock"
         ? "优先使用模拟输入；未启用模型生成时使用固定示例值。"
         : `匹配 ${name}${source ? ` / ${source}` : ""} 的固定示例规则。`,
-      missing: false,
+      missing: inputSpecRequired(spec) && !fixture,
     };
   });
 }
@@ -2723,7 +2776,7 @@ function relayResolverLabel(resolver: unknown) {
 }
 
 function contractContentLabel(spec: Record<string, unknown>, fallback = "内容") {
-  const kind = String(spec.kind || spec.type || "").toLowerCase();
+  const kind = String(spec.input_kind || spec.kind || spec.type || "").toLowerCase();
   const valueType = String(spec.value_type || spec.format || "").toLowerCase();
   if (kind.includes("files")) return "多文件";
   if (kind.includes("file")) return "文件";
@@ -3408,6 +3461,8 @@ function useNodeRunController({
     setTelegramEnabled(Boolean(nodeCapabilityRecord(node, "telegram").enabled ?? true));
     setTelegramSaveScope("run");
     setRuntimeOverrides({});
+    setManualInputs({});
+    setInputSource(nodeHasEntryInputs(node) && String(node?.source || "") === "runtime-catalog" ? "manual" : DEFAULT_NODE_RUN_INPUT_SOURCE);
   }, [nodeId]);
 
   useEffect(() => {
@@ -3503,7 +3558,7 @@ function useNodeRunController({
     createMutation.mutate(payload);
   }
 
-  const inputFields = Object.entries(node?.inputs || {});
+  const inputFields = nodeEntryInputEntries(node);
   return {
     provider,
     runtime,
@@ -3656,6 +3711,20 @@ function NodeRunStartPanel({
     }
     if (inputSource === "existing-node-run" && relayMode === "all_outputs" && !relayInstruction.trim()) {
       return "整包接力需要填写接续说明";
+    }
+    if (inputSource === "manual") {
+      const missing = inputFields
+        .filter(([, spec]) => inputSpecRequired(spec))
+        .map(([name]) => name)
+        .filter((name) => !String(manualInputs[name] || "").trim());
+      if (missing.length) return `缺少必填输入：${missing.join(", ")}`;
+    }
+    if (inputSource === "generated-fixture") {
+      const missingFixture = inputFields
+        .filter(([, spec]) => inputSpecRequired(spec))
+        .filter(([name, spec]) => !generatedNodeRunFixtureValue(name, nodeInputSourceExpression(spec), spec))
+        .map(([name]) => name);
+      if (missingFixture.length) return `没有可用示例输入：${missingFixture.join(", ")}。请改用手动输入。`;
     }
     return "";
   })();
@@ -3825,17 +3894,40 @@ function NodeRunStartPanel({
             </label>
           </>
         ) : null}
-        {inputSource === "manual" ? inputFields.map(([name, spec]) => (
-          <label key={name}>{name}
-            <input
-              type={isSecretField(name) ? "password" : "text"}
-              value={manualInputs[name] || ""}
-              onChange={(event) => setManualInputs((prev) => ({ ...prev, [name]: event.target.value }))}
-              placeholder={String((spec as Record<string, unknown>)?.from || spec || "manual value")}
-              autoComplete="off"
-            />
-          </label>
-        )) : null}
+        {inputSource === "manual" ? (
+          <div className="node-run-manual-inputs">
+            <div className="section-title"><span>运行输入</span><span>{inputFields.filter(([, spec]) => inputSpecRequired(spec)).length} required</span></div>
+            {inputFields.map(([name, spec]) => {
+              const kind = inputSpecKind(spec);
+              const required = inputSpecRequired(spec);
+              const label = inputSpecLabel(name, spec);
+              const description = inputSpecDescription(spec);
+              const placeholder = inputSpecExample(spec) || String((spec as Record<string, unknown>)?.from || "填写本次运行输入");
+              const value = manualInputs[name] || "";
+              const common = {
+                value,
+                onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setManualInputs((prev) => ({ ...prev, [name]: event.target.value })),
+                placeholder,
+                autoComplete: "off",
+              };
+              return (
+                <label key={name} className={`node-run-manual-field ${required && !value.trim() ? "missing" : ""}`}>
+                  <span>{label}{required ? <b>必填</b> : <small>可选</small>}</span>
+                  {kind === "text" || name.toLowerCase().includes("prompt") || inputSpecValueType(spec) === "text" ? (
+                    <textarea {...common} rows={name.toLowerCase().includes("prompt") ? 4 : 2} />
+                  ) : (
+                    <input
+                      {...common}
+                      type={isSecretField(name) ? "password" : kind === "url" ? "url" : kind === "number" ? "number" : "text"}
+                    />
+                  )}
+                  {description ? <small>{description}</small> : null}
+                  {inputSpecEvidence(spec) ? <small className="evidence">来源：{inputSpecEvidence(spec)}</small> : null}
+                </label>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
       <NodeRunInputPreview controller={controller} />
       <div className="node-run-config-disclosure">
@@ -15302,6 +15394,46 @@ function ModuleDetailPanel({
   );
 }
 
+function NodeEntryInputsPanel({ node }: { node: NodeRegistryItem }) {
+  const rows = nodeEntryInputEntries(node);
+  const coverage = (node.coverageReport || {}) as Record<string, unknown>;
+  const sourceFiles = Array.isArray(coverage.source_files_read) ? coverage.source_files_read.map(String) : [];
+  return (
+    <div className="node-entry-inputs-panel">
+      <div className="node-entry-input-list">
+        {rows.map(([name, spec]) => {
+          const required = inputSpecRequired(spec);
+          return (
+            <article key={name} className={`node-entry-input-card ${required ? "required" : "optional"}`}>
+              <div>
+                <span className={`status-pill ${required ? "running" : "waiting"}`}>{required ? "必填" : "可选"}</span>
+                <strong>{inputSpecLabel(name, spec)}</strong>
+                <code>{name}</code>
+              </div>
+              <div className="node-run-step-meta-grid">
+                <span><b>输入类型</b>{inputSpecKind(spec)}</span>
+                <span><b>值类型</b>{inputSpecValueType(spec)}</span>
+                <span><b>示例</b>{inputSpecExample(spec) || "-"}</span>
+              </div>
+              {inputSpecDescription(spec) ? <p>{inputSpecDescription(spec)}</p> : null}
+              {inputSpecEvidence(spec) ? <small className="evidence">证据：{inputSpecEvidence(spec)}</small> : null}
+            </article>
+          );
+        })}
+        {!rows.length ? <Empty text="该节点没有声明首节点/单节点运行输入。" /> : null}
+      </div>
+      {sourceFiles.length ? (
+        <details className="node-run-step-raw">
+          <summary><span>Skill 源文件覆盖率</span><ChevronDown size={14} /></summary>
+          <div className="node-source-file-list">
+            {sourceFiles.map((path) => <code key={path}>{path}</code>)}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined; loading: boolean }) {
   if (loading) return <section className="node-detail-panel"><Skeleton /></section>;
   if (!node) return <section className="node-detail-panel"><Empty text="选择一个 Node 查看完整定义" /></section>;
@@ -15334,13 +15466,18 @@ function NodeDetailPanel({ node, loading }: { node: NodeRegistryItem | undefined
           }} />
         </DetailBlock>
         <DetailBlock title="Skill / Executor">
-          <KeyValues data={node.skill && Object.keys(node.skill).length ? node.skill : {
+          <KeyValues data={node.skill && Object.keys(node.skill).length ? {
+            id: String(node.skill.id || node.executor?.skill || "-"),
+            source: String(node.skill.source || node.source || "-"),
+            install_command: String(node.skill.install_command || "-"),
+            readme_path: String(node.skill.readme_path || "-"),
+          } : {
             executor_skill: node.executor?.skill || "-",
             install_command: node.executor?.install_command || "-",
           }} />
         </DetailBlock>
         <DetailBlock title="Entry Inputs">
-          <KeyValues data={(node.entryInputs as Record<string, unknown>) || (node.inputs as Record<string, unknown>) || {}} />
+          <NodeEntryInputsPanel node={node} />
         </DetailBlock>
         <DetailBlock title="Handoff">
           <KeyValues data={(node.handoff as Record<string, unknown>) || {}} />
@@ -15492,6 +15629,8 @@ function NodeDraftDrawer({
   const generatedNode = (evaluation.node_draft || {}) as Record<string, unknown>;
   const skill = (generatedNode.skill || {}) as Record<string, unknown>;
   const executor = (generatedNode.executor || {}) as Record<string, unknown>;
+  const entry = (generatedNode.entry || {}) as Record<string, unknown>;
+  const generatedEntryInputs = (entry.inputs || {}) as Record<string, unknown>;
   const handoff = (generatedNode.handoff || {}) as Record<string, unknown>;
   const outputs = (generatedNode.outputs || {}) as Record<string, unknown>;
   const skillIdentity = (evaluation.skill_identity || {}) as Record<string, unknown>;
@@ -15585,6 +15724,22 @@ function NodeDraftDrawer({
                 <div><span>Outputs</span><strong>{String(outputs.root || "-")}</strong></div>
               </div>
               <div className="node-builder-contract-grid">
+                <article>
+                  <strong>Entry Inputs</strong>
+                  <div className="node-entry-input-list">
+                    {Object.entries(generatedEntryInputs).map(([name, spec]) => (
+                      <div key={name} className="node-entry-input-card">
+                        <div>
+                          <span className={`status-pill ${inputSpecRequired(spec) ? "running" : "waiting"}`}>{inputSpecRequired(spec) ? "必填" : "可选"}</span>
+                          <strong>{inputSpecLabel(name, spec)}</strong>
+                          <code>{name}</code>
+                        </div>
+                        <small>{inputSpecDescription(spec) || inputSpecEvidence(spec) || "-"}</small>
+                      </div>
+                    ))}
+                    {!Object.keys(generatedEntryInputs).length ? <Empty text="Agent 没有生成 entry inputs" /> : null}
+                  </div>
+                </article>
                 <article>
                   <strong>Handoff 接收</strong>
                   <code>{formatValue(handoff.accepts || {})}</code>

@@ -522,6 +522,7 @@ function mapNodeConfig(raw: Record<string, unknown>, nodeId: string): NodeConfig
     title: raw.title ? String(raw.title) : undefined,
     purpose: raw.purpose ? String(raw.purpose) : undefined,
     branch: raw.branch ? String(raw.branch) : undefined,
+    source: raw.source ? String(raw.source) : undefined,
     retryable: raw.retryable === undefined ? undefined : Boolean(raw.retryable),
     mode: raw.mode ? String(raw.mode) : undefined,
     needs: (raw.needs as string[]) || [],
@@ -540,6 +541,8 @@ function mapNodeConfig(raw: Record<string, unknown>, nodeId: string): NodeConfig
     skillScript: raw.skill_script ? String(raw.skill_script) : raw.skillScript ? String(raw.skillScript) : null,
     skillReadme: raw.skill_readme ? String(raw.skill_readme) : raw.skillReadme ? String(raw.skillReadme) : null,
     manifest: (raw.manifest as Record<string, unknown>) || {},
+    sourceDigest: ((raw.source_digest || raw.sourceDigest || ((raw.skill as Record<string, unknown> | undefined)?.source_digest)) as Record<string, unknown>) || {},
+    coverageReport: ((raw.coverage_report || raw.coverageReport) as Record<string, unknown>) || {},
   };
 }
 

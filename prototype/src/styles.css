@@ -4772,6 +4772,7 @@ pre {
 
 .node-relay-output-list,
 .node-contract-cards,
+.node-entry-input-list,
 .node-binding-list,
 .node-relay-rules,
 .node-run-relay-resolution-list {
@@ -4781,6 +4782,7 @@ pre {
 
 .node-relay-output-row,
 .node-contract-card,
+.node-entry-input-card,
 .node-binding-list article,
 .node-relay-rules article,
 .node-run-relay-resolution-list article {
@@ -4799,7 +4801,8 @@ pre {
 }
 
 .node-relay-output-row.active,
-.node-contract-card:hover {
+.node-contract-card:hover,
+.node-entry-input-card:hover {
   border-color: rgba(37, 99, 235, .38);
   background: rgba(37, 99, 235, .05);
 }
@@ -4811,9 +4814,39 @@ pre {
 
 .node-relay-output-row span,
 .node-contract-card > div:first-child,
+.node-entry-input-card > div:first-child,
 .node-binding-list article,
 .node-relay-rules article {
   min-width: 0;
+}
+
+.node-entry-input-card {
+  border-left: 3px solid rgba(37, 99, 235, .42);
+}
+
+.node-entry-input-card.optional {
+  border-left-color: rgba(100, 116, 139, .35);
+}
+
+.node-entry-input-card > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.node-entry-input-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.node-source-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
 }
 
 .node-relay-output-row strong,
@@ -10073,7 +10106,8 @@ pre {
 }
 
 .node-run-controls input,
-.node-run-controls select {
+.node-run-controls select,
+.node-run-controls textarea {
   min-width: 0;
   min-height: 34px;
   border: 1px solid var(--line);
@@ -10081,6 +10115,58 @@ pre {
   padding: 0 9px;
   color: var(--text);
   background: var(--surface);
+}
+
+.node-run-controls textarea {
+  min-height: 72px;
+  padding: 8px 9px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.node-run-manual-inputs {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.node-run-manual-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.node-run-manual-field.missing {
+  border-color: rgba(220, 38, 38, .45);
+  background: rgba(254, 242, 242, .78);
+}
+
+.node-run-manual-field > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.node-run-manual-field b,
+.node-run-manual-field small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.node-run-manual-field .evidence,
+.node-entry-input-card .evidence {
+  overflow-wrap: anywhere;
+  color: var(--muted);
 }
 
 .node-run-input-preview,
