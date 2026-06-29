@@ -98,6 +98,10 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+}
+
 function toQuery(options?: ListQueryOptions): string {
   const params = new URLSearchParams();
   if (!options) return "";
@@ -955,6 +959,8 @@ function mapNodeBuilderResult(raw: Record<string, unknown>): NodeBuilderResult {
   return {
     ok: Boolean(raw.ok),
     mode: raw.mode ? String(raw.mode) : undefined,
+    status: raw.status ? String(raw.status) : undefined,
+    evaluationId: raw.evaluation_id ? String(raw.evaluation_id) : raw.evaluationId ? String(raw.evaluationId) : undefined,
     request: (raw.request as Record<string, unknown>) || {},
     config: (raw.config as Record<string, unknown>) || {},
     evaluation: (raw.evaluation as Record<string, unknown>) || {},
@@ -1640,9 +1646,27 @@ export const sopProvider: SopDataProvider = {
   async evaluateNodeBuilder(runtime, instanceId, input: NodeBuilderInput) {
     const raw = await postJsonResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-builder/evaluate`,
-      input
+      { ...input, async_job: true }
     );
-    return mapNodeBuilderResult(raw);
+    const evaluationId = String(raw.evaluation_id || raw.evaluationId || "");
+    const pollUrl = String(raw.poll_url || "");
+    if (!evaluationId || !pollUrl) return mapNodeBuilderResult(raw);
+    const absolutePollUrl = pollUrl.startsWith("http")
+      ? pollUrl
+      : `${runtime.endpoint}${pollUrl.startsWith("/") ? pollUrl : `/${pollUrl}`}`;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      await delay(attempt < 5 ? 800 : 1500);
+      const job = await requestJson<Record<string, unknown>>(absolutePollUrl);
+      const status = String(job.status || "");
+      if (status === "queued" || status === "running") continue;
+      const result = (job.result as Record<string, unknown> | undefined) || job;
+      return {
+        ...mapNodeBuilderResult(result),
+        status,
+        evaluationId,
+      };
+    }
+    throw new Error(`Node Builder Agent 仍在运行：${evaluationId}`);
   },
 
   async createNodeDraft(runtime, instanceId, input: NodeDraftInput) {

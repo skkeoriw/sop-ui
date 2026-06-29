@@ -836,11 +836,14 @@ export interface NodeBuilderInput {
   user_instruction?: string;
   fetch_metadata?: boolean;
   allow_deterministic?: boolean;
+  async_job?: boolean;
 }
 
 export interface NodeBuilderResult {
   ok: boolean;
   mode?: string;
+  status?: string;
+  evaluationId?: string;
   request: Record<string, unknown>;
   config: Record<string, unknown>;
   evaluation: Record<string, unknown>;
