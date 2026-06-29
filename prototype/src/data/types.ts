@@ -765,6 +765,7 @@ export interface NodeRunResult {
   actualOutputs?: Record<string, unknown>;
   outputCategories?: Record<string, unknown>;
   validation?: Record<string, unknown>;
+  businessOutputStatus?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
   agentRequest?: Record<string, unknown>;
   runtimeContext?: Record<string, unknown>;

@@ -401,7 +401,7 @@ function nodeDraftWithRuntimeId(node: Record<string, unknown>, runtimeNodeId: st
 }
 
 function workflowIdForInstance(instance: Instance | undefined) {
-  return instance?.workflowBinding?.workflowId || instance?.sopType || "workflow";
+  return instance?.workflowBinding?.workflowId || instance?.workflowBinding?.workflowName || instance?.sopType || "workflow";
 }
 
 function isManagementInstance(instance: Instance | undefined) {
@@ -1500,7 +1500,12 @@ function nodeDraftUpdatedAt(draft: NodeDraft) {
 
 function probeOutputUrl(probe: Record<string, unknown> | undefined) {
   const actual = (probe?.actual_outputs || {}) as Record<string, unknown>;
+  const business = (probe?.business_outputs || {}) as Record<string, unknown>;
   const candidates = [
+    business.public_image_url,
+    business.image_url,
+    business.generated_images,
+    business.images,
     actual.public_image_url,
     actual.image_url,
     actual.generated_images,
@@ -1521,12 +1526,17 @@ function compactProbeRaw(probe: Record<string, unknown>) {
     node_id: probe.node_id,
     node_run_id: probe.node_run_id,
     status: probe.status,
+    execution_status: probe.execution_status,
+    business_output_status: probe.business_output_status,
     http_status: probe.http_status,
     created_at: probe.created_at,
     reconciled_at: probe.reconciled_at,
     manual_inputs: probe.manual_inputs,
     validation: probe.validation,
     actual_outputs: probe.actual_outputs,
+    business_outputs: probe.business_outputs,
+    business_artifacts: probe.business_artifacts,
+    core_outputs: probe.core_outputs,
     output_manifest: probe.output_manifest || result.output_manifest,
     result: {
       status: result.status,
@@ -3590,6 +3600,9 @@ function NodeRunDetail({
   const resolvedInputs = detailList(detail.resolved_inputs);
   const missingInputs = detailList(detail.missing_inputs);
   const live = nodeRunIsLive(result);
+  const businessStatus = safeRecord(result.businessOutputStatus || result.validation?.business_output_status);
+  const actualOutputs = result.actualOutputs || {};
+  const outputNames = Object.keys(actualOutputs).filter((name) => !["manifest", "input_manifest", "output_manifest", "node_run_result", "node_run_events", "agent_request", "agent_response", "agent_receipt", "agent_executor", "executor_log", "stage_events"].includes(name.toLowerCase()));
   return (
     <div className="node-run-detail">
       {showBanner ? <div className={`node-run-result-banner ${nodeRunTone(result.status)}`}>
@@ -3644,6 +3657,15 @@ function NodeRunDetail({
           <div className="node-test-artifacts">
             {(result.artifacts || []).map((artifact) => <code key={artifact.id || artifact.path}>{artifact.path || artifact.title}</code>)}
             {!result.artifacts?.length ? <Empty text="没有产物记录" /> : null}
+          </div>
+        </DetailBlock>
+        <DetailBlock title="业务输出">
+          <div className="node-test-detail">
+            {businessStatus.status ? <span className={`kv ${businessStatus.status === "passed" ? "good" : "bad"}`}>status: {String(businessStatus.status)}</span> : null}
+            {Array.isArray(businessStatus.present_outputs) && businessStatus.present_outputs.length ? <span className="kv good">present: {businessStatus.present_outputs.map(String).join(", ")}</span> : null}
+            {Array.isArray(businessStatus.expected_outputs) && businessStatus.expected_outputs.length ? <span className="kv">expected: {businessStatus.expected_outputs.map(String).join(", ")}</span> : null}
+            {outputNames.map((name) => <span key={name} className="kv good">{name}: {String(actualOutputs[name] ?? "").slice(0, 140)}</span>)}
+            {!businessStatus.status && !outputNames.length ? <Empty text="没有业务输出记录" /> : null}
           </div>
         </DetailBlock>
       </div>
@@ -6456,12 +6478,30 @@ export default function App() {
   }
 
   function openExistingNodeDraft(draftId: string) {
+    const draft = (nodeDraftsQuery.data || []).find((item) => item.draftId === draftId);
+    const node = safeRecord(draft?.node);
+    const skill = safeRecord(node.skill);
+    const request = safeRecord(draft?.request);
+    const command = String(firstNonEmpty(request.skill_install_command, skill.install_command, draftInput.skill_install_command, ""));
+    const instruction = String(firstNonEmpty(request.user_instruction, node.description, draftInput.description, nodeBuilderInstruction, ""));
+    const entryInputs = nodeDraftEntryInputsFromNode(node);
     setActiveNodeDraftId(draftId);
     setDraftLocalError("");
     setConfirmRealDraft(false);
     setNodeBuilderResult(null);
     setNodeDraftActionResult(null);
-    setNodeDraftProbeInputs({});
+    setNodeDraftProbeInputs(Object.keys(entryInputs).length ? defaultProbeInputsFromSpecs(entryInputs) : {});
+    if (draft) {
+      setDraftInput((current) => ({
+        ...current,
+        skill_install_command: command,
+        skill_id: String(firstNonEmpty(skill.id, safeRecord(node.executor).skill, current.skill_id, "")),
+        node_id: String(firstNonEmpty(node.id, node.node_id, current.node_id, "")),
+        title: String(firstNonEmpty(node.title, current.title, "")),
+        description: String(firstNonEmpty(node.description, current.description, "")),
+      }));
+      setNodeBuilderInstruction(instruction);
+    }
     setNodeBuilderReport(null);
     setDraftOpen(true);
   }
@@ -15402,7 +15442,20 @@ function NodesWorkspace({
   const [nodeView, setNodeView] = useState<"list" | "dag" | "contracts">("list");
   const workflowBinding = instance?.workflowBinding;
   const workflowId = workflowBinding?.workflowId || workflowBinding?.workflowName || instance?.sopType || "workflow";
-  const isRouteNode = Boolean(routeNodeId && selectedNode);
+  const routeNodeFallback = routeNodeId && !selectedNode
+    ? ({
+      nodeId: routeNodeId,
+      title: routeNodeId,
+      description: "Draft Node Run",
+      source: "node-run-route",
+      inputs: {},
+      outputs: {},
+      entryInputs: {},
+      optionalInputs: {},
+      capabilities: {},
+    } as unknown as NodeRegistryItem)
+    : selectedNode;
+  const isRouteNode = Boolean(routeNodeId);
   const isNodeRunDetailRoute = Boolean(isRouteNode && selectedNodeRunId);
   const isNodeRunsRoute = Boolean(isRouteNode && nodeRunList && !selectedNodeRunId);
   const relayTargets = selectedNode ? buildRelayTargetNodes(nodes, selectedNode.nodeId) : [];
@@ -15700,7 +15753,7 @@ function NodesWorkspace({
           runtime={runtime}
           instance={instance}
           workflowId={workflowId}
-          node={selectedNode}
+          node={routeNodeFallback}
           nodes={nodes}
           runs={runs}
           mode={mode}
@@ -15718,7 +15771,7 @@ function NodesWorkspace({
           runtime={runtime}
           instance={instance}
           workflowId={workflowId}
-          node={selectedNode}
+          node={routeNodeFallback}
           nodes={nodes}
           runs={runs}
           mode={mode}
@@ -16167,7 +16220,7 @@ function NodeDraftDrawer({
   const persistencePlan = (latestDraft?.persistencePlan || (actionStatus === "generated" ? actionResult : {})) as Record<string, unknown>;
   const draftId = latestDraft?.draftId || "";
   const publishedNodeId = String(runtimePublish.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
-  const workflowId = instance.workflowBinding?.workflowId || "workflow";
+  const workflowId = workflowIdForInstance(instance);
   const runtimeNodeRunHref = `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(publishedNodeId)}/runs?mode=${mode}`;
   const probeNodeId = String(probeRun.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
   const probeNodeRunId = String(probeRun.node_run_id || "");
@@ -16175,6 +16228,9 @@ function NodeDraftDrawer({
     ? `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(probeNodeId)}/runs/${encodeURIComponent(probeNodeRunId)}?mode=${mode}`
     : "";
   const probeImageUrl = probeOutputUrl(probeRun);
+  const probeBusinessStatus = safeRecord(probeRun.business_output_status);
+  const probePresentOutputs = Array.isArray(probeBusinessStatus.present_outputs) ? probeBusinessStatus.present_outputs.map(String) : [];
+  const probeExpectedOutputs = Array.isArray(probeBusinessStatus.expected_outputs) ? probeBusinessStatus.expected_outputs.map(String) : [];
   const probeTime = String(firstNonEmpty(probeRun.reconciled_at, probeRun.finished_at, probeRun.created_at));
   const runtimeNodePublished = String(runtimePublish.status || "").toLowerCase() === "published";
   const runtimeNodeDeleted = String(runtimeDelete.status || runtimePublish.status || "").toLowerCase() === "deleted";
@@ -16431,6 +16487,7 @@ function NodeDraftDrawer({
                     <strong>{String(probeRun.probe_id || "Probe Run")}</strong>
                     <small>{probeNodeRunId || "no node_run_id"} · {formatBeijingTime(probeTime, "无时间")}</small>
                     <small>validation {String(((probeRun.validation || {}) as Record<string, unknown>).status || "-")}</small>
+                    {probeBusinessStatus.status ? <small>业务输出 {String(probeBusinessStatus.status)}{probePresentOutputs.length ? ` · ${probePresentOutputs.join(", ")}` : probeExpectedOutputs.length ? ` · 期望 ${probeExpectedOutputs.join(", ")}` : ""}</small> : null}
                     {probeImageUrl ? <a href={probeImageUrl} target="_blank" rel="noreferrer">{probeImageUrl}</a> : <span className="muted">暂未产出可打开的输出 URL</span>}
                   </div>
                 ) : (
@@ -16628,7 +16685,11 @@ function NodeBuilderReportModal({
   const probeRecords = ((probeRun.manifest_records || []) as Array<Record<string, unknown>>).length
     ? (probeRun.manifest_records || []) as Array<Record<string, unknown>>
     : ((probeRun.manifestRecords || []) as Array<Record<string, unknown>>);
-  const workflowId = instance.workflowBinding?.workflowId || "youtube-research-wiki";
+  const diagnosticOutputNames = new Set(["manifest", "input_manifest", "output_manifest", "node_run_result", "node_run_events", "agent_request", "agent_response", "agent_receipt", "agent_executor", "executor_log", "stage_events"]);
+  const businessProbeRecords = probeRecords.filter((record) => !diagnosticOutputNames.has(String(record.output || record.name || record.id || "").toLowerCase()));
+  const probeBusinessStatus = safeRecord(probeRun.business_output_status);
+  const probeBusinessOutputs = safeRecord(probeRun.business_outputs);
+  const workflowId = workflowIdForInstance(instance);
   const probeNodeId = String(probeRun.node_id || node.id || node.node_id || "");
   const probeNodeRunId = String(probeRun.node_run_id || "");
   const probeRunHref = probeNodeId && probeNodeRunId
@@ -16728,6 +16789,10 @@ function NodeBuilderReportModal({
             <ReportSection title="Probe Run 摘要">
               <KeyValues data={{
                 status: probeRun.status || "-",
+                execution_status: probeRun.execution_status || "-",
+                business_output_status: probeBusinessStatus.status || "-",
+                present_outputs: Array.isArray(probeBusinessStatus.present_outputs) ? probeBusinessStatus.present_outputs.join(", ") : "-",
+                expected_outputs: Array.isArray(probeBusinessStatus.expected_outputs) ? probeBusinessStatus.expected_outputs.join(", ") : "-",
                 probe_id: probeRun.probe_id || "-",
                 node_run_id: probeRun.node_run_id || "-",
                 http_status: probeRun.http_status || "-",
@@ -16740,17 +16805,17 @@ function NodeBuilderReportModal({
                 {probeRunHref ? <a className="button-link" href={probeRunHref}>Open Node Run</a> : null}
                 {probeImageUrl ? <a className="button-link" href={probeImageUrl} target="_blank" rel="noreferrer">Open Output</a> : null}
               </div>
-              <KeyValues data={{ manual_inputs: probeRun.manual_inputs || {}, validation: probeRun.validation || {} }} />
+              <KeyValues data={{ manual_inputs: probeRun.manual_inputs || {}, business_outputs: probeBusinessOutputs, validation: probeRun.validation || {} }} />
             </ReportSection>
             <ReportSection title="真实输出 Manifest">
               <div className="report-table">
-                {probeRecords.map((record, index) => (
+                {businessProbeRecords.map((record, index) => (
                   <div key={`${record.path || index}`}>
                     <strong>{String(record.output || record.name || record.path || "-")}</strong>
                     <span>{String(record.path || record.value || "-")} · {String(record.value_type || record.kind || record.type || "")}</span>
                   </div>
                 ))}
-                {!probeRecords.length && <Empty text="本次 Probe 暂无输出记录；如果状态仍是 running，页面会自动刷新 Probe 摘要。" />}
+                {!businessProbeRecords.length && <Empty text="本次 Probe 暂无业务输出记录；manifest / agent response 等诊断文件可在 Raw Probe 摘要中查看。" />}
               </div>
               <details className="node-builder-raw"><summary>Raw Probe（调试摘要）</summary><code>{formatValue(compactProbeRaw(probeRun))}</code></details>
             </ReportSection>

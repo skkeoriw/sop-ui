@@ -976,6 +976,7 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
     outputCategories: (raw.output_categories as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
+    businessOutputStatus: (raw.business_output_status as Record<string, unknown>) || ((raw.validation as Record<string, unknown> | undefined)?.business_output_status as Record<string, unknown>) || {},
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
     agentRequest: (raw.agent_request as Record<string, unknown>) || {},
     runtimeContext: (raw.runtime_context as Record<string, unknown>) || {},
