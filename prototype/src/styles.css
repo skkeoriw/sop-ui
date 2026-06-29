@@ -5221,10 +5221,6 @@ pre {
   text-transform: uppercase;
 }
 
-.workflow-draft-inspector .node-relay-mapping-head {
-  display: none;
-}
-
 .workflow-draft-inspector .node-relay-mapping-row {
   grid-template-columns: 1fr;
   align-items: stretch;
@@ -8459,18 +8455,6 @@ pre {
   color: #991b1b;
   font-size: 12px;
   line-height: 1.4;
-}
-
-.workflow-draft-inspector .workflow-draft-skill-pair,
-.workflow-draft-inspector .workflow-draft-effect-note,
-.workflow-draft-inspector .workflow-draft-edge-instruction,
-.workflow-draft-inspector .workflow-draft-agent-panel,
-.workflow-draft-inspector .workflow-draft-runtime-brief,
-.workflow-draft-inspector .node-relay-mode-panel,
-.workflow-draft-inspector .node-relay-outputs-panel,
-.workflow-draft-inspector .node-relay-mapping-panel,
-.workflow-draft-inspector .workflow-draft-edge-actions {
-  display: none;
 }
 
 .workflow-edge-detail-page {
