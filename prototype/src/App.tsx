@@ -375,6 +375,31 @@ function generateInstanceId(repo: string) {
   return `instance-${slugifyInstanceSeed(seed)}-${suffix || "new"}`;
 }
 
+function slugifyNodeId(value: string) {
+  return (value || "runtime-node")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 54) || "runtime-node";
+}
+
+function uniqueRuntimeNodeId(preferred: string, existingIds: Set<string>) {
+  const base = slugifyNodeId(preferred);
+  if (!existingIds.has(base)) return base;
+  for (let index = 0; index < 12; index += 1) {
+    const suffix = Math.random().toString(36).slice(2, 6) || String(index + 1);
+    const candidate = `${base}-${suffix}`;
+    if (!existingIds.has(candidate)) return candidate;
+  }
+  return `${base}-${Date.now().toString(36).slice(-6)}`;
+}
+
+function nodeDraftWithRuntimeId(node: Record<string, unknown>, runtimeNodeId: string) {
+  const next = { ...node, id: runtimeNodeId };
+  if ("node_id" in next) next.node_id = runtimeNodeId;
+  return next;
+}
+
 function workflowIdForInstance(instance: Instance | undefined) {
   return instance?.workflowBinding?.workflowId || instance?.sopType || "workflow";
 }
@@ -6068,9 +6093,12 @@ export default function App() {
       setNodeBuilderReport("analysis");
       const generatedNode = (result.evaluation?.node_draft || {}) as Record<string, unknown>;
       const generatedSkill = (generatedNode.skill || {}) as Record<string, unknown>;
+      const existingNodeIds = new Set(managedNodes.map((node) => node.nodeId));
+      const generatedNodeId = String(generatedNode.id || generatedNode.node_id || "").trim();
+      const availableNodeId = generatedNodeId ? uniqueRuntimeNodeId(generatedNodeId, existingNodeIds) : "";
       setDraftInput((current) => ({
         ...current,
-        node_id: String(generatedNode.id || generatedNode.node_id || current.node_id || ""),
+        node_id: availableNodeId || String(current.node_id || ""),
         skill_id: String(generatedSkill.id || current.skill_id || ""),
         title: String(generatedNode.title || current.title || ""),
         description: String(generatedNode.description || current.description || ""),
@@ -6079,7 +6107,10 @@ export default function App() {
       if (Object.keys(generatedInputs).length) {
         setNodeDraftProbeInputs(defaultProbeInputsFromSpecs(generatedInputs));
       }
-      setToast("Node 构建静态分析已完成");
+      setDraftLocalError("");
+      setToast(availableNodeId && generatedNodeId && availableNodeId !== generatedNodeId
+        ? `Node 构建静态分析已完成，Node ID 已自动改为 ${availableNodeId}`
+        : "Node 构建静态分析已完成");
     },
     onError: (error) => {
       setNodeBuilderResult(null);
@@ -6090,11 +6121,13 @@ export default function App() {
   const createDraftMutation = useMutation({
     mutationFn: () => {
       const generatedNode = (nodeBuilderResult?.evaluation?.node_draft || null) as Record<string, unknown> | null;
+      const requestedNodeId = String(draftInput.node_id || generatedNode?.id || generatedNode?.node_id || "").trim();
+      const runtimeNodeDraft = generatedNode && requestedNodeId ? nodeDraftWithRuntimeId(generatedNode, requestedNodeId) : generatedNode;
       const payload: NodeDraftInput = generatedNode
         ? {
           ...draftInput,
-          node_id: String(generatedNode.id || generatedNode.node_id || draftInput.node_id || ""),
-          node_draft: generatedNode,
+          node_id: requestedNodeId,
+          node_draft: runtimeNodeDraft || generatedNode,
           node_builder_evaluation: nodeBuilderResult?.evaluation || {},
           request: nodeBuilderResult?.request || {},
           trace: nodeBuilderResult?.trace || {},
@@ -6679,7 +6712,7 @@ export default function App() {
       setDraftLocalError(`请先填写必填字段: ${missingFields.join(", ")}`);
       return;
     }
-    const nodeId = String(generatedNode?.id || generatedNode?.node_id || draftInput.node_id || "").trim();
+    const nodeId = String(draftInput.node_id || generatedNode?.id || generatedNode?.node_id || "").trim();
     if (nodeId && managedNodes.some((node) => node.nodeId === nodeId)) {
       setDraftLocalError(`节点 ID 已存在于生产 DAG: ${nodeId}`);
       return;
@@ -16029,11 +16062,17 @@ function NodeDraftDrawer({
                 <small>{String(skillIdentity.skill_id || skill.id || generatedNode.id || "unknown skill")}</small>
               </div>
               <div className="node-builder-summary-grid">
-                <div><span>Node ID</span><strong>{String(generatedNode.id || "-")}</strong></div>
+                <div><span>Node ID</span><strong>{String(draftInput.node_id || generatedNode.id || "-")}</strong></div>
                 <div><span>Title</span><strong>{String(generatedNode.title || "-")}</strong></div>
                 <div><span>Hermes Skill</span><strong>{String(executor.skill || skill.id || "-")}</strong></div>
                 <div><span>Outputs</span><strong>{String(outputs.root || "-")}</strong></div>
               </div>
+              {Boolean(String(draftInput.node_id || "") && String(generatedNode.id || "") && String(draftInput.node_id) !== String(generatedNode.id)) && (
+                <div className="drawer-note">
+                  <strong>Node ID 已自动避让</strong>
+                  <span>Runtime Node 使用 {String(draftInput.node_id)}；Hermes Skill 仍然使用 {String(executor.skill || skill.id || generatedNode.id)}。</span>
+                </div>
+              )}
               <div className="node-builder-contract-grid">
                 <article>
                   <strong>Entry Inputs</strong>
