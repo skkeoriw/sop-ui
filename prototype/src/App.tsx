@@ -1252,6 +1252,17 @@ function nodeRunCardTone(status?: string) {
   return "";
 }
 
+function nodeRunBusinessStatus(result: NodeRunResult | undefined) {
+  return safeRecord(result?.businessOutputStatus || result?.validation?.business_output_status);
+}
+
+function nodeRunBusinessTone(status?: string) {
+  if (status === "passed") return "done";
+  if (status === "missing_required_outputs") return "failed";
+  if (status === "missing_business_outputs" || status === "no_declared_business_outputs") return "waiting";
+  return nodeRunTone(status);
+}
+
 function issueTone(severity?: string) {
   if (severity === "error") return "failed";
   if (severity === "warning") return "warning";
@@ -3600,7 +3611,7 @@ function NodeRunDetail({
   const resolvedInputs = detailList(detail.resolved_inputs);
   const missingInputs = detailList(detail.missing_inputs);
   const live = nodeRunIsLive(result);
-  const businessStatus = safeRecord(result.businessOutputStatus || result.validation?.business_output_status);
+  const businessStatus = nodeRunBusinessStatus(result);
   const actualOutputs = result.actualOutputs || {};
   const outputNames = Object.keys(actualOutputs).filter((name) => !["manifest", "input_manifest", "output_manifest", "node_run_result", "node_run_events", "agent_request", "agent_response", "agent_receipt", "agent_executor", "executor_log", "stage_events"].includes(name.toLowerCase()));
   return (
@@ -4329,6 +4340,10 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
   const diagnosticArtifacts = nodeRunDiagnosticArtifacts(result);
   const actualOutputs = detailRecord(result.actualOutputs);
   const validation = detailRecord(result.validation);
+  const businessStatus = nodeRunBusinessStatus(result);
+  const businessStatusText = String(businessStatus.status || validation.status || result.status || "unknown");
+  const expectedOutputs = Array.isArray(businessStatus.expected_outputs) ? businessStatus.expected_outputs.map(String) : [];
+  const presentOutputs = Array.isArray(businessStatus.present_outputs) ? businessStatus.present_outputs.map(String) : [];
   return (
     <section className="node-run-results-panel">
       <div className="node-run-results-tabs" role="tablist" aria-label="Node run result sections">
@@ -4374,9 +4389,9 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
         <div className="node-run-results-body">
           <div className="node-run-artifact-summary">
             <div>
-              <span className={`status-pill ${nodeRunTone(String(validation.status || result.status || ""))}`}>{String(validation.status || result.status || "unknown")}</span>
-              <strong>{coreOutputs.length} 个核心输出</strong>
-              <small>{coreOutputs.length ? coreOutputs.map((item) => item.name).join(", ") : "暂无声明输出记录"}</small>
+              <span className={`status-pill ${nodeRunBusinessTone(businessStatusText)}`}>{businessStatusText}</span>
+              <strong>{presentOutputs.length}/{expectedOutputs.length || coreOutputs.length} 个业务输出</strong>
+              <small>{expectedOutputs.length ? `expected: ${expectedOutputs.join(", ")}` : coreOutputs.length ? coreOutputs.map((item) => item.name).join(", ") : "暂无声明业务输出"}</small>
             </div>
           </div>
           {Object.keys(actualOutputs).length ? (
@@ -4435,14 +4450,18 @@ function NodeRunCapabilitySummary({ result }: { result: NodeRunResult | undefine
   const rows = nodeRunCapabilityRows(result);
   const validation = detailRecord(result?.validation);
   const artifacts = nodeRunBusinessArtifacts(result);
+  const businessStatus = nodeRunBusinessStatus(result);
+  const businessStatusText = String(businessStatus.status || validation.status || result?.status || "unknown");
+  const expectedOutputs = Array.isArray(businessStatus.expected_outputs) ? businessStatus.expected_outputs.map(String) : [];
+  const presentOutputs = Array.isArray(businessStatus.present_outputs) ? businessStatus.present_outputs.map(String) : [];
   return (
     <section className="node-run-capability-summary">
       <div className="section-title"><span>执行结果</span><span>{rows.length} 个能力</span></div>
       <div className="node-run-result-mini-grid">
         <div>
-          <span>输出产物</span>
-          <strong>{artifacts.length}</strong>
-          <small>{String(validation.status || result?.status || "unknown")}</small>
+          <span>业务输出</span>
+          <strong>{presentOutputs.length}/{expectedOutputs.length || artifacts.length}</strong>
+          <small>{businessStatusText}</small>
         </div>
         <div>
           <span>业务节点</span>
