@@ -1016,7 +1016,7 @@ export const mockProvider: SopDataProvider = {
         missing_fields: [],
         risks: [],
         assumptions: ["Node 不绑定固定上下游；Edge 负责交接。"],
-        test_plan: ["保存草稿", "测试草稿", "发布 Runtime Node", "运行 Node"],
+        test_plan: ["保存分析草稿", "Static Analysis", "Probe Run", "Contract Synthesis", "发布 Runtime Node", "正式持久化"],
       },
       trace: { mock: true },
     };
@@ -1075,6 +1075,55 @@ export const mockProvider: SopDataProvider = {
     return result;
   },
 
+  async runNodeDraftProbe(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
+    await delay();
+    const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);
+    const nodeId = draft ? String(draft.node.id || "") : "";
+    const result: NodeDraftLifecycleResult = {
+      status: draft ? "passed" : "failed",
+      draft_id: draftId,
+      node_id: nodeId,
+      mode: "probe-run",
+      input_fixture: { prompt: "Mock probe input" },
+      output_manifest: draft ? `raw/node-runs/mock-probe-${nodeId}/outputs/manifest.json` : "",
+      steps: [
+        { id: "resolve-fixture", title: "Resolve probe fixture", status: draft ? "done" : "failed" },
+        { id: "execute-runtime-harness", title: "Execute runtime harness", status: draft ? "done" : "failed" },
+        { id: "collect-output-manifest", title: "Collect output manifest", status: draft ? "done" : "failed" },
+      ],
+    };
+    if (draft) draft.probeRun = result;
+    return result;
+  },
+
+  async synthesizeNodeDraftContract(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
+    await delay();
+    const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);
+    const nodeId = draft ? String(draft.node.id || "") : "";
+    const contract = draft ? {
+      entry_inputs: draft.node.entry_inputs || draft.node.inputs || {},
+      handoff: draft.node.handoff || {},
+      outputs: draft.node.outputs || {},
+    } : {};
+    const result: NodeDraftLifecycleResult = {
+      status: draft ? "synthesized" : "failed",
+      draft_id: draftId,
+      node_id: nodeId,
+      mode: "contract-synthesis",
+      contract,
+      steps: [
+        { id: "merge-static-analysis", title: "Merge static analysis", status: draft ? "done" : "failed" },
+        { id: "merge-probe-evidence", title: "Merge probe evidence", status: draft ? "done" : "failed" },
+        { id: "write-runtime-contract", title: "Write synthesized contract preview", status: draft ? "done" : "failed" },
+      ],
+    };
+    if (draft) {
+      draft.node.contract_synthesis = contract;
+      draft.contractSynthesis = result;
+    }
+    return result;
+  },
+
   async publishNodeDraft(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
     await delay();
     const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);
@@ -1086,6 +1135,27 @@ export const mockProvider: SopDataProvider = {
       runtime_catalog_path: draft ? `~/.sop/node-catalog/${String(draft.node.id || "")}/node.yaml` : "",
     };
     if (draft) draft.runtimePublish = result;
+    return result;
+  },
+
+  async deleteRuntimeNode(target, _instanceId, nodeId): Promise<NodeDraftLifecycleResult> {
+    await delay();
+    const draft = (draftByRuntime.get(target.id) || []).find((item) => String(item.node.id || "") === nodeId);
+    const result: NodeDraftLifecycleResult = {
+      status: nodeId ? "deleted" : "failed",
+      draft_id: draft?.draftId || "",
+      node_id: nodeId,
+      visible_in_nodes_api: false,
+      runtime_catalog_path: nodeId ? `~/.sop/node-catalog/${nodeId}/node.yaml` : "",
+      steps: [
+        { id: "remove-runtime-catalog-entry", title: "Remove runtime catalog entry", status: nodeId ? "done" : "failed" },
+        { id: "refresh-node-registry", title: "Refresh node registry", status: nodeId ? "done" : "failed" },
+      ],
+    };
+    if (draft) {
+      draft.runtimeDelete = result;
+      draft.runtimePublish = { ...(draft.runtimePublish || {}), status: "deleted", visible_in_nodes_api: false };
+    }
     return result;
   },
 

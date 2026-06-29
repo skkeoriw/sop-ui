@@ -895,7 +895,11 @@ export interface NodeDraft {
   changeRequest?: Record<string, unknown>;
   validation: Record<string, unknown>;
   draftTest?: Record<string, unknown>;
+  probeRun?: Record<string, unknown>;
+  probeRuns?: Array<Record<string, unknown>>;
+  contractSynthesis?: Record<string, unknown>;
   runtimePublish?: Record<string, unknown>;
+  runtimeDelete?: Record<string, unknown>;
   persistencePlan?: Record<string, unknown>;
   trace?: Record<string, unknown>;
 }
@@ -990,7 +994,10 @@ export interface SopDataProvider {
   evaluateNodeBuilder?(runtime: Runtime, instanceId: string, input: NodeBuilderInput): Promise<NodeBuilderResult>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
   testNodeDraft?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
+  runNodeDraftProbe?(runtime: Runtime, instanceId: string, draftId: string, input?: Record<string, unknown>): Promise<NodeDraftLifecycleResult>;
+  synthesizeNodeDraftContract?(runtime: Runtime, instanceId: string, draftId: string, input?: Record<string, unknown>): Promise<NodeDraftLifecycleResult>;
   publishNodeDraft?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
+  deleteRuntimeNode?(runtime: Runtime, instanceId: string, nodeId: string, input?: Record<string, unknown>): Promise<NodeDraftLifecycleResult>;
   generateNodeDraftPersistencePlan?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
   evaluateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   getWorkflowEdgeEvaluation?(runtime: Runtime, instanceId: string, workflowId: string, evaluationId: string): Promise<WorkflowEdgeResult>;

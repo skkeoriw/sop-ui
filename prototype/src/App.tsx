@@ -1409,6 +1409,30 @@ function inputSpecExample(spec: unknown) {
   return String(record.example || record.placeholder || "").trim();
 }
 
+function nodeDraftEntryInputsFromNode(node: Record<string, unknown> | undefined) {
+  if (!node || typeof node !== "object") return {};
+  const entryInputs = node.entry_inputs;
+  if (entryInputs && typeof entryInputs === "object" && !Array.isArray(entryInputs)) return entryInputs as Record<string, unknown>;
+  const entry = node.entry;
+  if (entry && typeof entry === "object") {
+    const inputs = (entry as Record<string, unknown>).inputs;
+    if (inputs && typeof inputs === "object" && !Array.isArray(inputs)) return inputs as Record<string, unknown>;
+  }
+  const inputs = node.inputs;
+  if (inputs && typeof inputs === "object" && !Array.isArray(inputs)) return inputs as Record<string, unknown>;
+  return {};
+}
+
+function defaultProbeInputsFromSpecs(specs: Record<string, unknown>) {
+  const rows: Record<string, string> = {};
+  Object.entries(specs).forEach(([name, spec]) => {
+    const record = inputSpecRecord(spec);
+    const value = record.default ?? record.example ?? record.sample ?? record.placeholder ?? "";
+    rows[name] = value === undefined || value === null ? "" : String(value);
+  });
+  return rows;
+}
+
 function nodeEntryInputEntries(node: NodeRegistryItem | undefined): Array<[string, unknown]> {
   const entry = node?.entryInputs && Object.keys(node.entryInputs).length ? node.entryInputs : node?.inputs || {};
   return Object.entries(entry);
@@ -5141,20 +5165,21 @@ export default function App() {
   const [draftLocalError, setDraftLocalError] = useState("");
   const [confirmRealDraft, setConfirmRealDraft] = useState(false);
   const [draftInput, setDraftInput] = useState<NodeDraftInput>({
-    skill_install_command: "bash <(curl -fsSL 'https://skill.vyibc.com/install-chatgpt-remote-image-service.sh?v=202606251544')",
-    skill_id: "chatgpt-remote-image-service",
-    node_id: "chatgpt-remote-image-service",
-    title: "ChatGPT 远程生图服务",
-    description: "通过外部生图 skill 生成图片；上游关系由 Workflow Edge 决定。",
+    skill_install_command: "",
+    skill_id: "",
+    node_id: "",
+    title: "",
+    description: "Runtime Node 只描述执行能力；上游关系由 Workflow Edge 决定。",
     entry_input_name: "prompt",
     input_type: "string",
     input_value_type: "text",
     output_name: "result",
     output_path: "raw/node-runs/{run_id}/outputs/outputs/result.json"
   });
-  const [nodeBuilderInstruction, setNodeBuilderInstruction] = useState("把这个 Skill 转换成一个不绑定上下游的 Runtime Node；首节点测试时允许用户直接输入 prompt。");
+  const [nodeBuilderInstruction, setNodeBuilderInstruction] = useState("分析这个 Skill 如何成为不绑定上下游的 Runtime Node；首节点或单节点 Probe Run 允许用户直接输入 prompt。");
   const [nodeBuilderResult, setNodeBuilderResult] = useState<NodeBuilderResult | null>(null);
   const [nodeDraftActionResult, setNodeDraftActionResult] = useState<NodeDraftLifecycleResult | null>(null);
+  const [nodeDraftProbeInputs, setNodeDraftProbeInputs] = useState<Record<string, string>>({});
   const isRuntimeDirectory = viewMode === "runtime" && !hasRuntimeRouteId;
   const isInstanceDirectory = viewMode === "instance" && !routeContext.instanceId;
   const runtimeDirectoryPageSize = 25;
@@ -6045,7 +6070,11 @@ export default function App() {
         title: String(generatedNode.title || current.title || ""),
         description: String(generatedNode.description || current.description || ""),
       }));
-      setToast("Node Builder Agent 已生成草稿建议");
+      const generatedInputs = nodeDraftEntryInputsFromNode(generatedNode);
+      if (Object.keys(generatedInputs).length) {
+        setNodeDraftProbeInputs(defaultProbeInputsFromSpecs(generatedInputs));
+      }
+      setToast("Node 构建静态分析已完成");
     },
     onError: (error) => {
       setNodeBuilderResult(null);
@@ -6072,7 +6101,7 @@ export default function App() {
       setDraftLocalError("");
       setConfirmRealDraft(false);
       setNodeDraftActionResult(null);
-      setToast(`节点草稿已创建：${draft.draftId}`);
+      setToast(`Node 构建分析草稿已保存：${draft.draftId}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
   });
@@ -6083,7 +6112,33 @@ export default function App() {
     },
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
-      setToast(`草稿测试：${result.status}`);
+      setToast(`Static Analysis：${result.status}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+    }
+  });
+  const runNodeDraftProbeMutation = useMutation({
+    mutationFn: (draftId: string) => {
+      if (!provider.runNodeDraftProbe) throw new Error("当前 Runtime SPI 不支持 Node Draft Probe Run");
+      return provider.runNodeDraftProbe(runtime, instance.instanceId, draftId, {
+        manual_inputs: nodeDraftProbeInputs,
+      });
+    },
+    onSuccess: async (result) => {
+      setNodeDraftActionResult(result);
+      setToast(`Probe Run：${result.status}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+    }
+  });
+  const synthesizeNodeDraftContractMutation = useMutation({
+    mutationFn: (draftId: string) => {
+      if (!provider.synthesizeNodeDraftContract) throw new Error("当前 Runtime SPI 不支持 Node Draft Contract Synthesis");
+      return provider.synthesizeNodeDraftContract(runtime, instance.instanceId, draftId, {
+        include_probe_evidence: true,
+      });
+    },
+    onSuccess: async (result) => {
+      setNodeDraftActionResult(result);
+      setToast(`Contract Synthesis：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
   });
@@ -6095,6 +6150,20 @@ export default function App() {
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
       setToast(`Runtime Node 发布：${result.status}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodes(mode, runtime, instance.instanceId) });
+    }
+  });
+  const deleteRuntimeNodeMutation = useMutation({
+    mutationFn: (nodeId: string) => {
+      if (!provider.deleteRuntimeNode) throw new Error("当前 Runtime SPI 不支持删除 Runtime Node");
+      return provider.deleteRuntimeNode(runtime, instance.instanceId, nodeId, {
+        source: "node-draft-workbench",
+      });
+    },
+    onSuccess: async (result) => {
+      setNodeDraftActionResult(result);
+      setToast(`Runtime Node 删除：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodes(mode, runtime, instance.instanceId) });
     }
@@ -7014,6 +7083,8 @@ export default function App() {
           setDraftInput={(input) => { setDraftLocalError(""); setNodeBuilderResult(null); setDraftInput(input); }}
           nodeBuilderInstruction={nodeBuilderInstruction}
           setNodeBuilderInstruction={setNodeBuilderInstruction}
+          probeInputs={nodeDraftProbeInputs}
+          setProbeInputs={setNodeDraftProbeInputs}
           nodeBuilderResult={nodeBuilderResult}
           nodeBuilderRunning={evaluateNodeBuilderMutation.isPending}
           nodeBuilderError={evaluateNodeBuilderMutation.error ? String((evaluateNodeBuilderMutation.error as Error).message || evaluateNodeBuilderMutation.error) : ""}
@@ -7022,15 +7093,24 @@ export default function App() {
           nodeDraftActionResult={nodeDraftActionResult}
           nodeDraftActionError={
             testNodeDraftMutation.error ? String((testNodeDraftMutation.error as Error).message || testNodeDraftMutation.error)
-              : publishNodeDraftMutation.error ? String((publishNodeDraftMutation.error as Error).message || publishNodeDraftMutation.error)
-                : generateNodeDraftPersistenceMutation.error ? String((generateNodeDraftPersistenceMutation.error as Error).message || generateNodeDraftPersistenceMutation.error)
-                  : ""
+              : runNodeDraftProbeMutation.error ? String((runNodeDraftProbeMutation.error as Error).message || runNodeDraftProbeMutation.error)
+                : synthesizeNodeDraftContractMutation.error ? String((synthesizeNodeDraftContractMutation.error as Error).message || synthesizeNodeDraftContractMutation.error)
+                  : publishNodeDraftMutation.error ? String((publishNodeDraftMutation.error as Error).message || publishNodeDraftMutation.error)
+                    : deleteRuntimeNodeMutation.error ? String((deleteRuntimeNodeMutation.error as Error).message || deleteRuntimeNodeMutation.error)
+                      : generateNodeDraftPersistenceMutation.error ? String((generateNodeDraftPersistenceMutation.error as Error).message || generateNodeDraftPersistenceMutation.error)
+                        : ""
           }
           testingDraft={testNodeDraftMutation.isPending}
+          probingDraft={runNodeDraftProbeMutation.isPending}
+          synthesizingContract={synthesizeNodeDraftContractMutation.isPending}
           publishingDraft={publishNodeDraftMutation.isPending}
+          deletingRuntimeNode={deleteRuntimeNodeMutation.isPending}
           generatingPersistence={generateNodeDraftPersistenceMutation.isPending}
           onTestDraft={(draftId) => testNodeDraftMutation.mutate(draftId)}
+          onRunProbe={(draftId) => runNodeDraftProbeMutation.mutate(draftId)}
+          onSynthesizeContract={(draftId) => synthesizeNodeDraftContractMutation.mutate(draftId)}
           onPublishDraft={(draftId) => publishNodeDraftMutation.mutate(draftId)}
+          onDeleteRuntimeNode={(nodeId) => deleteRuntimeNodeMutation.mutate(nodeId)}
           onGeneratePersistencePlan={(draftId) => generateNodeDraftPersistenceMutation.mutate(draftId)}
           confirmRealDraft={confirmRealDraft}
           setConfirmRealDraft={setConfirmRealDraft}
@@ -15550,9 +15630,9 @@ function NodeAssistPanel({
       <section>
         <div className="section-title"><span>Node Lifecycle</span><span>draft</span></div>
         <button type="button" className="primary wide" disabled={!instance || !runtime} onClick={onOpenDraft}>
-          <Plus size={16} />创建 Runtime Node
+          <Plus size={16} />Node 构建分析
         </button>
-        <p className="body-copy">从 Skill 安装命令生成草稿，测试后发布到当前 Runtime Node Catalog；正式 repo 持久化单独生成方案。</p>
+        <p className="body-copy">从 Skill 安装命令进入 Static Analysis、Probe Run、Contract Synthesis、Runtime Node 和正式持久化流程。</p>
       </section>
       <section>
         <div className="section-title"><span>Validation</span><span>{(node?.missingFields || []).length ? "warning" : "ready"}</span></div>
@@ -15589,6 +15669,8 @@ function NodeDraftDrawer({
   setDraftInput,
   nodeBuilderInstruction,
   setNodeBuilderInstruction,
+  probeInputs,
+  setProbeInputs,
   nodeBuilderResult,
   nodeBuilderRunning,
   nodeBuilderError,
@@ -15597,10 +15679,16 @@ function NodeDraftDrawer({
   nodeDraftActionResult,
   nodeDraftActionError,
   testingDraft,
+  probingDraft,
+  synthesizingContract,
   publishingDraft,
+  deletingRuntimeNode,
   generatingPersistence,
   onTestDraft,
+  onRunProbe,
+  onSynthesizeContract,
   onPublishDraft,
+  onDeleteRuntimeNode,
   onGeneratePersistencePlan,
   confirmRealDraft,
   setConfirmRealDraft,
@@ -15617,6 +15705,8 @@ function NodeDraftDrawer({
   setDraftInput: (input: NodeDraftInput) => void;
   nodeBuilderInstruction: string;
   setNodeBuilderInstruction: (value: string) => void;
+  probeInputs: Record<string, string>;
+  setProbeInputs: (value: Record<string, string>) => void;
   nodeBuilderResult: NodeBuilderResult | null;
   nodeBuilderRunning: boolean;
   nodeBuilderError: string;
@@ -15625,10 +15715,16 @@ function NodeDraftDrawer({
   nodeDraftActionResult: NodeDraftLifecycleResult | null;
   nodeDraftActionError: string;
   testingDraft: boolean;
+  probingDraft: boolean;
+  synthesizingContract: boolean;
   publishingDraft: boolean;
+  deletingRuntimeNode: boolean;
   generatingPersistence: boolean;
   onTestDraft: (draftId: string) => void;
+  onRunProbe: (draftId: string) => void;
+  onSynthesizeContract: (draftId: string) => void;
   onPublishDraft: (draftId: string) => void;
+  onDeleteRuntimeNode: (nodeId: string) => void;
   onGeneratePersistencePlan: (draftId: string) => void;
   confirmRealDraft: boolean;
   setConfirmRealDraft: (value: boolean) => void;
@@ -15641,34 +15737,59 @@ function NodeDraftDrawer({
   const generatedNode = (evaluation.node_draft || {}) as Record<string, unknown>;
   const skill = (generatedNode.skill || {}) as Record<string, unknown>;
   const executor = (generatedNode.executor || {}) as Record<string, unknown>;
-  const entry = (generatedNode.entry || {}) as Record<string, unknown>;
-  const generatedEntryInputs = (entry.inputs || {}) as Record<string, unknown>;
+  const generatedEntryInputs = nodeDraftEntryInputsFromNode(generatedNode);
+  const latestEntryInputs = nodeDraftEntryInputsFromNode(latestDraft?.node as Record<string, unknown> | undefined);
+  const fallbackInputName = String(draftInput.entry_input_name || draftInput.input_name || "").trim();
+  const probeInputSpecs = Object.keys(latestEntryInputs).length
+    ? latestEntryInputs
+    : Object.keys(generatedEntryInputs).length
+      ? generatedEntryInputs
+      : fallbackInputName
+        ? {
+          [fallbackInputName]: {
+            kind: "scalar",
+            type: draftInput.input_type || "string",
+            value_type: draftInput.input_value_type || "text",
+            required: true,
+          },
+        }
+        : {};
   const handoff = (generatedNode.handoff || {}) as Record<string, unknown>;
   const outputs = (generatedNode.outputs || {}) as Record<string, unknown>;
   const skillIdentity = (evaluation.skill_identity || {}) as Record<string, unknown>;
   const risks = (evaluation.risks || []) as Array<Record<string, unknown>>;
   const missingFields = (evaluation.missing_fields || []) as Array<unknown>;
   const testPlan = (evaluation.test_plan || []) as Array<unknown>;
-  const draftTest = (latestDraft?.draftTest || {}) as Record<string, unknown>;
-  const runtimePublish = (latestDraft?.runtimePublish || {}) as Record<string, unknown>;
-  const persistencePlan = (latestDraft?.persistencePlan || {}) as Record<string, unknown>;
+  const actionResult = (nodeDraftActionResult || {}) as Record<string, unknown>;
+  const actionMode = String(actionResult.mode || "");
+  const actionStatus = String(actionResult.status || "").toLowerCase();
+  const draftTest = (latestDraft?.draftTest || (actionMode === "draft-test" ? actionResult : {})) as Record<string, unknown>;
+  const probeRun = (latestDraft?.probeRun || (["probe-run", "probe_run", "node-draft-probe-run"].includes(actionMode) ? actionResult : {})) as Record<string, unknown>;
+  const contractSynthesis = (latestDraft?.contractSynthesis || (["contract-synthesis", "contract_synthesis"].includes(actionMode) ? actionResult : {})) as Record<string, unknown>;
+  const runtimePublish = (latestDraft?.runtimePublish || (actionStatus === "published" ? actionResult : {})) as Record<string, unknown>;
+  const runtimeDelete = (latestDraft?.runtimeDelete || (actionStatus === "deleted" ? actionResult : {})) as Record<string, unknown>;
+  const persistencePlan = (latestDraft?.persistencePlan || (actionStatus === "generated" ? actionResult : {})) as Record<string, unknown>;
   const draftId = latestDraft?.draftId || "";
   const publishedNodeId = String(runtimePublish.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
-  const workflowId = instance.workflowBinding?.workflowId || "youtube-research-wiki";
+  const workflowId = instance.workflowBinding?.workflowId || "workflow";
   const runtimeNodeRunHref = `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(publishedNodeId)}/runs?mode=${mode}`;
+  const runtimeNodePublished = String(runtimePublish.status || "").toLowerCase() === "published";
+  const runtimeNodeDeleted = String(runtimeDelete.status || runtimePublish.status || "").toLowerCase() === "deleted";
+  const staticAnalysisStatus = draftTest.status || latestDraft?.validation?.status || evaluation.status || "waiting";
+  const contractReady = ["synthesized", "passed", "done", "ok", "ready"].includes(String(contractSynthesis.status || "").toLowerCase());
   const statusTone = (status: unknown) => {
     const value = String(status || "").toLowerCase();
-    if (["ready", "passed", "published", "generated", "done", "ok"].includes(value)) return "done";
+    if (["ready", "passed", "published", "generated", "synthesized", "deleted", "done", "ok"].includes(value)) return "done";
     if (["failed", "blocked", "error"].includes(value)) return "failed";
-    if (["warning", "needs_user_input"].includes(value)) return "waiting";
+    if (["", "waiting", "pending", "queued", "warning", "needs_user_input"].includes(value)) return "waiting";
     return "running";
   };
   const lifecycle = [
-    { id: "agent", title: "Node Builder Agent", status: evaluation.status || "waiting", note: "从安装命令生成 Node Draft" },
-    { id: "draft", title: "草稿", status: latestDraft ? "passed" : "waiting", note: latestDraft?.draftId || "保存到 raw/node-drafts" },
-    { id: "test", title: "草稿测试", status: draftTest.status || "waiting", note: "校验定义、交接契约和 manifest" },
-    { id: "runtime", title: "Runtime Node", status: runtimePublish.status || "waiting", note: "发布到当前 Runtime Catalog" },
-    { id: "repo", title: "正式持久化", status: persistencePlan.status || "waiting", note: "生成 agent-brain-plugins patch" },
+    { id: "static", title: "Static Analysis", status: staticAnalysisStatus, note: latestDraft?.draftId || "分析 node definition / executor / handoff" },
+    { id: "probe", title: "Probe Run", status: probeRun.status || "waiting", note: "用 fixture 验证 Runtime harness 和输出 manifest" },
+    { id: "contract", title: "Contract Synthesis", status: contractSynthesis.status || "waiting", note: "合成输入、交接、输出契约" },
+    { id: "runtime", title: "Runtime Node", status: runtimeDelete.status || runtimePublish.status || "waiting", note: runtimeNodeDeleted ? "已从 Runtime Catalog 删除" : "发布到当前 Runtime Catalog" },
+    { id: "repo", title: "正式持久化", status: persistencePlan.status || "waiting", note: "生成 repo-first 持久化方案" },
   ];
 
   return (
@@ -15676,10 +15797,10 @@ function NodeDraftDrawer({
       <form className="side-drawer node-builder-drawer" onSubmit={onCreateDraft}>
         <div className="drawer-head">
           <div>
-            <h2>Create Runtime Node</h2>
-            <span>{instance.instanceId} · {runtime.name}</span>
+            <h2>Node 构建分析</h2>
+            <span>{instance.instanceId} · {runtime.name} · Node Build Workbench</span>
           </div>
-          <button type="button" className="icon-btn" title="关闭草稿抽屉" onClick={onClose}><X size={16} /></button>
+          <button type="button" className="icon-btn" title="关闭 Node 构建分析" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="drawer-body">
           <div className="node-builder-lifecycle">
@@ -15693,8 +15814,8 @@ function NodeDraftDrawer({
             ))}
           </div>
           <div className="drawer-note node-builder-principle">
-            <strong>Node 只描述 Skill 执行能力</strong>
-            <span>上游 / 下游关系由 Edge 负责。新 Node 默认接收 upstream outputs directory、manifest 和交接说明，并输出标准 outputs 目录。</span>
+            <strong>Node 构建边界</strong>
+            <span>工作台按静态分析、Probe Run、契约合成、Runtime Node、正式持久化推进。Node 只描述执行能力，上游 / 下游关系仍由 Edge 负责。</span>
           </div>
           {schema && (
             <div className="schema-note">
@@ -15707,12 +15828,12 @@ function NodeDraftDrawer({
           <section className="node-builder-card">
             <div className="node-builder-card-head">
               <div>
-                <strong>1. 生成 Node Draft</strong>
-                <span>只需要安装命令和用途说明；Agent 负责提取 Skill 身份、执行器、交接契约和输出目录。</span>
+                <strong>Static Analysis</strong>
+                <span>分析安装命令与用途说明，提取 Skill 身份、执行器、初始输入输出和风险，不写入 Runtime Catalog。</span>
               </div>
               <button type="button" className="secondary" onClick={onEvaluateNodeBuilder} disabled={nodeBuilderRunning || !String(draftInput.skill_install_command || "").trim()}>
                 {nodeBuilderRunning ? <Loader2 size={15} className="spin" /> : <Bot size={15} />}
-                {nodeBuilderRunning ? "生成中" : "生成草稿建议"}
+                {nodeBuilderRunning ? "分析中" : "运行静态分析"}
               </button>
             </div>
             <label>Skill install command<input value={draftInput.skill_install_command || ""} onChange={(event) => setDraftInput({ ...draftInput, skill_install_command: event.target.value })} /></label>
@@ -15725,7 +15846,7 @@ function NodeDraftDrawer({
               <div className="node-builder-result-head">
                 <div>
                   <span className={`status-pill ${statusTone(evaluation.status)}`}>{String(evaluation.status || "unknown")}</span>
-                  <strong>{String(evaluation.summary || "Node Builder Agent 已返回结果")}</strong>
+                  <strong>{String(evaluation.summary || "Static Analysis 已返回结果")}</strong>
                 </div>
                 <small>{String(skillIdentity.skill_id || skill.id || generatedNode.id || "unknown skill")}</small>
               </div>
@@ -15809,54 +15930,117 @@ function NodeDraftDrawer({
           <section className="node-builder-card">
             <div className="node-builder-card-head">
               <div>
-                <strong>2. 保存草稿并发布到 Runtime</strong>
-                <span>发布 Runtime Node 后，当前 Runtime 的 Node Registry 会立刻出现新节点；正式 repo 持久化仍是单独方案。</span>
+                <strong>Build Stages</strong>
+                <span>先保存分析草稿，再按阶段执行 Probe、契约合成、Runtime 发布和正式持久化；Runtime 发布与 repo 持久化保持分离。</span>
               </div>
             </div>
             {latestDraft ? (
               <div className="node-draft-current">
                 <div>
-                  <span>当前草稿</span>
+                  <span>当前分析草稿</span>
                   <strong>{latestDraft.draftId}</strong>
                   <small>{String(latestDraft.node.title || latestDraft.node.id || "")}</small>
                 </div>
                 <div className="node-draft-state-row">
-                  <span className={`status-pill ${statusTone(latestDraft.validation?.status)}`}>validation {String(latestDraft.validation?.status || "unknown")}</span>
-                  <span className={`status-pill ${statusTone(draftTest.status)}`}>draft test {String(draftTest.status || "waiting")}</span>
-                  <span className={`status-pill ${statusTone(runtimePublish.status)}`}>runtime {String(runtimePublish.status || "waiting")}</span>
-                  <span className={`status-pill ${statusTone(persistencePlan.status)}`}>repo plan {String(persistencePlan.status || "waiting")}</span>
+                  <span className={`status-pill ${statusTone(staticAnalysisStatus)}`}>static {String(staticAnalysisStatus || "waiting")}</span>
+                  <span className={`status-pill ${statusTone(probeRun.status)}`}>probe {String(probeRun.status || "waiting")}</span>
+                  <span className={`status-pill ${statusTone(contractSynthesis.status)}`}>contract {String(contractSynthesis.status || "waiting")}</span>
+                  <span className={`status-pill ${statusTone(runtimeDelete.status || runtimePublish.status)}`}>runtime {String(runtimeDelete.status || runtimePublish.status || "waiting")}</span>
+                  <span className={`status-pill ${statusTone(persistencePlan.status)}`}>repo {String(persistencePlan.status || "waiting")}</span>
                 </div>
                 <details className="node-builder-raw">
-                  <summary>查看草稿状态文件</summary>
+                  <summary>查看阶段状态文件</summary>
                   <code>{formatValue({
                     validation: latestDraft.validation,
-                    draft_test: latestDraft.draftTest,
+                    static_analysis: latestDraft.draftTest,
+                    probe_run: latestDraft.probeRun,
+                    contract_synthesis: latestDraft.contractSynthesis,
                     runtime_publish: latestDraft.runtimePublish,
+                    runtime_delete: latestDraft.runtimeDelete,
                     persistence_plan: latestDraft.persistencePlan,
                   })}</code>
                 </details>
               </div>
             ) : (
-              <div className="empty-inline">保存草稿后可继续测试、发布和生成正式持久化方案。</div>
+              <div className="empty-inline">保存分析草稿后可继续 Probe Run、契约合成、Runtime Node 发布和正式持久化。</div>
             )}
+            <div className="node-builder-contract-grid">
+              <article>
+                <strong>Static Analysis</strong>
+                <small>校验 node definition、executor、handoff 和 manifest 输出声明。</small>
+                <div className="node-builder-action-row">
+                  <button type="button" disabled={!draftId || testingDraft} onClick={() => onTestDraft(draftId)}>
+                    {testingDraft ? <Loader2 size={15} className="spin" /> : <ListChecks size={15} />}
+                    执行 Static Analysis
+                  </button>
+                </div>
+                <code>{formatValue({ status: staticAnalysisStatus, validation: latestDraft?.validation, result: draftTest })}</code>
+              </article>
+              <article>
+                <strong>Probe Run</strong>
+                <small>用页面输入真实运行一次 Runtime harness，确认输入解析、执行和输出 manifest。</small>
+                <div className="node-builder-probe-inputs">
+                  {Object.entries(probeInputSpecs).map(([name, spec]) => (
+                    <label key={name}>
+                      <span>{inputSpecLabel(name, spec)}{inputSpecRequired(spec) ? " *" : ""}</span>
+                      <input
+                        value={probeInputs[name] || ""}
+                        placeholder={inputSpecExample(spec) || String(name)}
+                        onChange={(event) => setProbeInputs({ ...probeInputs, [name]: event.target.value })}
+                      />
+                      {(inputSpecDescription(spec) || inputSpecEvidence(spec)) && <small>{inputSpecDescription(spec) || inputSpecEvidence(spec)}</small>}
+                    </label>
+                  ))}
+                  {!Object.keys(probeInputSpecs).length && <div className="empty-inline">该草稿没有声明 entry inputs；Probe Run 会只验证执行器和 manifest。</div>}
+                </div>
+                <div className="node-builder-action-row">
+                  <button type="button" disabled={!draftId || probingDraft} onClick={() => onRunProbe(draftId)}>
+                    {probingDraft ? <Loader2 size={15} className="spin" /> : <Activity size={15} />}
+                    Run Probe
+                  </button>
+                </div>
+                <code>{formatValue(probeRun.status ? probeRun : { status: "waiting" })}</code>
+              </article>
+              <article>
+                <strong>Contract Synthesis</strong>
+                <small>把静态分析和 Probe 证据合成为输入、交接与输出契约。</small>
+                <div className="node-builder-action-row">
+                  <button type="button" disabled={!draftId || synthesizingContract} onClick={() => onSynthesizeContract(draftId)}>
+                    {synthesizingContract ? <Loader2 size={15} className="spin" /> : <Network size={15} />}
+                    Synthesize Contract
+                  </button>
+                </div>
+                <code>{formatValue(contractSynthesis.status ? contractSynthesis : { status: "waiting" })}</code>
+              </article>
+              <article>
+                <strong>Runtime Node</strong>
+                <small>将合成后的节点发布到当前 Runtime Catalog；需要回滚时可删除 Runtime Node。</small>
+                <div className="node-builder-action-row">
+                  <button type="button" disabled={!draftId || publishingDraft || !contractReady} onClick={() => onPublishDraft(draftId)}>
+                    {publishingDraft ? <Loader2 size={15} className="spin" /> : <Server size={15} />}
+                    发布 Runtime Node
+                  </button>
+                  <button type="button" disabled={!publishedNodeId || deletingRuntimeNode || !runtimeNodePublished || runtimeNodeDeleted} onClick={() => onDeleteRuntimeNode(publishedNodeId)}>
+                    {deletingRuntimeNode ? <Loader2 size={15} className="spin" /> : <Trash2 size={15} />}
+                    删除 Runtime Node
+                  </button>
+                  {runtimeNodePublished && !runtimeNodeDeleted && publishedNodeId && (
+                    <a className="button-link" href={runtimeNodeRunHref}>
+                      <Play size={15} />测试 Runtime Node
+                    </a>
+                  )}
+                </div>
+                <code>{formatValue({
+                  publish: runtimePublish.status ? runtimePublish : { status: "waiting" },
+                  delete: runtimeDelete.status ? runtimeDelete : undefined,
+                })}</code>
+              </article>
+            </div>
             <div className="node-builder-action-row">
-              <button type="button" disabled={!draftId || testingDraft} onClick={() => onTestDraft(draftId)}>
-                {testingDraft ? <Loader2 size={15} className="spin" /> : <ListChecks size={15} />}
-                测试草稿
-              </button>
-              <button type="button" disabled={!draftId || publishingDraft || draftTest.status !== "passed"} onClick={() => onPublishDraft(draftId)}>
-                {publishingDraft ? <Loader2 size={15} className="spin" /> : <Server size={15} />}
-                发布 Runtime Node
-              </button>
               <button type="button" disabled={!draftId || generatingPersistence} onClick={() => onGeneratePersistencePlan(draftId)}>
                 {generatingPersistence ? <Loader2 size={15} className="spin" /> : <Github size={15} />}
                 生成正式持久化方案
               </button>
-              {runtimePublish.status === "published" && publishedNodeId && (
-                <a className="button-link" href={runtimeNodeRunHref}>
-                  <Play size={15} />测试 Runtime Node
-                </a>
-              )}
             </div>
             {nodeDraftActionError && <div className="inline-error">{nodeDraftActionError}</div>}
             {nodeDraftActionResult && (
@@ -15867,7 +16051,7 @@ function NodeDraftDrawer({
             )}
           </section>
           {mode === "real" && (
-            <label className="confirm-row"><input type="checkbox" checked={confirmRealDraft} onChange={(event) => setConfirmRealDraft(event.target.checked)} />我确认要在真实 Runtime 上创建 Node Draft</label>
+            <label className="confirm-row"><input type="checkbox" checked={confirmRealDraft} onChange={(event) => setConfirmRealDraft(event.target.checked)} />我确认要在真实 Runtime 上保存 Node 构建分析草稿</label>
           )}
           {createError && <div className="inline-error">{createError}</div>}
         </div>
@@ -15875,7 +16059,7 @@ function NodeDraftDrawer({
           <button type="button" onClick={onClose}>Cancel</button>
           <button type="submit" className="primary" disabled={creatingDraft || (mode === "real" && !confirmRealDraft)}>
             {creatingDraft ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-            {creatingDraft ? "Saving" : "保存 Node Draft"}
+            {creatingDraft ? "Saving" : "保存分析草稿"}
           </button>
         </div>
       </form>

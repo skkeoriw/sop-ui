@@ -3743,6 +3743,28 @@ pre {
   white-space: pre-wrap;
 }
 
+.node-builder-probe-inputs {
+  display: grid;
+  gap: 8px;
+}
+
+.node-builder-probe-inputs label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.node-builder-probe-inputs span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.node-builder-probe-inputs small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .node-builder-warning {
   display: flex;
   align-items: flex-start;
