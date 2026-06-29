@@ -3578,6 +3578,34 @@ pre {
   width: min(920px, 100%);
 }
 
+.node-builder-page-shell {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.node-builder-page {
+  width: 100%;
+  min-height: calc(100vh - 118px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.node-builder-page .drawer-body {
+  overflow: visible;
+}
+
+.node-builder-page .drawer-actions {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+}
+
 .node-builder-lifecycle {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -4135,6 +4163,13 @@ pre {
   font-size: 13px;
   font-weight: 700;
   text-decoration: none;
+}
+
+.button-link.primary {
+  border-color: #1d4ed8;
+  background: var(--blue);
+  color: white;
+  font-weight: 720;
 }
 
 .field-hint {

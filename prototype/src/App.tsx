@@ -88,7 +88,18 @@ import type {
 
 type InspectorTab = "config" | "run" | "artifacts" | "logs";
 type AppView = "runtime" | "instance" | "workflows" | "workflowBuilder" | "workflow" | "nodes" | "machines" | "settings";
-type AppRoute = { view: AppView; nodeId: string; pipelineId: string; artifactId: string; moduleId: string; nodeRunId?: string; nodeRunList?: boolean; edgeId?: string };
+type AppRoute = {
+  view: AppView;
+  nodeId: string;
+  pipelineId: string;
+  artifactId: string;
+  moduleId: string;
+  nodeRunId?: string;
+  nodeRunList?: boolean;
+  edgeId?: string;
+  nodeBuilder?: "new" | "draft";
+  nodeDraftId?: string;
+};
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
 type RunOverlay = Partial<Omit<Run, "pipelineId" | "nodes" | "nodeStates">> & {
   pipelineId: string;
@@ -534,6 +545,12 @@ function readRoute(): AppRoute {
       const nodeIndex = parts.indexOf("nodes");
       const isNodeRoute = nodeIndex >= 0;
       const isNodeRunsRoute = isNodeRoute && parts[nodeIndex + 2] === "runs";
+      if (isNodeRoute && parts[nodeIndex + 1] === "new") {
+        return { view: "nodes", ...empty, nodeBuilder: "new" };
+      }
+      if (isNodeRoute && parts[nodeIndex + 1] === "drafts") {
+        return { view: "nodes", ...empty, nodeBuilder: "draft", nodeDraftId: decodeURIComponent(parts[nodeIndex + 2] || "") };
+      }
       return {
         view: isNodeRoute ? "nodes" : "workflow",
         ...empty,
@@ -561,6 +578,8 @@ function readRoute(): AppRoute {
     return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[offset] || ""), nodeId: decodeURIComponent(parts[offset + 1] || "") };
   }
   if (parts[0] === "nodes") {
+    if (parts[1] === "new") return { view: "nodes", ...empty, nodeBuilder: "new" };
+    if (parts[1] === "drafts") return { view: "nodes", ...empty, nodeBuilder: "draft", nodeDraftId: decodeURIComponent(parts[2] || "") };
     return {
       view: "nodes",
       ...empty,
@@ -982,8 +1001,15 @@ function replaceSearchParams(values: Record<string, string>, remove: string[] = 
 function nodeBuilderDraftHref(runtimeId: string, instanceId: string, workflowId: string, draftId: string, mode: DataMode) {
   const params = new URLSearchParams();
   params.set("mode", mode);
-  params.set("nodeBuilder", draftId ? "draft" : "new");
-  if (draftId) params.set("nodeDraftId", draftId);
+  const builderPath = draftId
+    ? `/nodes/drafts/${encodeURIComponent(draftId)}`
+    : "/nodes/new";
+  return `/runtimes/${encodeURIComponent(runtimeId)}/instances/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}${builderPath}?${params.toString()}`;
+}
+
+function nodeCatalogHref(runtimeId: string, instanceId: string, workflowId: string, mode: DataMode) {
+  const params = new URLSearchParams();
+  params.set("mode", mode);
   return `/runtimes/${encodeURIComponent(runtimeId)}/instances/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes?${params.toString()}`;
 }
 
@@ -5459,8 +5485,8 @@ export default function App() {
   const [nodeFilter, setNodeFilter] = useState("all");
   const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
   const [selectedNodeModuleId, setSelectedNodeModuleId] = useState("basic");
-  const [draftOpen, setDraftOpen] = useState(() => Boolean(readSearchParam("nodeBuilder") || readSearchParam("nodeDraftId")));
-  const [activeNodeDraftId, setActiveNodeDraftId] = useState(() => readSearchParam("nodeDraftId"));
+  const [draftOpen, setDraftOpen] = useState(() => Boolean(route.nodeBuilder || readSearchParam("nodeBuilder") || readSearchParam("nodeDraftId")));
+  const [activeNodeDraftId, setActiveNodeDraftId] = useState(() => route.nodeDraftId || readSearchParam("nodeDraftId"));
   const [nodeBuilderReport, setNodeBuilderReport] = useState<"analysis" | "static" | "probe" | "contract" | "runtime" | "persistence" | null>(null);
   const [nodeCatalogActionResult, setNodeCatalogActionResult] = useState<NodeDraftLifecycleResult | null>(null);
   const [draftLocalError, setDraftLocalError] = useState("");
@@ -6523,16 +6549,34 @@ export default function App() {
   });
 
   function writeNodeBuilderUrl(draftId = "", historyMode: "push" | "replace" = "push") {
-    replaceSearchParams(
-      { nodeBuilder: draftId ? "draft" : "new", nodeDraftId: draftId },
-      ["step"],
-      historyMode,
-    );
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const baseInstance = routeInstanceId(instance, instanceId);
+    const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
+    const nextUrl = nodeBuilderDraftHref(baseRuntime, baseInstance, baseWorkflow, draftId, mode);
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      if (historyMode === "replace") window.history.replaceState(null, "", nextUrl);
+      else window.history.pushState(null, "", nextUrl);
+    }
+    setRoute({
+      view: "nodes",
+      nodeId: "",
+      pipelineId: "",
+      artifactId: "",
+      moduleId: "",
+      nodeBuilder: draftId ? "draft" : "new",
+      nodeDraftId: draftId,
+    });
   }
 
   function closeNodeBuilderDraft() {
-    removeSearchParams(["nodeBuilder", "nodeDraftId"], "push");
+    const baseRuntime = routeRuntimeId(runtime, runtimeId);
+    const baseInstance = routeInstanceId(instance, instanceId);
+    const baseWorkflow = routeContext.workflowId || workflowIdForInstance(instance);
+    const nextUrl = nodeCatalogHref(baseRuntime, baseInstance, baseWorkflow, mode);
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+    setRoute({ view: "nodes", nodeId: "", pipelineId: "", artifactId: "", moduleId: "" });
     setDraftOpen(false);
+    setActiveNodeDraftId("");
   }
 
   function openNodeBuilderDraft() {
@@ -6590,24 +6634,60 @@ export default function App() {
   }
 
   useEffect(() => {
-    const routeDraftId = readSearchParam("nodeDraftId");
-    const routeNodeBuilder = readSearchParam("nodeBuilder");
+    const legacyDraftId = readSearchParam("nodeDraftId");
+    const legacyNodeBuilder = readSearchParam("nodeBuilder");
+    if (viewMode === "nodes" && !route.nodeBuilder && (legacyDraftId || legacyNodeBuilder) && runtime && instance) {
+      const targetUrl = nodeBuilderDraftHref(
+        runtime.id,
+        instance.instanceId,
+        routeContext.workflowId || workflowIdForInstance(instance),
+        legacyDraftId || "",
+        mode,
+      );
+      window.history.replaceState(null, "", targetUrl);
+      setRoute(readRoute());
+      return;
+    }
+    const routeDraftId = route.nodeDraftId || "";
+    const routeNodeBuilder = route.nodeBuilder || "";
     if (!routeDraftId && !routeNodeBuilder) {
       if (draftOpen) setDraftOpen(false);
       return;
     }
     if (routeDraftId) {
-      const draftExists = (nodeDraftsQuery.data || []).some((item) => item.draftId === routeDraftId);
-      if (!draftExists) return;
-      if (!draftOpen || activeNodeDraftId !== routeDraftId) {
+      const draft = (nodeDraftsQuery.data || []).find((item) => item.draftId === routeDraftId);
+      if (!draft) return;
+      const routeNodeId = String(draft.node?.id || draft.node?.node_id || "");
+      if (!draftOpen || activeNodeDraftId !== routeDraftId || (routeNodeId && draftInput.node_id !== routeNodeId)) {
         openExistingNodeDraft(routeDraftId, "replace");
       }
       return;
     }
-    if (routeNodeBuilder && !draftOpen) {
-      setDraftOpen(true);
+    if (routeNodeBuilder === "new") {
+      if (!draftOpen) setDraftOpen(true);
+      if (activeNodeDraftId) {
+        setActiveNodeDraftId("");
+        setDraftLocalError("");
+        setConfirmRealDraft(false);
+        setNodeBuilderResult(null);
+        setNodeDraftActionResult(null);
+        setNodeDraftProbeInputs({});
+        setDraftInput({
+          skill_install_command: "",
+          skill_id: "",
+          node_id: "",
+          title: "",
+          description: "Runtime Node 只描述执行能力；上游关系由 Workflow Edge 决定。",
+          entry_input_name: "prompt",
+          input_type: "string",
+          input_value_type: "text",
+          output_name: "result",
+          output_path: "raw/node-runs/{run_id}/outputs/outputs/result.json"
+        });
+        setNodeBuilderInstruction("分析这个 Skill 如何成为不绑定上下游的 Runtime Node；首节点或单节点 Probe Run 允许用户直接输入 prompt。");
+      }
     }
-  }, [activeNodeDraftId, draftOpen, nodeDraftsQuery.data, route]);
+  }, [activeNodeDraftId, draftInput.node_id, draftOpen, instance, mode, nodeDraftsQuery.data, route, routeContext.workflowId, runtime, viewMode]);
 
   function confirmDeleteNodeDraft(draft: NodeDraft) {
     const nodeId = String(draft.node?.id || draft.node?.node_id || "");
@@ -7054,6 +7134,68 @@ export default function App() {
     createDraftMutation.mutate();
   }
 
+  const isNodeBuilderRoute = viewMode === "nodes" && Boolean(route.nodeBuilder);
+  const renderNodeDraftWorkbench = (presentation: "drawer" | "page") => (
+    runtime && instance ? (
+      <NodeDraftDrawer
+        presentation={presentation}
+        mode={mode}
+        runtime={runtime}
+        instance={instance}
+        schema={nodeDraftSchemaQuery.data}
+        draftInput={draftInput}
+        setDraftInput={(input) => { setDraftLocalError(""); setNodeBuilderResult(null); setDraftInput(input); }}
+        nodeBuilderInstruction={nodeBuilderInstruction}
+        setNodeBuilderInstruction={setNodeBuilderInstruction}
+        probeInputs={nodeDraftProbeInputs}
+        setProbeInputs={setNodeDraftProbeInputs}
+        nodeBuilderResult={nodeBuilderResult}
+        nodeBuilderRunning={evaluateNodeBuilderMutation.isPending}
+        nodeBuilderError={evaluateNodeBuilderMutation.error ? String((evaluateNodeBuilderMutation.error as Error).message || evaluateNodeBuilderMutation.error) : ""}
+        onEvaluateNodeBuilder={() => { setDraftLocalError(""); evaluateNodeBuilderMutation.mutate(); }}
+        latestDraft={activeNodeDraft}
+        drafts={nodeDraftsQuery.data || []}
+        reportOpen={nodeBuilderReport}
+        setReportOpen={setNodeBuilderReport}
+        nodeDraftActionResult={nodeDraftActionResult}
+        nodeDraftActionError={
+          deleteNodeDraftMutation.error ? String((deleteNodeDraftMutation.error as Error).message || deleteNodeDraftMutation.error)
+            : testNodeDraftMutation.error ? String((testNodeDraftMutation.error as Error).message || testNodeDraftMutation.error)
+            : runNodeDraftProbeMutation.error ? String((runNodeDraftProbeMutation.error as Error).message || runNodeDraftProbeMutation.error)
+              : synthesizeNodeDraftContractMutation.error ? String((synthesizeNodeDraftContractMutation.error as Error).message || synthesizeNodeDraftContractMutation.error)
+                : publishNodeDraftMutation.error ? String((publishNodeDraftMutation.error as Error).message || publishNodeDraftMutation.error)
+                  : deleteRuntimeNodeMutation.error ? String((deleteRuntimeNodeMutation.error as Error).message || deleteRuntimeNodeMutation.error)
+                    : generateNodeDraftPersistenceMutation.error ? String((generateNodeDraftPersistenceMutation.error as Error).message || generateNodeDraftPersistenceMutation.error)
+                      : ""
+        }
+        testingDraft={testNodeDraftMutation.isPending}
+        deletingDraft={deleteNodeDraftMutation.isPending}
+        probingDraft={runNodeDraftProbeMutation.isPending}
+        synthesizingContract={synthesizeNodeDraftContractMutation.isPending}
+        publishingDraft={publishNodeDraftMutation.isPending}
+        deletingRuntimeNode={deleteRuntimeNodeMutation.isPending}
+        generatingPersistence={generateNodeDraftPersistenceMutation.isPending}
+        onTestDraft={(draftId) => testNodeDraftMutation.mutate(draftId)}
+        onOpenDraftHistory={openExistingNodeDraft}
+        onDeleteDraft={(draft) => confirmDeleteNodeDraft(draft)}
+        onRunProbe={(draftId) => runNodeDraftProbeMutation.mutate(draftId)}
+        onSynthesizeContract={(draftId) => synthesizeNodeDraftContractMutation.mutate(draftId)}
+        onPublishDraft={(draftId) => publishNodeDraftMutation.mutate(draftId)}
+        onDeleteRuntimeNode={(nodeId) => {
+          if (!window.confirm(`确认删除 Runtime Node ${nodeId}？\n这只删除当前 Runtime Catalog，不删除草稿，也不修改正式 SOP。`)) return;
+          deleteRuntimeNodeMutation.mutate(nodeId);
+        }}
+        onGeneratePersistencePlan={(draftId) => generateNodeDraftPersistenceMutation.mutate(draftId)}
+        confirmRealDraft={confirmRealDraft}
+        setConfirmRealDraft={setConfirmRealDraft}
+        creatingDraft={createDraftMutation.isPending}
+        createError={draftLocalError || (createDraftMutation.error ? String(createDraftMutation.error.message) : "")}
+        onClose={closeNodeBuilderDraft}
+        onCreateDraft={submitDraft}
+      />
+    ) : <LoadingOrEmpty loading text="加载 Runtime / Instance 后打开 Node Builder" />
+  );
+
   return (
     <div className={`app-shell single-shell ${railCollapsed ? "rail-collapsed" : ""}`}>
       <aside className="control-rail">
@@ -7325,6 +7467,8 @@ export default function App() {
             retryPending={retryMutation.isPending}
             cancelNodePending={cancelNodeMutation.isPending}
           />
+        ) : viewMode === "nodes" && isNodeBuilderRoute ? (
+          renderNodeDraftWorkbench("page")
         ) : viewMode === "nodes" ? (
           <NodesWorkspace
             instance={instance}
@@ -7546,63 +7690,7 @@ export default function App() {
           onStart={(event) => { event.preventDefault(); triggerMutation.mutate(); }}
         />
       )}
-      {draftOpen && runtime && instance && (
-        <NodeDraftDrawer
-          mode={mode}
-          runtime={runtime}
-          instance={instance}
-          schema={nodeDraftSchemaQuery.data}
-          draftInput={draftInput}
-          setDraftInput={(input) => { setDraftLocalError(""); setNodeBuilderResult(null); setDraftInput(input); }}
-          nodeBuilderInstruction={nodeBuilderInstruction}
-          setNodeBuilderInstruction={setNodeBuilderInstruction}
-          probeInputs={nodeDraftProbeInputs}
-          setProbeInputs={setNodeDraftProbeInputs}
-          nodeBuilderResult={nodeBuilderResult}
-          nodeBuilderRunning={evaluateNodeBuilderMutation.isPending}
-          nodeBuilderError={evaluateNodeBuilderMutation.error ? String((evaluateNodeBuilderMutation.error as Error).message || evaluateNodeBuilderMutation.error) : ""}
-          onEvaluateNodeBuilder={() => { setDraftLocalError(""); evaluateNodeBuilderMutation.mutate(); }}
-          latestDraft={activeNodeDraft}
-          drafts={nodeDraftsQuery.data || []}
-          reportOpen={nodeBuilderReport}
-          setReportOpen={setNodeBuilderReport}
-          nodeDraftActionResult={nodeDraftActionResult}
-          nodeDraftActionError={
-            deleteNodeDraftMutation.error ? String((deleteNodeDraftMutation.error as Error).message || deleteNodeDraftMutation.error)
-              : testNodeDraftMutation.error ? String((testNodeDraftMutation.error as Error).message || testNodeDraftMutation.error)
-              : runNodeDraftProbeMutation.error ? String((runNodeDraftProbeMutation.error as Error).message || runNodeDraftProbeMutation.error)
-                : synthesizeNodeDraftContractMutation.error ? String((synthesizeNodeDraftContractMutation.error as Error).message || synthesizeNodeDraftContractMutation.error)
-                  : publishNodeDraftMutation.error ? String((publishNodeDraftMutation.error as Error).message || publishNodeDraftMutation.error)
-                    : deleteRuntimeNodeMutation.error ? String((deleteRuntimeNodeMutation.error as Error).message || deleteRuntimeNodeMutation.error)
-                      : generateNodeDraftPersistenceMutation.error ? String((generateNodeDraftPersistenceMutation.error as Error).message || generateNodeDraftPersistenceMutation.error)
-                        : ""
-          }
-          testingDraft={testNodeDraftMutation.isPending}
-          deletingDraft={deleteNodeDraftMutation.isPending}
-          probingDraft={runNodeDraftProbeMutation.isPending}
-          synthesizingContract={synthesizeNodeDraftContractMutation.isPending}
-          publishingDraft={publishNodeDraftMutation.isPending}
-          deletingRuntimeNode={deleteRuntimeNodeMutation.isPending}
-          generatingPersistence={generateNodeDraftPersistenceMutation.isPending}
-          onTestDraft={(draftId) => testNodeDraftMutation.mutate(draftId)}
-          onOpenDraftHistory={openExistingNodeDraft}
-          onDeleteDraft={(draft) => confirmDeleteNodeDraft(draft)}
-          onRunProbe={(draftId) => runNodeDraftProbeMutation.mutate(draftId)}
-          onSynthesizeContract={(draftId) => synthesizeNodeDraftContractMutation.mutate(draftId)}
-          onPublishDraft={(draftId) => publishNodeDraftMutation.mutate(draftId)}
-          onDeleteRuntimeNode={(nodeId) => {
-            if (!window.confirm(`确认删除 Runtime Node ${nodeId}？\n这只删除当前 Runtime Catalog，不删除草稿，也不修改正式 SOP。`)) return;
-            deleteRuntimeNodeMutation.mutate(nodeId);
-          }}
-          onGeneratePersistencePlan={(draftId) => generateNodeDraftPersistenceMutation.mutate(draftId)}
-          confirmRealDraft={confirmRealDraft}
-          setConfirmRealDraft={setConfirmRealDraft}
-          creatingDraft={createDraftMutation.isPending}
-          createError={draftLocalError || (createDraftMutation.error ? String(createDraftMutation.error.message) : "")}
-          onClose={closeNodeBuilderDraft}
-          onCreateDraft={submitDraft}
-        />
-      )}
+      {draftOpen && !isNodeBuilderRoute && renderNodeDraftWorkbench("drawer")}
       {showNodeConfig && (
         <NodeConfigDrawer
           nodeId={nodeConfigId}
@@ -15546,6 +15634,7 @@ function NodesWorkspace({
   const [nodeView, setNodeView] = useState<"list" | "dag" | "contracts">("list");
   const workflowBinding = instance?.workflowBinding;
   const workflowId = workflowBinding?.workflowId || workflowBinding?.workflowName || instance?.sopType || "workflow";
+  const createNodeHref = runtime && instance ? nodeBuilderDraftHref(runtime.id, instance.instanceId, workflowId, "", mode) : "";
   const routeNodeFallback = routeNodeId && !selectedNode
     ? ({
       nodeId: routeNodeId,
@@ -15673,7 +15762,13 @@ function NodesWorkspace({
     <aside className="node-list-panel">
       <div className="panel-head compact">
         <div><strong>Definition Groups</strong><span>{visibleNodes.length}/{nodes.length} definitions</span></div>
-        <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><Plus size={16} />创建 Node</button>
+        {createNodeHref ? (
+          <a className="primary button-link" href={createNodeHref} onClick={(event) => { event.preventDefault(); onOpenDraft(); }}>
+            <Plus size={16} />创建 Node
+          </a>
+        ) : (
+          <button type="button" className="primary" disabled><Plus size={16} />创建 Node</button>
+        )}
       </div>
       <div className="node-list-tools">
         <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node definition" /></label>
@@ -15772,7 +15867,13 @@ function NodesWorkspace({
             <span>{String(draft.node?.title || draft.node?.id || draft.draftType || "node draft")}</span>
             <code>{formatValue(draft.validation)}</code>
             <div className="draft-item-actions">
-              <button type="button" className="btn" onClick={() => onOpenDraftHistory(draft.draftId)}>Open Draft</button>
+              <a
+                className="btn"
+                href={runtime && instance ? nodeBuilderDraftHref(runtime.id, instance.instanceId, workflowId, draft.draftId, mode) : "#"}
+                onClick={(event) => { event.preventDefault(); onOpenDraftHistory(draft.draftId); }}
+              >
+                Open Draft
+              </a>
               <button type="button" className="btn danger-text" disabled={deletingDraft} onClick={() => onDeleteDraft(draft)}>
                 <Trash2 size={13} />Delete Draft
               </button>
@@ -16196,6 +16297,7 @@ function NodeAssistPanel({
 }
 
 function NodeDraftDrawer({
+  presentation = "drawer",
   mode,
   runtime,
   instance,
@@ -16238,6 +16340,7 @@ function NodeDraftDrawer({
   onClose,
   onCreateDraft,
 }: {
+  presentation?: "drawer" | "page";
   mode: DataMode;
   runtime: Runtime;
   instance: Instance;
@@ -16359,15 +16462,16 @@ function NodeDraftDrawer({
     { id: "repo", title: "正式持久化", status: persistencePlan.status || "waiting", note: "生成 repo-first 持久化方案" },
   ];
 
-  return (
-    <div className="drawer-backdrop" role="presentation">
-      <form className="side-drawer node-builder-drawer" onSubmit={onCreateDraft}>
+  const workbench = (
+      <form className={`${presentation === "page" ? "node-builder-page" : "side-drawer"} node-builder-drawer`} onSubmit={onCreateDraft}>
         <div className="drawer-head">
           <div>
             <h2>Node 构建分析</h2>
             <span>{instance.instanceId} · {runtime.name} · Node Build Workbench</span>
           </div>
-          <button type="button" className="icon-btn" title="关闭 Node 构建分析" onClick={onClose}><X size={16} /></button>
+          <button type="button" className="icon-btn" title={presentation === "page" ? "返回 Node Catalog" : "关闭 Node 构建分析"} onClick={onClose}>
+            {presentation === "page" ? <ArrowLeft size={16} /> : <X size={16} />}
+          </button>
         </div>
         <div className="drawer-body">
           <div className="node-builder-lifecycle">
@@ -16763,8 +16867,9 @@ function NodeDraftDrawer({
           />
         )}
       </form>
-    </div>
   );
+  if (presentation === "page") return <section className="node-builder-page-shell">{workbench}</section>;
+  return <div className="drawer-backdrop" role="presentation">{workbench}</div>;
 }
 
 function NodeBuilderReportModal({
