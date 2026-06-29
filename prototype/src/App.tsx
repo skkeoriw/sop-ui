@@ -1539,6 +1539,111 @@ function compactProbeRaw(probe: Record<string, unknown>) {
   };
 }
 
+function compactSourceDigestRaw(sourceDigest: Record<string, unknown>) {
+  const files = Array.isArray(sourceDigest.files) ? sourceDigest.files : [];
+  return {
+    attempted: sourceDigest.attempted,
+    installer_url: sourceDigest.installer_url,
+    zip_url: sourceDigest.zip_url,
+    trusted_source: sourceDigest.trusted_source,
+    files: files.map((item) => {
+      const file = safeRecord(item);
+      const content = typeof file.content === "string" ? file.content : "";
+      return {
+        path: file.path,
+        bytes: file.bytes,
+        truncated: file.truncated,
+        content_chars: content ? content.length : file.content_chars,
+        ...(content ? { content_preview: content.slice(0, 360) } : {}),
+      };
+    }),
+    cli_options: Array.isArray(sourceDigest.cli_options) ? sourceDigest.cli_options : [],
+    errors: Array.isArray(sourceDigest.errors) ? sourceDigest.errors : [],
+    metadata_items: Array.isArray(sourceDigest.items) ? sourceDigest.items : undefined,
+  };
+}
+
+function compactNodeDraftRaw(node: Record<string, unknown>) {
+  const skill = safeRecord(node.skill);
+  return {
+    ...node,
+    skill: Object.keys(skill).length
+      ? {
+        ...skill,
+        source_digest: compactSourceDigestRaw(safeRecord(skill.source_digest)),
+      }
+      : skill,
+  };
+}
+
+function compactNodeBuilderTraceRaw(trace: Record<string, unknown>) {
+  const request = safeRecord(trace.llm_request);
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+  const attempts = Array.isArray(trace.attempts) ? trace.attempts : [];
+  return {
+    trace_schema: trace.trace_schema,
+    request: trace.request,
+    config: trace.config,
+    started_at: trace.started_at,
+    finished_at: trace.finished_at,
+    error: trace.error,
+    parse_error: trace.parse_error,
+    repair_error: trace.repair_error,
+    llm_request: Object.keys(request).length
+      ? {
+        model: request.model,
+        temperature: request.temperature,
+        max_tokens: request.max_tokens,
+        response_format: request.response_format,
+        messages: messages.map((item) => {
+          const message = safeRecord(item);
+          const content = typeof message.content === "string" ? message.content : String(message.content_preview || "");
+          return {
+            role: message.role,
+            content_chars: message.content_chars || content.length,
+            content_preview: content.slice(0, 900),
+          };
+        }),
+      }
+      : undefined,
+    attempts: attempts.map((item) => {
+      const attempt = safeRecord(item);
+      const raw = typeof attempt.raw_response === "string" ? attempt.raw_response : String(attempt.raw_response_preview || "");
+      return {
+        status: attempt.status,
+        duration_ms: attempt.duration_ms,
+        raw_response_preview: raw.slice(0, 1000),
+      };
+    }),
+    llm_content_preview: String(trace.llm_content_preview || trace.llm_content || "").slice(0, 1000) || undefined,
+    repair_content_preview: String(trace.repair_content_preview || trace.repair_content || "").slice(0, 1000) || undefined,
+  };
+}
+
+function compactNodeBuilderEvaluationRaw(evaluation: Record<string, unknown>) {
+  return {
+    ...evaluation,
+    node_draft: compactNodeDraftRaw(safeRecord(evaluation.node_draft)),
+    source_digest: compactSourceDigestRaw(safeRecord(evaluation.source_digest)),
+    trace: compactNodeBuilderTraceRaw(safeRecord(evaluation.trace)),
+  };
+}
+
+function compactNodeBuilderActionRaw(action: Record<string, unknown>) {
+  const result = safeRecord(action.result);
+  const compactResult = { ...result };
+  delete compactResult.workflow_revision;
+  delete compactResult.workflowRevision;
+  return {
+    ...action,
+    result: Object.keys(compactResult).length ? compactResult : undefined,
+    node: compactNodeDraftRaw(safeRecord(action.node)),
+    evaluation: compactNodeBuilderEvaluationRaw(safeRecord(action.evaluation)),
+    node_builder_evaluation: compactNodeBuilderEvaluationRaw(safeRecord(action.node_builder_evaluation)),
+    trace: compactNodeBuilderTraceRaw(safeRecord(action.trace)),
+  };
+}
+
 function nodeEntryInputEntries(node: NodeRegistryItem | undefined): Array<[string, unknown]> {
   const entry = node?.entryInputs && Object.keys(node.entryInputs).length ? node.entryInputs : node?.inputs || {};
   return Object.entries(entry);
@@ -16207,7 +16312,11 @@ function NodeDraftDrawer({
               )}
               <details className="node-builder-raw">
                 <summary>查看 Agent Trace / Raw Draft</summary>
-                <code>{formatValue({ request: nodeBuilderResult.request, evaluation, trace: nodeBuilderResult.trace })}</code>
+                <code>{formatValue({
+                  request: nodeBuilderResult.request,
+                  evaluation: compactNodeBuilderEvaluationRaw(evaluation),
+                  trace: compactNodeBuilderTraceRaw(safeRecord(nodeBuilderResult.trace)),
+                })}</code>
               </details>
             </section>
           )}
@@ -16388,7 +16497,7 @@ function NodeDraftDrawer({
             {nodeDraftActionResult && (
               <details className="node-builder-raw">
                 <summary>最近动作结果：{nodeDraftActionResult.status}</summary>
-                <code>{formatValue(nodeDraftActionResult)}</code>
+                <code>{formatValue(compactNodeBuilderActionRaw(nodeDraftActionResult as Record<string, unknown>))}</code>
               </details>
             )}
           </section>
@@ -16566,7 +16675,7 @@ function NodeBuilderReportModal({
                 ))}
                 {!files.length && <Empty text="没有读取到 skill 源文件；请检查 installer/zip 是否可访问。" />}
               </div>
-              <details className="node-builder-raw"><summary>installer / source digest</summary><code>{formatValue(sourceDigest)}</code></details>
+              <details className="node-builder-raw"><summary>installer / source digest 摘要</summary><code>{formatValue(compactSourceDigestRaw(sourceDigest))}</code></details>
             </ReportSection>
             <ReportSection title="CLI 参数与输入建议">
               <div className="report-table">
@@ -16582,7 +16691,7 @@ function NodeBuilderReportModal({
             </ReportSection>
             <ReportSection title="输出建议与 Node Draft">
               <KeyValues data={outputs} />
-              <details className="node-builder-raw"><summary>完整 Node Draft</summary><code>{formatValue(node)}</code></details>
+              <details className="node-builder-raw"><summary>Node Draft 摘要</summary><code>{formatValue(compactNodeDraftRaw(node))}</code></details>
             </ReportSection>
             <ReportSection title="风险 / 缺失 / 覆盖率">
               <div className="report-pill-list">
@@ -16596,7 +16705,7 @@ function NodeBuilderReportModal({
             </ReportSection>
             <ReportSection title="Agent Request / Trace">
               <KeyValues data={{ request, trace_schema: trace.trace_schema || "-", model: (trace.config as Record<string, unknown> | undefined)?.model || "-" }} />
-              <details className="node-builder-raw" open><summary>完整 Trace</summary><code>{formatValue(trace)}</code></details>
+              <details className="node-builder-raw"><summary>Trace 摘要</summary><code>{formatValue(compactNodeBuilderTraceRaw(trace))}</code></details>
             </ReportSection>
           </div>
         )}
@@ -16609,7 +16718,7 @@ function NodeBuilderReportModal({
                 status={String(staticAnalysis.status || actionResult.status || "waiting") as StageStatus}
                 items={((staticAnalysis.steps || actionResult.steps || []) as Array<Record<string, unknown>>).map((step) => `${String(step.title || step.id || step.step_id || "Step")} · ${String(step.status || "waiting")}${step.summary ? ` · ${String(step.summary)}` : ""}`)}
               />
-              <details className="node-builder-raw" open><summary>Raw Static Analysis</summary><code>{formatValue(staticAnalysis.status ? staticAnalysis : actionResult)}</code></details>
+              <details className="node-builder-raw"><summary>Raw Static Analysis（摘要）</summary><code>{formatValue(compactNodeBuilderActionRaw((staticAnalysis.status ? staticAnalysis : actionResult) as Record<string, unknown>))}</code></details>
             </ReportSection>
           </div>
         )}
