@@ -3765,6 +3765,34 @@ pre {
   font-size: 11px;
 }
 
+.node-builder-probe-summary {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.node-builder-probe-summary strong,
+.node-builder-probe-summary small,
+.node-builder-probe-summary span,
+.node-builder-probe-summary a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.node-builder-probe-summary small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.node-builder-probe-summary a {
+  font-size: 12px;
+  color: var(--accent);
+}
+
 .node-builder-warning {
   display: flex;
   align-items: flex-start;

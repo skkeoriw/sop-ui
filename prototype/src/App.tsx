@@ -16064,6 +16064,13 @@ function NodeDraftDrawer({
   const publishedNodeId = String(runtimePublish.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
   const workflowId = instance.workflowBinding?.workflowId || "workflow";
   const runtimeNodeRunHref = `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(publishedNodeId)}/runs?mode=${mode}`;
+  const probeNodeId = String(probeRun.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
+  const probeNodeRunId = String(probeRun.node_run_id || "");
+  const probeNodeRunHref = probeNodeId && probeNodeRunId
+    ? `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(probeNodeId)}/runs/${encodeURIComponent(probeNodeRunId)}?mode=${mode}`
+    : "";
+  const probeImageUrl = probeOutputUrl(probeRun);
+  const probeTime = String(firstNonEmpty(probeRun.reconciled_at, probeRun.finished_at, probeRun.created_at));
   const runtimeNodePublished = String(runtimePublish.status || "").toLowerCase() === "published";
   const runtimeNodeDeleted = String(runtimeDelete.status || runtimePublish.status || "").toLowerCase() === "deleted";
   const staticAnalysisStatus = draftTest.status || latestDraft?.validation?.status || evaluation.status || "waiting";
@@ -16306,8 +16313,20 @@ function NodeDraftDrawer({
                   <button type="button" disabled={!Object.keys(probeRun).length} onClick={() => setReportOpen("probe")}>
                     <Info size={15} />查看 Probe 报告
                   </button>
+                  {probeNodeRunHref ? <a className="button-link" href={probeNodeRunHref}>Open Node Run</a> : null}
+                  {probeImageUrl ? <a className="button-link" href={probeImageUrl} target="_blank" rel="noreferrer">Open Output</a> : null}
                 </div>
-                <code>{formatValue(probeRun.status ? probeRun : { status: "waiting" })}</code>
+                {probeRun.status ? (
+                  <div className="node-builder-probe-summary">
+                    <span className={`status-pill ${statusTone(probeRun.status)}`}>{String(probeRun.status)}</span>
+                    <strong>{String(probeRun.probe_id || "Probe Run")}</strong>
+                    <small>{probeNodeRunId || "no node_run_id"} · {formatBeijingTime(probeTime, "无时间")}</small>
+                    <small>validation {String(((probeRun.validation || {}) as Record<string, unknown>).status || "-")}</small>
+                    {probeImageUrl ? <a href={probeImageUrl} target="_blank" rel="noreferrer">{probeImageUrl}</a> : <span className="muted">暂未产出可打开的输出 URL</span>}
+                  </div>
+                ) : (
+                  <div className="empty-inline">尚未运行 Probe；点击 Run Probe 后页面会自动刷新 running 状态。</div>
+                )}
               </article>
               <article>
                 <strong>Contract Synthesis</strong>
