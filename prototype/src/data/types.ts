@@ -496,6 +496,8 @@ export interface NodeRegistryItem extends NodeConfig {
   actions?: Record<string, unknown>;
   cli?: Record<string, string>;
   modules?: NodeModule[];
+  source?: string;
+  runtimeCatalogPath?: string;
   editable?: boolean;
   publishEnabled?: boolean;
   missingFields?: string[];
@@ -993,6 +995,7 @@ export interface SopDataProvider {
   getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
   evaluateNodeBuilder?(runtime: Runtime, instanceId: string, input: NodeBuilderInput): Promise<NodeBuilderResult>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
+  deleteNodeDraft?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
   testNodeDraft?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
   runNodeDraftProbe?(runtime: Runtime, instanceId: string, draftId: string, input?: Record<string, unknown>): Promise<NodeDraftLifecycleResult>;
   synthesizeNodeDraftContract?(runtime: Runtime, instanceId: string, draftId: string, input?: Record<string, unknown>): Promise<NodeDraftLifecycleResult>;

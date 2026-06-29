@@ -3842,6 +3842,156 @@ pre {
   justify-content: flex-start;
 }
 
+.danger-text {
+  color: #b42318 !important;
+}
+
+.danger-text:disabled {
+  color: var(--muted-2) !important;
+}
+
+.node-action-report {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+}
+
+.node-action-report.blocked {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.node-action-report details,
+.node-action-report code {
+  min-width: 0;
+}
+
+.node-action-report code {
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.draft-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.report-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.36);
+}
+
+.report-modal {
+  width: min(980px, 100%);
+  max-height: min(860px, calc(100vh - 48px));
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.24);
+}
+
+.report-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.report-modal-head h3 {
+  margin: 8px 0 4px;
+  color: var(--text);
+  font-size: 20px;
+}
+
+.report-modal-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-modal-body {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding: 16px 20px 22px;
+}
+
+.report-section {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.report-section h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.report-table {
+  display: grid;
+  gap: 7px;
+}
+
+.report-table > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+}
+
+.report-table strong,
+.report-table span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.report-table strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.report-table span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.report-pill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
 .button-link {
   display: inline-flex;
   align-items: center;

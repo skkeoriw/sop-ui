@@ -5163,6 +5163,8 @@ export default function App() {
   const [selectedNodeModuleId, setSelectedNodeModuleId] = useState("basic");
   const [draftOpen, setDraftOpen] = useState(false);
   const [activeNodeDraftId, setActiveNodeDraftId] = useState("");
+  const [nodeBuilderReport, setNodeBuilderReport] = useState<"analysis" | "static" | "probe" | "contract" | "runtime" | "persistence" | null>(null);
+  const [nodeCatalogActionResult, setNodeCatalogActionResult] = useState<NodeDraftLifecycleResult | null>(null);
   const [draftLocalError, setDraftLocalError] = useState("");
   const [confirmRealDraft, setConfirmRealDraft] = useState(false);
   const [draftInput, setDraftInput] = useState<NodeDraftInput>({
@@ -6063,6 +6065,7 @@ export default function App() {
       setNodeBuilderResult(result);
       setNodeDraftActionResult(null);
       setActiveNodeDraftId("");
+      setNodeBuilderReport("analysis");
       const generatedNode = (result.evaluation?.node_draft || {}) as Record<string, unknown>;
       const generatedSkill = (generatedNode.skill || {}) as Record<string, unknown>;
       setDraftInput((current) => ({
@@ -6108,6 +6111,22 @@ export default function App() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
   });
+  const deleteNodeDraftMutation = useMutation({
+    mutationFn: (draftId: string) => {
+      if (!provider.deleteNodeDraft) throw new Error("当前 Runtime SPI 不支持删除 Node Draft");
+      return provider.deleteNodeDraft(runtime, instance.instanceId, draftId);
+    },
+    onSuccess: async (result) => {
+      setNodeDraftActionResult(result);
+      setNodeCatalogActionResult(result);
+      if (result.draft_id && result.draft_id === activeNodeDraftId) {
+        setActiveNodeDraftId("");
+        setNodeBuilderReport(null);
+      }
+      setToast(`Node Draft 删除：${result.status}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+    }
+  });
   const testNodeDraftMutation = useMutation({
     mutationFn: (draftId: string) => {
       if (!provider.testNodeDraft) throw new Error("当前 Runtime SPI 不支持 Node Draft 测试");
@@ -6115,6 +6134,7 @@ export default function App() {
     },
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
+      setNodeBuilderReport("static");
       setToast(`Static Analysis：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
@@ -6128,6 +6148,7 @@ export default function App() {
     },
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
+      setNodeBuilderReport("probe");
       setToast(`Probe Run：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
@@ -6141,6 +6162,7 @@ export default function App() {
     },
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
+      setNodeBuilderReport("contract");
       setToast(`Contract Synthesis：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
@@ -6152,6 +6174,7 @@ export default function App() {
     },
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
+      setNodeBuilderReport("runtime");
       setToast(`Runtime Node 发布：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodes(mode, runtime, instance.instanceId) });
@@ -6166,6 +6189,8 @@ export default function App() {
     },
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
+      setNodeCatalogActionResult(result);
+      setNodeBuilderReport("runtime");
       setToast(`Runtime Node 删除：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodes(mode, runtime, instance.instanceId) });
@@ -6178,6 +6203,7 @@ export default function App() {
     },
     onSuccess: async (result) => {
       setNodeDraftActionResult(result);
+      setNodeBuilderReport("persistence");
       setToast(`正式持久化方案：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
@@ -6204,6 +6230,53 @@ export default function App() {
     });
     setNodeBuilderInstruction("分析这个 Skill 如何成为不绑定上下游的 Runtime Node；首节点或单节点 Probe Run 允许用户直接输入 prompt。");
     setDraftOpen(true);
+  }
+
+  function openExistingNodeDraft(draftId: string) {
+    setActiveNodeDraftId(draftId);
+    setDraftLocalError("");
+    setConfirmRealDraft(false);
+    setNodeBuilderResult(null);
+    setNodeDraftActionResult(null);
+    setNodeDraftProbeInputs({});
+    setNodeBuilderReport(null);
+    setDraftOpen(true);
+  }
+
+  function confirmDeleteNodeDraft(draft: NodeDraft) {
+    const nodeId = String(draft.node?.id || draft.node?.node_id || "");
+    const runtimeStatus = String((draft.runtimePublish || {}).status || "");
+    const message = [
+      `确认删除 Node Draft？`,
+      `Draft: ${draft.draftId}`,
+      nodeId ? `Node: ${nodeId}` : "",
+      runtimeStatus ? `Runtime Node 状态: ${runtimeStatus}` : "",
+      "这只删除草稿记录，不会删除已发布的 Runtime Node，也不会修改正式 SOP。",
+    ].filter(Boolean).join("\n");
+    if (!window.confirm(message)) return;
+    deleteNodeDraftMutation.mutate(draft.draftId);
+  }
+
+  function confirmDeleteRuntimeNode(node: NodeRegistryItem) {
+    const canDeleteRuntimeNode = node.source === "runtime-catalog" || Boolean(node.runtimeCatalogPath);
+    if (!canDeleteRuntimeNode) {
+      setNodeCatalogActionResult({
+        status: "blocked",
+        node_id: node.nodeId,
+        detail: "该节点来自正式 SOP，不是 Runtime Catalog 节点。删除正式节点需要生成 repo-first SOP Patch，不能在运行时直接删除。",
+      });
+      setToast("正式 SOP 节点受保护，不能从 Runtime Catalog 删除");
+      return;
+    }
+    const message = [
+      `确认删除 Runtime Node？`,
+      `Node: ${node.nodeId}`,
+      `Source: ${node.source || "runtime-catalog"}`,
+      node.runtimeCatalogPath ? `Runtime Catalog: ${node.runtimeCatalogPath}` : "",
+      "这只删除当前 Runtime Catalog 中的节点，不删除 Node Draft，也不修改 agent-brain-plugins 正式 SOP。",
+    ].filter(Boolean).join("\n");
+    if (!window.confirm(message)) return;
+    deleteRuntimeNodeMutation.mutate(node.nodeId);
   }
 
   useEffect(() => {
@@ -6917,6 +6990,12 @@ export default function App() {
             onOpenNodeRun={openNodeRun}
             onRelayNodeRun={openNodeRelayFromNodeRun}
             onOpenSettings={() => navigateTo("settings")}
+            nodeActionResult={nodeCatalogActionResult}
+            deletingRuntimeNode={deleteRuntimeNodeMutation.isPending}
+            deletingDraft={deleteNodeDraftMutation.isPending}
+            onDeleteRuntimeNode={confirmDeleteRuntimeNode}
+            onOpenDraftHistory={openExistingNodeDraft}
+            onDeleteDraft={confirmDeleteNodeDraft}
             onSelectModule={(moduleId) => {
               setSelectedNodeModuleId(moduleId);
               if (selectedManagedNode) navigateTo("nodes", selectedManagedNode.nodeId, moduleId);
@@ -7117,9 +7196,12 @@ export default function App() {
           nodeBuilderError={evaluateNodeBuilderMutation.error ? String((evaluateNodeBuilderMutation.error as Error).message || evaluateNodeBuilderMutation.error) : ""}
           onEvaluateNodeBuilder={() => { setDraftLocalError(""); evaluateNodeBuilderMutation.mutate(); }}
           latestDraft={activeNodeDraft}
+          reportOpen={nodeBuilderReport}
+          setReportOpen={setNodeBuilderReport}
           nodeDraftActionResult={nodeDraftActionResult}
           nodeDraftActionError={
-            testNodeDraftMutation.error ? String((testNodeDraftMutation.error as Error).message || testNodeDraftMutation.error)
+            deleteNodeDraftMutation.error ? String((deleteNodeDraftMutation.error as Error).message || deleteNodeDraftMutation.error)
+              : testNodeDraftMutation.error ? String((testNodeDraftMutation.error as Error).message || testNodeDraftMutation.error)
               : runNodeDraftProbeMutation.error ? String((runNodeDraftProbeMutation.error as Error).message || runNodeDraftProbeMutation.error)
                 : synthesizeNodeDraftContractMutation.error ? String((synthesizeNodeDraftContractMutation.error as Error).message || synthesizeNodeDraftContractMutation.error)
                   : publishNodeDraftMutation.error ? String((publishNodeDraftMutation.error as Error).message || publishNodeDraftMutation.error)
@@ -7128,16 +7210,21 @@ export default function App() {
                         : ""
           }
           testingDraft={testNodeDraftMutation.isPending}
+          deletingDraft={deleteNodeDraftMutation.isPending}
           probingDraft={runNodeDraftProbeMutation.isPending}
           synthesizingContract={synthesizeNodeDraftContractMutation.isPending}
           publishingDraft={publishNodeDraftMutation.isPending}
           deletingRuntimeNode={deleteRuntimeNodeMutation.isPending}
           generatingPersistence={generateNodeDraftPersistenceMutation.isPending}
           onTestDraft={(draftId) => testNodeDraftMutation.mutate(draftId)}
+          onDeleteDraft={(draft) => confirmDeleteNodeDraft(draft)}
           onRunProbe={(draftId) => runNodeDraftProbeMutation.mutate(draftId)}
           onSynthesizeContract={(draftId) => synthesizeNodeDraftContractMutation.mutate(draftId)}
           onPublishDraft={(draftId) => publishNodeDraftMutation.mutate(draftId)}
-          onDeleteRuntimeNode={(nodeId) => deleteRuntimeNodeMutation.mutate(nodeId)}
+          onDeleteRuntimeNode={(nodeId) => {
+            if (!window.confirm(`确认删除 Runtime Node ${nodeId}？\n这只删除当前 Runtime Catalog，不删除草稿，也不修改正式 SOP。`)) return;
+            deleteRuntimeNodeMutation.mutate(nodeId);
+          }}
           onGeneratePersistencePlan={(draftId) => generateNodeDraftPersistenceMutation.mutate(draftId)}
           confirmRealDraft={confirmRealDraft}
           setConfirmRealDraft={setConfirmRealDraft}
@@ -15038,6 +15125,12 @@ function NodesWorkspace({
   onOpenNodeRun,
   onRelayNodeRun,
   onOpenSettings,
+  nodeActionResult,
+  deletingRuntimeNode,
+  deletingDraft,
+  onDeleteRuntimeNode,
+  onOpenDraftHistory,
+  onDeleteDraft,
   onSelectModule,
   onOpenDraft,
 }: {
@@ -15070,6 +15163,12 @@ function NodesWorkspace({
   onOpenNodeRun: (nodeId: string, nodeRunId: string) => void;
   onRelayNodeRun: (nodeId: string, sourceNodeRunId: string, options?: NodeRelayOptions) => void;
   onOpenSettings: () => void;
+  nodeActionResult: NodeDraftLifecycleResult | null;
+  deletingRuntimeNode: boolean;
+  deletingDraft: boolean;
+  onDeleteRuntimeNode: (node: NodeRegistryItem) => void;
+  onOpenDraftHistory: (draftId: string) => void;
+  onDeleteDraft: (draft: NodeDraft) => void;
   onSelectModule: (moduleId: string) => void;
   onOpenDraft: () => void;
 }) {
@@ -15285,7 +15384,19 @@ function NodesWorkspace({
       )}
       <div className="draft-strip">
         <div className="section-title"><span>Drafts</span><span>{drafts.length}</span></div>
-        {drafts.slice(0, 3).map((draft) => <article key={draft.draftId} className="draft-item"><strong>{draft.draftId}</strong><code>{formatValue(draft.validation)}</code></article>)}
+        {drafts.slice(0, 5).map((draft) => (
+          <article key={draft.draftId} className="draft-item">
+            <strong>{draft.draftId}</strong>
+            <span>{String(draft.node?.title || draft.node?.id || draft.draftType || "node draft")}</span>
+            <code>{formatValue(draft.validation)}</code>
+            <div className="draft-item-actions">
+              <button type="button" className="btn" onClick={() => onOpenDraftHistory(draft.draftId)}>Open Draft</button>
+              <button type="button" className="btn danger-text" disabled={deletingDraft} onClick={() => onDeleteDraft(draft)}>
+                <Trash2 size={13} />Delete Draft
+              </button>
+            </div>
+          </article>
+        ))}
         {!drafts.length && <Empty text="还没有节点草稿" />}
       </div>
     </section>
@@ -15317,6 +15428,13 @@ function NodesWorkspace({
               <div><strong>Node List</strong><span>Open a node to inspect, run, and repair it in its own workspace.</span></div>
               <span className="status-pill done">{visibleNodes.length} visible</span>
             </div>
+            {nodeActionResult && (
+              <div className={`node-action-report ${String(nodeActionResult.status || "").toLowerCase() === "blocked" ? "blocked" : ""}`}>
+                <strong>最近 Node 操作：{nodeActionResult.status}</strong>
+                <span>{nodeActionResult.detail || nodeActionResult.message || nodeActionResult.node_id || nodeActionResult.draft_id || ""}</span>
+                <details><summary>查看操作详情</summary><code>{formatValue(nodeActionResult)}</code></details>
+              </div>
+            )}
             <div className="node-route-table">
               {visibleNodes.map((node) => (
                 <article key={node.nodeId} className={`node-route-row ${selectedNodeId === node.nodeId ? "active" : ""}`}>
@@ -15336,6 +15454,14 @@ function NodesWorkspace({
                     <button type="button" className="btn primary" onClick={() => onSelectNode(node.nodeId)}>Open</button>
                     <button type="button" className="btn" onClick={() => onOpenNodeRuns(node.nodeId)}>Run</button>
                     <button type="button" className="btn" onClick={() => onOpenNodeRuns(node.nodeId)}>History</button>
+                    {node.source === "runtime-catalog" || node.runtimeCatalogPath ? (
+                      <button type="button" className="btn danger-text" disabled={deletingRuntimeNode} onClick={() => onDeleteRuntimeNode(node)}>
+                        {deletingRuntimeNode ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+                        Delete
+                      </button>
+                    ) : (
+                      <button type="button" className="btn" disabled title="正式 SOP 节点受保护，需 repo-first patch 删除">Protected</button>
+                    )}
                   </div>
                 </article>
               ))}
@@ -15703,9 +15829,12 @@ function NodeDraftDrawer({
   nodeBuilderError,
   onEvaluateNodeBuilder,
   latestDraft,
+  reportOpen,
+  setReportOpen,
   nodeDraftActionResult,
   nodeDraftActionError,
   testingDraft,
+  deletingDraft,
   probingDraft,
   synthesizingContract,
   publishingDraft,
@@ -15717,6 +15846,7 @@ function NodeDraftDrawer({
   onPublishDraft,
   onDeleteRuntimeNode,
   onGeneratePersistencePlan,
+  onDeleteDraft,
   confirmRealDraft,
   setConfirmRealDraft,
   creatingDraft,
@@ -15739,9 +15869,12 @@ function NodeDraftDrawer({
   nodeBuilderError: string;
   onEvaluateNodeBuilder: () => void;
   latestDraft?: NodeDraft;
+  reportOpen: "analysis" | "static" | "probe" | "contract" | "runtime" | "persistence" | null;
+  setReportOpen: (value: "analysis" | "static" | "probe" | "contract" | "runtime" | "persistence" | null) => void;
   nodeDraftActionResult: NodeDraftLifecycleResult | null;
   nodeDraftActionError: string;
   testingDraft: boolean;
+  deletingDraft: boolean;
   probingDraft: boolean;
   synthesizingContract: boolean;
   publishingDraft: boolean;
@@ -15753,6 +15886,7 @@ function NodeDraftDrawer({
   onPublishDraft: (draftId: string) => void;
   onDeleteRuntimeNode: (nodeId: string) => void;
   onGeneratePersistencePlan: (draftId: string) => void;
+  onDeleteDraft: (draft: NodeDraft) => void;
   confirmRealDraft: boolean;
   setConfirmRealDraft: (value: boolean) => void;
   creatingDraft: boolean;
@@ -15762,6 +15896,11 @@ function NodeDraftDrawer({
 }) {
   const evaluation = (nodeBuilderResult?.evaluation || {}) as Record<string, unknown>;
   const generatedNode = (evaluation.node_draft || {}) as Record<string, unknown>;
+  const savedEvaluation = (latestDraft?.nodeBuilderEvaluation || {}) as Record<string, unknown>;
+  const analysisEvaluation = Object.keys(evaluation).length ? evaluation : savedEvaluation;
+  const analysisNode = ((analysisEvaluation.node_draft as Record<string, unknown>) || latestDraft?.node || generatedNode || {}) as Record<string, unknown>;
+  const analysisTrace = (nodeBuilderResult?.trace || latestDraft?.trace || {}) as Record<string, unknown>;
+  const analysisRequest = (nodeBuilderResult?.request || latestDraft?.request || {}) as Record<string, unknown>;
   const skill = (generatedNode.skill || {}) as Record<string, unknown>;
   const executor = (generatedNode.executor || {}) as Record<string, unknown>;
   const generatedEntryInputs = nodeDraftEntryInputsFromNode(generatedNode);
@@ -15792,6 +15931,7 @@ function NodeDraftDrawer({
   const actionStatus = String(actionResult.status || "").toLowerCase();
   const draftTest = (latestDraft?.draftTest || (actionMode === "draft-test" ? actionResult : {})) as Record<string, unknown>;
   const probeRun = (latestDraft?.probeRun || (["probe-run", "probe_run", "node-draft-probe-run"].includes(actionMode) ? actionResult : {})) as Record<string, unknown>;
+  const probeRuns = latestDraft?.probeRuns || [];
   const contractSynthesis = (latestDraft?.contractSynthesis || (["contract-synthesis", "contract_synthesis"].includes(actionMode) ? actionResult : {})) as Record<string, unknown>;
   const runtimePublish = (latestDraft?.runtimePublish || (actionStatus === "published" ? actionResult : {})) as Record<string, unknown>;
   const runtimeDelete = (latestDraft?.runtimeDelete || (actionStatus === "deleted" ? actionResult : {})) as Record<string, unknown>;
@@ -15862,6 +16002,11 @@ function NodeDraftDrawer({
                 {nodeBuilderRunning ? <Loader2 size={15} className="spin" /> : <Bot size={15} />}
                 {nodeBuilderRunning ? "分析中" : "运行静态分析"}
               </button>
+              {(nodeBuilderResult || Object.keys(savedEvaluation).length > 0) && (
+                <button type="button" className="secondary" onClick={() => setReportOpen("analysis")}>
+                  <ListChecks size={15} />查看分析报告
+                </button>
+              )}
             </div>
             <label>Skill install command<input value={draftInput.skill_install_command || ""} onChange={(event) => setDraftInput({ ...draftInput, skill_install_command: event.target.value })} /></label>
             <label>用途说明<textarea value={nodeBuilderInstruction} onChange={(event) => setNodeBuilderInstruction(event.target.value)} /></label>
@@ -16000,6 +16145,9 @@ function NodeDraftDrawer({
                     {testingDraft ? <Loader2 size={15} className="spin" /> : <ListChecks size={15} />}
                     执行 Static Analysis
                   </button>
+                  <button type="button" disabled={!draftId && !Object.keys(draftTest).length} onClick={() => setReportOpen("static")}>
+                    <Info size={15} />查看报告
+                  </button>
                 </div>
                 <code>{formatValue({ status: staticAnalysisStatus, validation: latestDraft?.validation, result: draftTest })}</code>
               </article>
@@ -16025,6 +16173,9 @@ function NodeDraftDrawer({
                     {probingDraft ? <Loader2 size={15} className="spin" /> : <Activity size={15} />}
                     Run Probe
                   </button>
+                  <button type="button" disabled={!Object.keys(probeRun).length} onClick={() => setReportOpen("probe")}>
+                    <Info size={15} />查看 Probe 报告
+                  </button>
                 </div>
                 <code>{formatValue(probeRun.status ? probeRun : { status: "waiting" })}</code>
               </article>
@@ -16035,6 +16186,9 @@ function NodeDraftDrawer({
                   <button type="button" disabled={!draftId || synthesizingContract} onClick={() => onSynthesizeContract(draftId)}>
                     {synthesizingContract ? <Loader2 size={15} className="spin" /> : <Network size={15} />}
                     Synthesize Contract
+                  </button>
+                  <button type="button" disabled={!Object.keys(contractSynthesis).length} onClick={() => setReportOpen("contract")}>
+                    <Info size={15} />查看契约报告
                   </button>
                 </div>
                 <code>{formatValue(contractSynthesis.status ? contractSynthesis : { status: "waiting" })}</code>
@@ -16056,6 +16210,9 @@ function NodeDraftDrawer({
                       <Play size={15} />测试 Runtime Node
                     </a>
                   )}
+                  <button type="button" disabled={!Object.keys(runtimePublish).length && !Object.keys(runtimeDelete).length} onClick={() => setReportOpen("runtime")}>
+                    <Info size={15} />查看发布报告
+                  </button>
                 </div>
                 <code>{formatValue({
                   publish: runtimePublish.status ? runtimePublish : { status: "waiting" },
@@ -16068,6 +16225,15 @@ function NodeDraftDrawer({
                 {generatingPersistence ? <Loader2 size={15} className="spin" /> : <Github size={15} />}
                 生成正式持久化方案
               </button>
+              <button type="button" disabled={!Object.keys(persistencePlan).length} onClick={() => setReportOpen("persistence")}>
+                <Info size={15} />查看持久化报告
+              </button>
+              {latestDraft && (
+                <button type="button" className="danger-text" disabled={deletingDraft} onClick={() => onDeleteDraft(latestDraft)}>
+                  {deletingDraft ? <Loader2 size={15} className="spin" /> : <Trash2 size={15} />}
+                  删除草稿
+                </button>
+              )}
             </div>
             {nodeDraftActionError && <div className="inline-error">{nodeDraftActionError}</div>}
             {nodeDraftActionResult && (
@@ -16089,8 +16255,255 @@ function NodeDraftDrawer({
             {creatingDraft ? "Saving" : "保存分析草稿"}
           </button>
         </div>
+        {reportOpen && (
+          <NodeBuilderReportModal
+            report={reportOpen}
+            onClose={() => setReportOpen(null)}
+            evaluation={analysisEvaluation}
+            node={analysisNode}
+            request={analysisRequest}
+            trace={analysisTrace}
+            draft={latestDraft}
+            staticAnalysis={draftTest}
+            probeRun={probeRun}
+            probeRuns={probeRuns}
+            contractSynthesis={contractSynthesis}
+            runtimePublish={runtimePublish}
+            runtimeDelete={runtimeDelete}
+            persistencePlan={persistencePlan}
+            actionResult={actionResult}
+          />
+        )}
       </form>
     </div>
+  );
+}
+
+function NodeBuilderReportModal({
+  report,
+  onClose,
+  evaluation,
+  node,
+  request,
+  trace,
+  draft,
+  staticAnalysis,
+  probeRun,
+  probeRuns,
+  contractSynthesis,
+  runtimePublish,
+  runtimeDelete,
+  persistencePlan,
+  actionResult,
+}: {
+  report: "analysis" | "static" | "probe" | "contract" | "runtime" | "persistence";
+  onClose: () => void;
+  evaluation: Record<string, unknown>;
+  node: Record<string, unknown>;
+  request: Record<string, unknown>;
+  trace: Record<string, unknown>;
+  draft?: NodeDraft;
+  staticAnalysis: Record<string, unknown>;
+  probeRun: Record<string, unknown>;
+  probeRuns: Array<Record<string, unknown>>;
+  contractSynthesis: Record<string, unknown>;
+  runtimePublish: Record<string, unknown>;
+  runtimeDelete: Record<string, unknown>;
+  persistencePlan: Record<string, unknown>;
+  actionResult: Record<string, unknown>;
+}) {
+  const sourceDigest = (evaluation.source_digest || {}) as Record<string, unknown>;
+  const coverage = (evaluation.coverage_report || {}) as Record<string, unknown>;
+  const skillIdentity = (evaluation.skill_identity || {}) as Record<string, unknown>;
+  const entry = (node.entry || {}) as Record<string, unknown>;
+  const entryInputs = (entry.inputs || node.entry_inputs || node.inputs || {}) as Record<string, unknown>;
+  const outputs = (node.outputs || {}) as Record<string, unknown>;
+  const files = (sourceDigest.files || []) as Array<Record<string, unknown>>;
+  const cliOptions = (sourceDigest.cli_options || []) as Array<Record<string, unknown>>;
+  const risks = (evaluation.risks || []) as Array<Record<string, unknown>>;
+  const missing = (evaluation.missing_fields || []) as Array<unknown>;
+  const assumptions = (evaluation.assumptions || []) as Array<unknown>;
+  const testPlan = (evaluation.test_plan || []) as Array<unknown>;
+  const probeRecords = ((probeRun.manifest_records || []) as Array<Record<string, unknown>>).length
+    ? (probeRun.manifest_records || []) as Array<Record<string, unknown>>
+    : ((probeRun.manifestRecords || []) as Array<Record<string, unknown>>);
+  const titleMap = {
+    analysis: "Node Builder 静态分析报告",
+    static: "Static Analysis 报告",
+    probe: "Probe Run 执行报告",
+    contract: "Contract Synthesis 报告",
+    runtime: "Runtime Node 发布 / 删除报告",
+    persistence: "正式持久化方案报告",
+  };
+
+  return (
+    <div className="report-modal-backdrop" role="dialog" aria-modal="true">
+      <section className="report-modal">
+        <div className="report-modal-head">
+          <div>
+            <span className="status-pill running">Node Builder Report</span>
+            <h3>{titleMap[report]}</h3>
+            <p>{String(node.id || node.node_id || draft?.draftId || "node draft")}</p>
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} title="关闭报告"><X size={16} /></button>
+        </div>
+
+        {report === "analysis" && (
+          <div className="report-modal-body">
+            <ReportSection title="Skill 身份">
+              <KeyValues data={{
+                skill_id: skillIdentity.skill_id || (node.skill as Record<string, unknown> | undefined)?.id || node.id || "-",
+                title: skillIdentity.title || node.title || "-",
+                installer_url: skillIdentity.installer_url || sourceDigest.installer_url || "-",
+                trusted_source: skillIdentity.trusted_source ?? sourceDigest.trusted_source ?? "-",
+                status: evaluation.status || "-",
+                summary: evaluation.summary || "-",
+              }} />
+            </ReportSection>
+            <ReportSection title="Skill 源码分析">
+              <div className="report-table">
+                {files.slice(0, 12).map((file, index) => (
+                  <div key={`${file.path || index}`}><strong>{String(file.path || "-")}</strong><span>{String(file.bytes || "-")} bytes{file.truncated ? " · truncated" : ""}</span></div>
+                ))}
+                {!files.length && <Empty text="没有读取到 skill 源文件；请检查 installer/zip 是否可访问。" />}
+              </div>
+              <details className="node-builder-raw"><summary>installer / source digest</summary><code>{formatValue(sourceDigest)}</code></details>
+            </ReportSection>
+            <ReportSection title="CLI 参数与输入建议">
+              <div className="report-table">
+                {cliOptions.map((option, index) => (
+                  <div key={`${option.option || index}`}>
+                    <strong>{String(option.option || option.input_name || "-")}</strong>
+                    <span>{String(option.input_name || "-")} · {option.required ? "required" : "optional"} · {String(option.evidence || "")}</span>
+                  </div>
+                ))}
+                {!cliOptions.length && <Empty text="没有从源码中识别出 CLI 参数；Node Builder 会依赖 SKILL.md 和用途说明。" />}
+              </div>
+              <KeyValues data={entryInputs} />
+            </ReportSection>
+            <ReportSection title="输出建议与 Node Draft">
+              <KeyValues data={outputs} />
+              <details className="node-builder-raw"><summary>完整 Node Draft</summary><code>{formatValue(node)}</code></details>
+            </ReportSection>
+            <ReportSection title="风险 / 缺失 / 覆盖率">
+              <div className="report-pill-list">
+                {missing.map((item, index) => <span key={`missing-${index}`} className="status-pill waiting">missing: {String(item)}</span>)}
+                {risks.map((risk, index) => <span key={`risk-${index}`} className="status-pill failed">{String(risk.code || "risk")}: {String(risk.message || "")}</span>)}
+                {!missing.length && !risks.length && <span className="status-pill done">no blocking risks</span>}
+              </div>
+              <KeyValues data={coverage} />
+              {!!assumptions.length && <StepList status="done" items={assumptions.map((item) => String(item))} />}
+              {!!testPlan.length && <StepList status="waiting" items={testPlan.map((item) => String(item))} />}
+            </ReportSection>
+            <ReportSection title="Agent Request / Trace">
+              <KeyValues data={{ request, trace_schema: trace.trace_schema || "-", model: (trace.config as Record<string, unknown> | undefined)?.model || "-" }} />
+              <details className="node-builder-raw" open><summary>完整 Trace</summary><code>{formatValue(trace)}</code></details>
+            </ReportSection>
+          </div>
+        )}
+
+        {report === "static" && (
+          <div className="report-modal-body">
+            <ReportSection title="Static Analysis 结果">
+              <KeyValues data={{ draft_id: draft?.draftId || staticAnalysis.draft_id || "-", status: staticAnalysis.status || actionResult.status || "-", next_step: staticAnalysis.next_step || actionResult.next_step || "-" }} />
+              <StepList
+                status={String(staticAnalysis.status || actionResult.status || "waiting") as StageStatus}
+                items={((staticAnalysis.steps || actionResult.steps || []) as Array<Record<string, unknown>>).map((step) => `${String(step.title || step.id || step.step_id || "Step")} · ${String(step.status || "waiting")}${step.summary ? ` · ${String(step.summary)}` : ""}`)}
+              />
+              <details className="node-builder-raw" open><summary>Raw Static Analysis</summary><code>{formatValue(staticAnalysis.status ? staticAnalysis : actionResult)}</code></details>
+            </ReportSection>
+          </div>
+        )}
+
+        {report === "probe" && (
+          <div className="report-modal-body">
+            <ReportSection title="Probe Run 摘要">
+              <KeyValues data={{
+                status: probeRun.status || "-",
+                probe_id: probeRun.probe_id || "-",
+                node_run_id: probeRun.node_run_id || "-",
+                http_status: probeRun.http_status || "-",
+                output_manifest: probeRun.output_manifest || (probeRun.manifest as Record<string, unknown> | undefined)?.path || "-",
+              }} />
+              <KeyValues data={{ manual_inputs: probeRun.manual_inputs || {}, validation: probeRun.validation || {} }} />
+            </ReportSection>
+            <ReportSection title="真实输出 Manifest">
+              <div className="report-table">
+                {probeRecords.map((record, index) => (
+                  <div key={`${record.path || index}`}>
+                    <strong>{String(record.output || record.name || record.path || "-")}</strong>
+                    <span>{String(record.path || "-")} · {String(record.value_type || record.kind || record.type || "")}</span>
+                  </div>
+                ))}
+                {!probeRecords.length && <Empty text="本次 Probe 没有记录 manifest_records；需要查看 Raw Probe 判断执行是否产出 manifest。" />}
+              </div>
+              <details className="node-builder-raw"><summary>Raw Probe</summary><code>{formatValue(probeRun)}</code></details>
+            </ReportSection>
+            <ReportSection title="Probe 历史">
+              <div className="report-table">
+                {probeRuns.slice(0, 8).map((run, index) => (
+                  <div key={`${run.probe_id || index}`}>
+                    <strong>{String(run.probe_id || run.node_run_id || "-")}</strong>
+                    <span>{String(run.status || "-")} · {String(run.created_at || "")}</span>
+                  </div>
+                ))}
+                {!probeRuns.length && <Empty text="暂无 Probe 历史" />}
+              </div>
+            </ReportSection>
+          </div>
+        )}
+
+        {report === "contract" && (
+          <div className="report-modal-body">
+            <ReportSection title="契约合成结果">
+              <KeyValues data={{ status: contractSynthesis.status || "-", draft_id: contractSynthesis.draft_id || draft?.draftId || "-", node_id: contractSynthesis.node_id || node.id || "-" }} />
+              <details className="node-builder-raw" open><summary>合成契约</summary><code>{formatValue(contractSynthesis)}</code></details>
+            </ReportSection>
+          </div>
+        )}
+
+        {report === "runtime" && (
+          <div className="report-modal-body">
+            <ReportSection title="Runtime 发布边界">
+              <p className="body-copy">发布 Runtime Node 只影响当前 Runtime Catalog，让当前 Runtime 可运行该节点；不会修改 agent-brain-plugins 正式 SOP。</p>
+              <KeyValues data={{
+                publish_status: runtimePublish.status || "-",
+                delete_status: runtimeDelete.status || "-",
+                node_id: runtimePublish.node_id || runtimeDelete.node_id || node.id || "-",
+                runtime_catalog_path: runtimePublish.runtime_catalog_path || runtimeDelete.runtime_catalog_path || "-",
+                visible_in_nodes_api: runtimePublish.visible_in_nodes_api ?? "-",
+                backup_path: runtimeDelete.backup_path || "-",
+              }} />
+              <details className="node-builder-raw"><summary>Raw Runtime Action</summary><code>{formatValue({ publish: runtimePublish, delete: runtimeDelete })}</code></details>
+            </ReportSection>
+          </div>
+        )}
+
+        {report === "persistence" && (
+          <div className="report-modal-body">
+            <ReportSection title="正式持久化边界">
+              <p className="body-copy">正式持久化只生成 repo-first Patch 方案；需要开发机修改 agent-brain-plugins、测试、commit、push 后才算进入正式 SOP。</p>
+              <KeyValues data={{
+                status: persistencePlan.status || "-",
+                draft_id: persistencePlan.draft_id || draft?.draftId || "-",
+                target_repo: persistencePlan.target_repo || "agent-brain-plugins",
+                patch_path: persistencePlan.patch_path || persistencePlan.official_patch_path || "-",
+              }} />
+              <details className="node-builder-raw" open><summary>Raw Persistence Plan</summary><code>{formatValue(persistencePlan)}</code></details>
+            </ReportSection>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ReportSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="report-section">
+      <h4>{title}</h4>
+      {children}
+    </section>
   );
 }
 

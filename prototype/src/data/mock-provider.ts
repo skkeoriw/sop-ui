@@ -1057,6 +1057,19 @@ export const mockProvider: SopDataProvider = {
     return draft;
   },
 
+  async deleteNodeDraft(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
+    await delay();
+    const current = draftByRuntime.get(target.id) || [];
+    const draft = current.find((item) => item.draftId === draftId);
+    draftByRuntime.set(target.id, current.filter((item) => item.draftId !== draftId));
+    return {
+      status: draft ? "deleted" : "not_found",
+      draft_id: draftId,
+      node_id: draft ? String(draft.node.id || "") : "",
+      detail: draft ? "Mock node draft deleted." : "Mock node draft not found.",
+    };
+  },
+
   async testNodeDraft(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
     await delay();
     const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);

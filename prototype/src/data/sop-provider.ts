@@ -169,6 +169,22 @@ async function postJsonResult<T>(url: string, body: unknown): Promise<T> {
   }
 }
 
+async function postJsonReportResult<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  if (!text.trim()) return { status: response.ok ? "done" : "failed" } as T;
+  try {
+    const parsed = JSON.parse(text) as T;
+    return parsed;
+  } catch {
+    throw new Error(postJsonErrorMessage(response.status, text));
+  }
+}
+
 async function deleteJsonResult<T>(url: string, body?: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "DELETE",
@@ -183,6 +199,21 @@ async function deleteJsonResult<T>(url: string, body?: unknown): Promise<T> {
     return JSON.parse(text) as T;
   } catch {
     throw new Error(`接口没有返回 JSON：${url}`);
+  }
+}
+
+async function deleteJsonReportResult<T>(url: string, body?: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "DELETE",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  if (!text.trim()) return { status: response.ok ? "deleted" : "failed" } as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(postJsonErrorMessage(response.status, text));
   }
 }
 
@@ -661,6 +692,8 @@ function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
     actions: (raw.actions as Record<string, unknown>) || {},
     cli: (raw.cli as Record<string, string>) || {},
     modules: ((raw.modules as Array<Record<string, unknown>>) || []).map(mapNodeModule),
+    source: raw.source ? String(raw.source) : undefined,
+    runtimeCatalogPath: raw.runtime_catalog_path ? String(raw.runtime_catalog_path) : raw.runtimeCatalogPath ? String(raw.runtimeCatalogPath) : undefined,
     editable: Boolean(raw.editable),
     publishEnabled: Boolean(raw.publish_enabled ?? raw.publishEnabled),
     missingFields: ((raw.missing_fields || raw.missingFields) as string[]) || [],
@@ -1699,8 +1732,15 @@ export const sopProvider: SopDataProvider = {
     return mapNodeDraft(raw);
   },
 
+  async deleteNodeDraft(runtime, instanceId, draftId) {
+    const raw = await deleteJsonReportResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}`
+    );
+    return mapNodeDraftLifecycleResult(raw);
+  },
+
   async testNodeDraft(runtime, instanceId, draftId) {
-    const raw = await postJsonResult<Record<string, unknown>>(
+    const raw = await postJsonReportResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/test-draft`,
       {}
     );
@@ -1708,7 +1748,7 @@ export const sopProvider: SopDataProvider = {
   },
 
   async runNodeDraftProbe(runtime, instanceId, draftId, input = {}) {
-    const raw = await postJsonResult<Record<string, unknown>>(
+    const raw = await postJsonReportResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/probe-run`,
       input
     );
@@ -1716,7 +1756,7 @@ export const sopProvider: SopDataProvider = {
   },
 
   async synthesizeNodeDraftContract(runtime, instanceId, draftId, input = {}) {
-    const raw = await postJsonResult<Record<string, unknown>>(
+    const raw = await postJsonReportResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/contract-synthesis`,
       input
     );
@@ -1724,7 +1764,7 @@ export const sopProvider: SopDataProvider = {
   },
 
   async publishNodeDraft(runtime, instanceId, draftId) {
-    const raw = await postJsonResult<Record<string, unknown>>(
+    const raw = await postJsonReportResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/publish-runtime`,
       {}
     );
@@ -1732,7 +1772,7 @@ export const sopProvider: SopDataProvider = {
   },
 
   async deleteRuntimeNode(runtime, instanceId, nodeId, input = {}) {
-    const raw = await deleteJsonResult<Record<string, unknown>>(
+    const raw = await deleteJsonReportResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/nodes/${encodeURIComponent(nodeId)}`,
       input
     );
@@ -1740,7 +1780,7 @@ export const sopProvider: SopDataProvider = {
   },
 
   async generateNodeDraftPersistencePlan(runtime, instanceId, draftId) {
-    const raw = await postJsonResult<Record<string, unknown>>(
+    const raw = await postJsonReportResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/persistence-plan`,
       {}
     );
