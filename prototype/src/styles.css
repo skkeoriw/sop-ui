@@ -3885,6 +3885,54 @@ pre {
   align-items: center;
 }
 
+.draft-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.draft-history-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.draft-history-row.active {
+  border-color: var(--accent);
+  background: #eff6ff;
+}
+
+.draft-history-row > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.draft-history-row strong,
+.draft-history-row span,
+.draft-history-row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-history-row strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.draft-history-row span,
+.draft-history-row small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .report-modal-backdrop {
   position: fixed;
   inset: 0;

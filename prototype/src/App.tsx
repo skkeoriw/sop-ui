@@ -7196,6 +7196,7 @@ export default function App() {
           nodeBuilderError={evaluateNodeBuilderMutation.error ? String((evaluateNodeBuilderMutation.error as Error).message || evaluateNodeBuilderMutation.error) : ""}
           onEvaluateNodeBuilder={() => { setDraftLocalError(""); evaluateNodeBuilderMutation.mutate(); }}
           latestDraft={activeNodeDraft}
+          drafts={nodeDraftsQuery.data || []}
           reportOpen={nodeBuilderReport}
           setReportOpen={setNodeBuilderReport}
           nodeDraftActionResult={nodeDraftActionResult}
@@ -7217,6 +7218,7 @@ export default function App() {
           deletingRuntimeNode={deleteRuntimeNodeMutation.isPending}
           generatingPersistence={generateNodeDraftPersistenceMutation.isPending}
           onTestDraft={(draftId) => testNodeDraftMutation.mutate(draftId)}
+          onOpenDraftHistory={openExistingNodeDraft}
           onDeleteDraft={(draft) => confirmDeleteNodeDraft(draft)}
           onRunProbe={(draftId) => runNodeDraftProbeMutation.mutate(draftId)}
           onSynthesizeContract={(draftId) => synthesizeNodeDraftContractMutation.mutate(draftId)}
@@ -15829,6 +15831,7 @@ function NodeDraftDrawer({
   nodeBuilderError,
   onEvaluateNodeBuilder,
   latestDraft,
+  drafts,
   reportOpen,
   setReportOpen,
   nodeDraftActionResult,
@@ -15846,6 +15849,7 @@ function NodeDraftDrawer({
   onPublishDraft,
   onDeleteRuntimeNode,
   onGeneratePersistencePlan,
+  onOpenDraftHistory,
   onDeleteDraft,
   confirmRealDraft,
   setConfirmRealDraft,
@@ -15869,6 +15873,7 @@ function NodeDraftDrawer({
   nodeBuilderError: string;
   onEvaluateNodeBuilder: () => void;
   latestDraft?: NodeDraft;
+  drafts: NodeDraft[];
   reportOpen: "analysis" | "static" | "probe" | "contract" | "runtime" | "persistence" | null;
   setReportOpen: (value: "analysis" | "static" | "probe" | "contract" | "runtime" | "persistence" | null) => void;
   nodeDraftActionResult: NodeDraftLifecycleResult | null;
@@ -15886,6 +15891,7 @@ function NodeDraftDrawer({
   onPublishDraft: (draftId: string) => void;
   onDeleteRuntimeNode: (nodeId: string) => void;
   onGeneratePersistencePlan: (draftId: string) => void;
+  onOpenDraftHistory: (draftId: string) => void;
   onDeleteDraft: (draft: NodeDraft) => void;
   confirmRealDraft: boolean;
   setConfirmRealDraft: (value: boolean) => void;
@@ -16242,6 +16248,34 @@ function NodeDraftDrawer({
                 <code>{formatValue(nodeDraftActionResult)}</code>
               </details>
             )}
+          </section>
+          <section className="node-builder-card">
+            <div className="node-builder-card-head">
+              <div>
+                <strong>Draft History</strong>
+                <span>历史草稿只用于查看、继续分析或删除；不会自动成为当前新增 Node 的 Build Stages。</span>
+              </div>
+              <span className="status-pill waiting">{drafts.length} drafts</span>
+            </div>
+            <div className="draft-history-list">
+              {drafts.slice(0, 8).map((draft) => (
+                <article key={draft.draftId} className={`draft-history-row ${draft.draftId === draftId ? "active" : ""}`}>
+                  <div>
+                    <strong>{draft.draftId}</strong>
+                    <span>{String(draft.node?.title || draft.node?.id || draft.draftType || "node draft")}</span>
+                    <small>{String((draft.validation || {}).status || "unknown")} · runtime {String((draft.runtimePublish || {}).status || "not published")}</small>
+                  </div>
+                  <div className="draft-item-actions">
+                    <button type="button" className="btn" onClick={() => onOpenDraftHistory(draft.draftId)}>Open Draft</button>
+                    <button type="button" className="btn danger-text" disabled={deletingDraft} onClick={() => onDeleteDraft(draft)}>
+                      {deletingDraft ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+                      Delete Draft
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!drafts.length && <Empty text="还没有节点草稿" />}
+            </div>
           </section>
           {mode === "real" && (
             <label className="confirm-row"><input type="checkbox" checked={confirmRealDraft} onChange={(event) => setConfirmRealDraft(event.target.checked)} />我确认要在真实 Runtime 上保存 Node 构建分析草稿</label>
