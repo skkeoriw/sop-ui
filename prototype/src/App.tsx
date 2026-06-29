@@ -964,6 +964,52 @@ function removeSearchParams(names: string[], mode: "push" | "replace" = "replace
   else window.history.pushState(null, "", nextUrl);
 }
 
+function replaceSearchParams(values: Record<string, string>, remove: string[] = [], mode: "push" | "replace" = "push") {
+  if (typeof window === "undefined") return;
+  const url = new URL(window.location.href);
+  remove.forEach((name) => url.searchParams.delete(name));
+  Object.entries(values).forEach(([name, value]) => {
+    if (value) url.searchParams.set(name, value);
+    else url.searchParams.delete(name);
+  });
+  const search = url.searchParams.toString();
+  const nextUrl = `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
+  if (`${window.location.pathname}${window.location.search}${window.location.hash}` === nextUrl) return;
+  if (mode === "replace") window.history.replaceState(null, "", nextUrl);
+  else window.history.pushState(null, "", nextUrl);
+}
+
+function nodeBuilderDraftHref(runtimeId: string, instanceId: string, workflowId: string, draftId: string, mode: DataMode) {
+  const params = new URLSearchParams();
+  params.set("mode", mode);
+  params.set("nodeBuilder", draftId ? "draft" : "new");
+  if (draftId) params.set("nodeDraftId", draftId);
+  return `/runtimes/${encodeURIComponent(runtimeId)}/instances/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes?${params.toString()}`;
+}
+
+function absoluteAppUrl(path: string) {
+  if (!path) return "";
+  if (typeof window === "undefined") return path;
+  try {
+    return new URL(path, window.location.origin).toString();
+  } catch {
+    return path;
+  }
+}
+
+async function copyText(value: string) {
+  if (!value) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return;
+    }
+  } catch {
+    // Fall through to the prompt fallback.
+  }
+  window.prompt("Copy", value);
+}
+
 function searchForNodeRunsPage() {
   if (typeof window === "undefined") return "";
   const params = new URLSearchParams(window.location.search);
@@ -5413,8 +5459,8 @@ export default function App() {
   const [nodeFilter, setNodeFilter] = useState("all");
   const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
   const [selectedNodeModuleId, setSelectedNodeModuleId] = useState("basic");
-  const [draftOpen, setDraftOpen] = useState(false);
-  const [activeNodeDraftId, setActiveNodeDraftId] = useState("");
+  const [draftOpen, setDraftOpen] = useState(() => Boolean(readSearchParam("nodeBuilder") || readSearchParam("nodeDraftId")));
+  const [activeNodeDraftId, setActiveNodeDraftId] = useState(() => readSearchParam("nodeDraftId"));
   const [nodeBuilderReport, setNodeBuilderReport] = useState<"analysis" | "static" | "probe" | "contract" | "runtime" | "persistence" | null>(null);
   const [nodeCatalogActionResult, setNodeCatalogActionResult] = useState<NodeDraftLifecycleResult | null>(null);
   const [draftLocalError, setDraftLocalError] = useState("");
@@ -6373,6 +6419,7 @@ export default function App() {
       setConfirmRealDraft(false);
       setNodeDraftActionResult(null);
       setActiveNodeDraftId(draft.draftId);
+      writeNodeBuilderUrl(draft.draftId, "replace");
       setToast(`Node 构建分析草稿已保存：${draft.draftId}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
@@ -6475,6 +6522,19 @@ export default function App() {
     }
   });
 
+  function writeNodeBuilderUrl(draftId = "", historyMode: "push" | "replace" = "push") {
+    replaceSearchParams(
+      { nodeBuilder: draftId ? "draft" : "new", nodeDraftId: draftId },
+      ["step"],
+      historyMode,
+    );
+  }
+
+  function closeNodeBuilderDraft() {
+    removeSearchParams(["nodeBuilder", "nodeDraftId"], "push");
+    setDraftOpen(false);
+  }
+
   function openNodeBuilderDraft() {
     setActiveNodeDraftId("");
     setDraftLocalError("");
@@ -6495,10 +6555,11 @@ export default function App() {
       output_path: "raw/node-runs/{run_id}/outputs/outputs/result.json"
     });
     setNodeBuilderInstruction("分析这个 Skill 如何成为不绑定上下游的 Runtime Node；首节点或单节点 Probe Run 允许用户直接输入 prompt。");
+    writeNodeBuilderUrl("");
     setDraftOpen(true);
   }
 
-  function openExistingNodeDraft(draftId: string) {
+  function openExistingNodeDraft(draftId: string, historyMode: "push" | "replace" = "push") {
     const draft = (nodeDraftsQuery.data || []).find((item) => item.draftId === draftId);
     const node = safeRecord(draft?.node);
     const skill = safeRecord(node.skill);
@@ -6524,8 +6585,29 @@ export default function App() {
       setNodeBuilderInstruction(instruction);
     }
     setNodeBuilderReport(null);
+    writeNodeBuilderUrl(draftId, historyMode);
     setDraftOpen(true);
   }
+
+  useEffect(() => {
+    const routeDraftId = readSearchParam("nodeDraftId");
+    const routeNodeBuilder = readSearchParam("nodeBuilder");
+    if (!routeDraftId && !routeNodeBuilder) {
+      if (draftOpen) setDraftOpen(false);
+      return;
+    }
+    if (routeDraftId) {
+      const draftExists = (nodeDraftsQuery.data || []).some((item) => item.draftId === routeDraftId);
+      if (!draftExists) return;
+      if (!draftOpen || activeNodeDraftId !== routeDraftId) {
+        openExistingNodeDraft(routeDraftId, "replace");
+      }
+      return;
+    }
+    if (routeNodeBuilder && !draftOpen) {
+      setDraftOpen(true);
+    }
+  }, [activeNodeDraftId, draftOpen, nodeDraftsQuery.data, route]);
 
   function confirmDeleteNodeDraft(draft: NodeDraft) {
     const nodeId = String(draft.node?.id || draft.node?.node_id || "");
@@ -7517,7 +7599,7 @@ export default function App() {
           setConfirmRealDraft={setConfirmRealDraft}
           creatingDraft={createDraftMutation.isPending}
           createError={draftLocalError || (createDraftMutation.error ? String(createDraftMutation.error.message) : "")}
-          onClose={() => setDraftOpen(false)}
+          onClose={closeNodeBuilderDraft}
           onCreateDraft={submitDraft}
         />
       )}
@@ -16243,13 +16325,17 @@ function NodeDraftDrawer({
   const draftId = latestDraft?.draftId || "";
   const publishedNodeId = String(runtimePublish.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
   const workflowId = workflowIdForInstance(instance);
+  const draftHref = nodeBuilderDraftHref(runtime.id, instance.instanceId, workflowId, draftId, mode);
+  const draftShareUrl = absoluteAppUrl(draftHref);
   const runtimeNodeRunHref = `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(publishedNodeId)}/runs?mode=${mode}`;
   const probeNodeId = String(probeRun.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
   const probeNodeRunId = String(probeRun.node_run_id || "");
   const probeNodeRunHref = probeNodeId && probeNodeRunId
     ? `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(probeNodeId)}/runs/${encodeURIComponent(probeNodeRunId)}?mode=${mode}`
     : "";
+  const probeNodeRunShareUrl = absoluteAppUrl(probeNodeRunHref);
   const probeImageUrl = probeOutputUrl(probeRun);
+  const probeId = String(probeRun.probe_id || "");
   const probeBusinessStatus = safeRecord(probeRun.business_output_status);
   const probePresentOutputs = Array.isArray(probeBusinessStatus.present_outputs) ? probeBusinessStatus.present_outputs.map(String) : [];
   const probeExpectedOutputs = Array.isArray(probeBusinessStatus.expected_outputs) ? probeBusinessStatus.expected_outputs.map(String) : [];
@@ -16297,6 +16383,33 @@ function NodeDraftDrawer({
           <div className="drawer-note node-builder-principle">
             <strong>Node 构建边界</strong>
             <span>工作台按静态分析、Probe Run、契约合成、Runtime Node、正式持久化推进。Node 只描述执行能力，上游 / 下游关系仍由 Edge 负责。</span>
+          </div>
+          <div className="node-builder-locator">
+            <div>
+              <span>Runtime / Instance</span>
+              <strong>{runtime.id} · {instance.instanceId}</strong>
+            </div>
+            <div>
+              <span>Draft URL</span>
+              {draftId ? <a href={draftHref}>{draftShareUrl}</a> : <strong>保存草稿后生成唯一 URL</strong>}
+            </div>
+            <div>
+              <span>Draft ID</span>
+              <strong>{draftId || "not saved"}</strong>
+            </div>
+            <div>
+              <span>Probe ID</span>
+              <strong>{probeId || "not run"}</strong>
+            </div>
+            <div>
+              <span>Node Run</span>
+              {probeNodeRunHref ? <a href={probeNodeRunHref}>{probeNodeRunId}</a> : <strong>not created</strong>}
+            </div>
+            <div className="node-builder-locator-actions">
+              <button type="button" disabled={!draftId} onClick={() => { void copyText(draftShareUrl); }}><Copy size={13} />复制 Draft URL</button>
+              <button type="button" disabled={!probeId} onClick={() => { void copyText(probeId); }}><Copy size={13} />复制 Probe ID</button>
+              <button type="button" disabled={!probeNodeRunShareUrl} onClick={() => { void copyText(probeNodeRunShareUrl); }}><Copy size={13} />复制 Node Run URL</button>
+            </div>
           </div>
           {schema && (
             <div className="schema-note">
@@ -16592,6 +16705,7 @@ function NodeDraftDrawer({
               {drafts.slice(0, 8).map((draft) => {
                 const latestProbe = draft.probeRun || (draft.probeRuns || [])[0] || {};
                 const latestProbeTime = String(firstNonEmpty(latestProbe.reconciled_at, latestProbe.finished_at, latestProbe.created_at));
+                const historyDraftHref = nodeBuilderDraftHref(runtime.id, instance.instanceId, workflowId, draft.draftId, mode);
                 return (
                   <article key={draft.draftId} className={`draft-history-row ${draft.draftId === draftId ? "active" : ""}`}>
                     <div>
@@ -16602,7 +16716,7 @@ function NodeDraftDrawer({
                       <small>草稿更新时间：{formatBeijingTime(nodeDraftUpdatedAt(draft), "无时间")}</small>
                     </div>
                     <div className="draft-item-actions">
-                      <button type="button" className="btn" onClick={() => onOpenDraftHistory(draft.draftId)}>Open Draft</button>
+                      <a className="btn" href={historyDraftHref} onClick={(event) => { event.preventDefault(); onOpenDraftHistory(draft.draftId); }}>Open Draft</a>
                       <button type="button" className="btn danger-text" disabled={deletingDraft} onClick={() => onDeleteDraft(draft)}>
                         {deletingDraft ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
                         Delete Draft
