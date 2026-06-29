@@ -5162,6 +5162,7 @@ export default function App() {
   const [selectedManagedNodeId, setSelectedManagedNodeId] = useState("");
   const [selectedNodeModuleId, setSelectedNodeModuleId] = useState("basic");
   const [draftOpen, setDraftOpen] = useState(false);
+  const [activeNodeDraftId, setActiveNodeDraftId] = useState("");
   const [draftLocalError, setDraftLocalError] = useState("");
   const [confirmRealDraft, setConfirmRealDraft] = useState(false);
   const [draftInput, setDraftInput] = useState<NodeDraftInput>({
@@ -5587,7 +5588,7 @@ export default function App() {
     enabled: Boolean(runtime && instance && (viewMode === "nodes" || viewMode === "settings" || draftOpen))
   });
   const managedNodes = nodesQuery.data || [];
-  const latestNodeDraft = (nodeDraftsQuery.data || [])[0];
+  const activeNodeDraft = (nodeDraftsQuery.data || []).find((draft) => draft.draftId === activeNodeDraftId);
   const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
   const nodeModulesQuery = useQuery({
     queryKey: queryKeys.nodeModules(mode, runtime, instance?.instanceId || "", selectedManagedNode?.nodeId || "", selectedRun?.pipelineId || ""),
@@ -6061,6 +6062,7 @@ export default function App() {
     onSuccess: (result) => {
       setNodeBuilderResult(result);
       setNodeDraftActionResult(null);
+      setActiveNodeDraftId("");
       const generatedNode = (result.evaluation?.node_draft || {}) as Record<string, unknown>;
       const generatedSkill = (generatedNode.skill || {}) as Record<string, unknown>;
       setDraftInput((current) => ({
@@ -6101,6 +6103,7 @@ export default function App() {
       setDraftLocalError("");
       setConfirmRealDraft(false);
       setNodeDraftActionResult(null);
+      setActiveNodeDraftId(draft.draftId);
       setToast(`Node 构建分析草稿已保存：${draft.draftId}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
@@ -6179,6 +6182,30 @@ export default function App() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
   });
+
+  function openNodeBuilderDraft() {
+    setActiveNodeDraftId("");
+    setDraftLocalError("");
+    setConfirmRealDraft(false);
+    setNodeBuilderResult(null);
+    setNodeDraftActionResult(null);
+    setNodeDraftProbeInputs({});
+    setDraftInput({
+      skill_install_command: "",
+      skill_id: "",
+      node_id: "",
+      title: "",
+      description: "Runtime Node 只描述执行能力；上游关系由 Workflow Edge 决定。",
+      entry_input_name: "prompt",
+      input_type: "string",
+      input_value_type: "text",
+      output_name: "result",
+      output_path: "raw/node-runs/{run_id}/outputs/outputs/result.json"
+    });
+    setNodeBuilderInstruction("分析这个 Skill 如何成为不绑定上下游的 Runtime Node；首节点或单节点 Probe Run 允许用户直接输入 prompt。");
+    setDraftOpen(true);
+  }
+
   useEffect(() => {
     const routePrefixes = ["/runtimes", "/instances", "/overview", "/runs", "/workflow", "/workflows", "/nodes", "/artifacts", "/machines", "/settings"];
     if (window.location.pathname === "/" || !routePrefixes.some((prefix) => window.location.pathname === prefix || window.location.pathname.startsWith(`${prefix}/`))) {
@@ -6894,7 +6921,7 @@ export default function App() {
               setSelectedNodeModuleId(moduleId);
               if (selectedManagedNode) navigateTo("nodes", selectedManagedNode.nodeId, moduleId);
             }}
-            onOpenDraft={() => setDraftOpen(true)}
+            onOpenDraft={openNodeBuilderDraft}
           />
         ) : viewMode === "machines" ? (
           <MachinesPage
@@ -7089,7 +7116,7 @@ export default function App() {
           nodeBuilderRunning={evaluateNodeBuilderMutation.isPending}
           nodeBuilderError={evaluateNodeBuilderMutation.error ? String((evaluateNodeBuilderMutation.error as Error).message || evaluateNodeBuilderMutation.error) : ""}
           onEvaluateNodeBuilder={() => { setDraftLocalError(""); evaluateNodeBuilderMutation.mutate(); }}
-          latestDraft={latestNodeDraft}
+          latestDraft={activeNodeDraft}
           nodeDraftActionResult={nodeDraftActionResult}
           nodeDraftActionError={
             testNodeDraftMutation.error ? String((testNodeDraftMutation.error as Error).message || testNodeDraftMutation.error)
