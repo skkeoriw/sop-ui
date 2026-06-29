@@ -797,8 +797,9 @@ export interface NodeModuleDetail {
 export interface NodeDraftInput {
   draft_type?: "create_node" | "edit_node_definition" | string;
   skill_install_command?: string;
+  user_instruction?: string;
   skill_id?: string;
-  node_id: string;
+  node_id?: string;
   title?: string;
   description?: string;
   mode?: string;
@@ -820,6 +821,42 @@ export interface NodeDraftInput {
   optional_inputs?: Record<string, unknown>;
   outputs?: Record<string, unknown>;
   capabilities?: Record<string, unknown>;
+  node_draft?: Record<string, unknown>;
+  node_builder_evaluation?: Record<string, unknown>;
+  request?: Record<string, unknown>;
+  trace?: Record<string, unknown>;
+}
+
+export interface NodeBuilderInput {
+  skill_install_command: string;
+  user_instruction?: string;
+  fetch_metadata?: boolean;
+  allow_deterministic?: boolean;
+}
+
+export interface NodeBuilderResult {
+  ok: boolean;
+  mode?: string;
+  request: Record<string, unknown>;
+  config: Record<string, unknown>;
+  evaluation: Record<string, unknown>;
+  trace: Record<string, unknown>;
+  stderr?: string;
+}
+
+export interface NodeDraftLifecycleResult {
+  status: string;
+  draft_id?: string;
+  node_id?: string;
+  detail?: string;
+  message?: string;
+  steps?: Array<Record<string, unknown>>;
+  runtime_catalog_path?: string;
+  visible_in_nodes_api?: boolean;
+  files?: string[];
+  patch?: string;
+  instructions?: string[];
+  [key: string]: unknown;
 }
 
 export interface NodeDraftSchemaField {
@@ -846,8 +883,14 @@ export interface NodeDraft {
   draftType?: string;
   draftPath?: string;
   node: Record<string, unknown>;
+  request?: Record<string, unknown>;
+  nodeBuilderEvaluation?: Record<string, unknown>;
   changeRequest?: Record<string, unknown>;
   validation: Record<string, unknown>;
+  draftTest?: Record<string, unknown>;
+  runtimePublish?: Record<string, unknown>;
+  persistencePlan?: Record<string, unknown>;
+  trace?: Record<string, unknown>;
 }
 
 export interface WorkflowEdgeRequest {
@@ -935,8 +978,13 @@ export interface SopDataProvider {
   listNodeModules(runtime: Runtime, instanceId: string, nodeId: string, pipelineId?: string): Promise<NodeModule[]>;
   getNodeModule(runtime: Runtime, instanceId: string, nodeId: string, moduleId: string, pipelineId?: string): Promise<NodeModuleDetail>;
   listNodeDrafts(runtime: Runtime, instanceId: string): Promise<NodeDraft[]>;
+  getNodeDraft?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraft>;
   getNodeDraftSchema(runtime: Runtime, instanceId: string): Promise<NodeDraftSchema>;
+  evaluateNodeBuilder?(runtime: Runtime, instanceId: string, input: NodeBuilderInput): Promise<NodeBuilderResult>;
   createNodeDraft(runtime: Runtime, instanceId: string, input: NodeDraftInput): Promise<NodeDraft>;
+  testNodeDraft?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
+  publishNodeDraft?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
+  generateNodeDraftPersistencePlan?(runtime: Runtime, instanceId: string, draftId: string): Promise<NodeDraftLifecycleResult>;
   evaluateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   getWorkflowEdgeEvaluation?(runtime: Runtime, instanceId: string, workflowId: string, evaluationId: string): Promise<WorkflowEdgeResult>;
   simulateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;

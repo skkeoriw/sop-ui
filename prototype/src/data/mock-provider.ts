@@ -9,6 +9,8 @@ import type {
   InstanceList,
   NodeConfig,
   NodeContract,
+  NodeBuilderInput,
+  NodeBuilderResult,
   NodePreflightInput,
   NodeTestInput,
   NodeTestPlan,
@@ -16,6 +18,7 @@ import type {
   NodeTestRunResult,
   NodeDraft,
   NodeDraftInput,
+  NodeDraftLifecycleResult,
   NodeDraftSchema,
   NodeLog,
   NodeModule,
@@ -966,19 +969,69 @@ export const mockProvider: SopDataProvider = {
     return draftByRuntime.get(target.id) || [];
   },
 
+  async getNodeDraft(target, _instanceId, draftId): Promise<NodeDraft> {
+    await delay();
+    const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);
+    if (!draft) throw new Error("Node draft not found");
+    return draft;
+  },
+
   async getNodeDraftSchema(): Promise<NodeDraftSchema> {
     await delay();
     return mockNodeDraftSchema;
   },
 
+  async evaluateNodeBuilder(_target, _instanceId, input: NodeBuilderInput): Promise<NodeBuilderResult> {
+    await delay();
+    const nodeId = (input.skill_install_command.match(/install-([A-Za-z0-9_-]+)\.sh/)?.[1] || "external-skill").replace(/_/g, "-");
+    const nodeDraft = {
+      schema: "node-definition/v1",
+      id: nodeId,
+      title: nodeId.replace(/-/g, " "),
+      description: input.user_instruction || "Runtime-generated node draft.",
+      skill: { id: nodeId, source: "skill-installer", install_command: input.skill_install_command },
+      executor: { type: "agent-skill", agent: "hermes", skill: nodeId, request_template: "node-execution-request/v1" },
+      entry: { inputs: { prompt: { required: true, value_type: "text", description: "首节点或单节点测试输入。" } } },
+      handoff: {
+        accepts: { upstream_outputs_dir: { required: false }, instruction: { required: true }, context: { required: false } },
+        produces: { outputs_dir: "raw/node-runs/{run_id}/outputs", manifest: "raw/node-runs/{run_id}/outputs/manifest.json" },
+      },
+      outputs: {
+        root: "raw/node-runs/{run_id}/outputs",
+        manifest: "raw/node-runs/{run_id}/outputs/manifest.json",
+        expected: { result: { description: "Skill execution result.", relayable: true } },
+      },
+      capabilities: { git: { enabled: true, required: false }, telegram: { enabled: false, required: false }, sse: { enabled: true, required: true } },
+    };
+    return {
+      ok: true,
+      mode: "node-builder-agent-evaluation",
+      request: { ...input },
+      config: { provider: "mock" },
+      evaluation: {
+        status: "ready",
+        summary: "Mock Node Builder generated a runtime-publishable node draft.",
+        skill_identity: { skill_id: nodeId, title: nodeDraft.title, trusted_source: input.skill_install_command.includes("skill.vyibc.com") },
+        node_draft: nodeDraft,
+        missing_fields: [],
+        risks: [],
+        assumptions: ["Node 不绑定固定上下游；Edge 负责交接。"],
+        test_plan: ["保存草稿", "测试草稿", "发布 Runtime Node", "运行 Node"],
+      },
+      trace: { mock: true },
+    };
+  },
+
   async createNodeDraft(target, _instanceId, input: NodeDraftInput): Promise<NodeDraft> {
     await delay();
-    const draftId = `${input.node_id || "node"}-${Date.now()}`;
+    const sourceNode = input.node_draft || {};
+    const nodeId = String(sourceNode.id || sourceNode.node_id || input.node_id || "node");
+    const draftId = `${nodeId}-${Date.now()}`;
     const draft: NodeDraft = {
       draftId,
-      node: {
+      node: input.node_draft || {
         schema: "node-definition/v1",
-        id: input.node_id,
+        id: nodeId,
         title: input.title,
         description: input.description,
         executor: { type: "agent-skill", skill: input.skill_id, install_command: input.skill_install_command },
@@ -991,14 +1044,64 @@ export const mockProvider: SopDataProvider = {
         outputs: { [input.output_name || "result"]: { kind: "file", type: "file", value_type: "json", relayable: true, path: input.output_path || `raw/node-runs/{run_id}/outputs/outputs/${input.output_name || "result"}.json` } },
       },
       validation: {
-        status: "draft",
+        status: "passed",
         production_dag_changed: false,
-        publish_enabled: false,
+        publish_enabled: true,
         warnings: ["Mock draft only. 正式 DAG 未改变。"],
       },
+      request: input.request || {},
+      nodeBuilderEvaluation: input.node_builder_evaluation || {},
+      trace: input.trace || {},
     };
     draftByRuntime.set(target.id, [draft, ...(draftByRuntime.get(target.id) || [])]);
     return draft;
+  },
+
+  async testNodeDraft(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
+    await delay();
+    const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);
+    const result: NodeDraftLifecycleResult = {
+      status: draft ? "passed" : "failed",
+      draft_id: draftId,
+      node_id: draft ? String(draft.node.id || "") : "",
+      mode: "draft-test",
+      steps: [
+        { id: "validate-node-yaml", title: "校验 node-definition/v1", status: draft ? "done" : "failed" },
+        { id: "handoff-contract-check", title: "校验交接契约", status: draft ? "done" : "failed" },
+        { id: "manifest-contract-check", title: "校验 manifest 输出", status: draft ? "done" : "failed" },
+      ],
+    };
+    if (draft) draft.draftTest = result;
+    return result;
+  },
+
+  async publishNodeDraft(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
+    await delay();
+    const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);
+    const result: NodeDraftLifecycleResult = {
+      status: draft ? "published" : "failed",
+      draft_id: draftId,
+      node_id: draft ? String(draft.node.id || "") : "",
+      visible_in_nodes_api: Boolean(draft),
+      runtime_catalog_path: draft ? `~/.sop/node-catalog/${String(draft.node.id || "")}/node.yaml` : "",
+    };
+    if (draft) draft.runtimePublish = result;
+    return result;
+  },
+
+  async generateNodeDraftPersistencePlan(target, _instanceId, draftId): Promise<NodeDraftLifecycleResult> {
+    await delay();
+    const draft = (draftByRuntime.get(target.id) || []).find((item) => item.draftId === draftId);
+    const nodeId = draft ? String(draft.node.id || "") : "";
+    const result: NodeDraftLifecycleResult = {
+      status: draft ? "generated" : "failed",
+      draft_id: draftId,
+      node_id: nodeId,
+      files: [`youtube-wiki/skills/${nodeId}/node.yaml`, `youtube-wiki/skills/${nodeId}/SKILL.md`],
+      patch: draft ? `--- /dev/null\n+++ b/youtube-wiki/skills/${nodeId}/node.yaml\n+schema: node-definition/v1\n` : "",
+    };
+    if (draft) draft.persistencePlan = result;
+    return result;
   },
 
   async evaluateWorkflowEdge(_target, _instanceId, _workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {

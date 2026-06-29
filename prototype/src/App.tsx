@@ -49,8 +49,10 @@ import type {
   DagEdge,
   DataMode,
   Instance,
+  NodeBuilderResult,
   NodeDraft,
   NodeDraftInput,
+  NodeDraftLifecycleResult,
   NodeDraftSchema,
   NodeDetail,
   GitHubRepoOption,
@@ -5051,6 +5053,9 @@ export default function App() {
     output_name: "result",
     output_path: "raw/node-runs/{run_id}/outputs/outputs/result.json"
   });
+  const [nodeBuilderInstruction, setNodeBuilderInstruction] = useState("把这个 Skill 转换成一个不绑定上下游的 Runtime Node；首节点测试时允许用户直接输入 prompt。");
+  const [nodeBuilderResult, setNodeBuilderResult] = useState<NodeBuilderResult | null>(null);
+  const [nodeDraftActionResult, setNodeDraftActionResult] = useState<NodeDraftLifecycleResult | null>(null);
   const isRuntimeDirectory = viewMode === "runtime" && !hasRuntimeRouteId;
   const isInstanceDirectory = viewMode === "instance" && !routeContext.instanceId;
   const runtimeDirectoryPageSize = 25;
@@ -5450,7 +5455,7 @@ export default function App() {
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodeDrafts(runtime!, instance!.instanceId),
-    enabled: Boolean(runtime && instance && (viewMode === "workflowBuilder" || viewMode === "nodes" || viewMode === "settings"))
+    enabled: Boolean(runtime && instance && (viewMode === "workflowBuilder" || viewMode === "nodes" || viewMode === "settings" || draftOpen))
   });
   const nodeDraftSchemaQuery = useQuery({
     queryKey: queryKeys.nodeDraftSchema(mode, runtime, instance?.instanceId || ""),
@@ -5458,6 +5463,7 @@ export default function App() {
     enabled: Boolean(runtime && instance && (viewMode === "nodes" || viewMode === "settings" || draftOpen))
   });
   const managedNodes = nodesQuery.data || [];
+  const latestNodeDraft = (nodeDraftsQuery.data || [])[0];
   const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
   const nodeModulesQuery = useQuery({
     queryKey: queryKeys.nodeModules(mode, runtime, instance?.instanceId || "", selectedManagedNode?.nodeId || "", selectedRun?.pipelineId || ""),
@@ -5919,13 +5925,89 @@ export default function App() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.node(mode, runtime, instance.instanceId, selectedRun!.pipelineId, selectedStageKey) });
     }
   });
+  const evaluateNodeBuilderMutation = useMutation({
+    mutationFn: () => {
+      if (!provider.evaluateNodeBuilder) throw new Error("当前 Runtime SPI 不支持 Node Builder Agent");
+      return provider.evaluateNodeBuilder(runtime, instance.instanceId, {
+        skill_install_command: draftInput.skill_install_command || "",
+        user_instruction: nodeBuilderInstruction,
+        fetch_metadata: true,
+      });
+    },
+    onSuccess: (result) => {
+      setNodeBuilderResult(result);
+      setNodeDraftActionResult(null);
+      const generatedNode = (result.evaluation?.node_draft || {}) as Record<string, unknown>;
+      const generatedSkill = (generatedNode.skill || {}) as Record<string, unknown>;
+      setDraftInput((current) => ({
+        ...current,
+        node_id: String(generatedNode.id || generatedNode.node_id || current.node_id || ""),
+        skill_id: String(generatedSkill.id || current.skill_id || ""),
+        title: String(generatedNode.title || current.title || ""),
+        description: String(generatedNode.description || current.description || ""),
+      }));
+      setToast("Node Builder Agent 已生成草稿建议");
+    },
+    onError: (error) => {
+      setNodeBuilderResult(null);
+      setNodeDraftActionResult(null);
+      setDraftLocalError(String((error as Error).message || error));
+    }
+  });
   const createDraftMutation = useMutation({
-    mutationFn: () => provider.createNodeDraft(runtime, instance.instanceId, draftInput),
+    mutationFn: () => {
+      const generatedNode = (nodeBuilderResult?.evaluation?.node_draft || null) as Record<string, unknown> | null;
+      const payload: NodeDraftInput = generatedNode
+        ? {
+          ...draftInput,
+          node_id: String(generatedNode.id || generatedNode.node_id || draftInput.node_id || ""),
+          node_draft: generatedNode,
+          node_builder_evaluation: nodeBuilderResult?.evaluation || {},
+          request: nodeBuilderResult?.request || {},
+          trace: nodeBuilderResult?.trace || {},
+        }
+        : draftInput;
+      return provider.createNodeDraft(runtime, instance.instanceId, payload);
+    },
     onSuccess: async (draft) => {
-      setDraftOpen(false);
       setDraftLocalError("");
       setConfirmRealDraft(false);
+      setNodeDraftActionResult(null);
       setToast(`节点草稿已创建：${draft.draftId}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+    }
+  });
+  const testNodeDraftMutation = useMutation({
+    mutationFn: (draftId: string) => {
+      if (!provider.testNodeDraft) throw new Error("当前 Runtime SPI 不支持 Node Draft 测试");
+      return provider.testNodeDraft(runtime, instance.instanceId, draftId);
+    },
+    onSuccess: async (result) => {
+      setNodeDraftActionResult(result);
+      setToast(`草稿测试：${result.status}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+    }
+  });
+  const publishNodeDraftMutation = useMutation({
+    mutationFn: (draftId: string) => {
+      if (!provider.publishNodeDraft) throw new Error("当前 Runtime SPI 不支持 Runtime Node 发布");
+      return provider.publishNodeDraft(runtime, instance.instanceId, draftId);
+    },
+    onSuccess: async (result) => {
+      setNodeDraftActionResult(result);
+      setToast(`Runtime Node 发布：${result.status}`);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.nodes(mode, runtime, instance.instanceId) });
+    }
+  });
+  const generateNodeDraftPersistenceMutation = useMutation({
+    mutationFn: (draftId: string) => {
+      if (!provider.generateNodeDraftPersistencePlan) throw new Error("当前 Runtime SPI 不支持正式持久化方案");
+      return provider.generateNodeDraftPersistencePlan(runtime, instance.instanceId, draftId);
+    },
+    onSuccess: async (result) => {
+      setNodeDraftActionResult(result);
+      setToast(`正式持久化方案：${result.status}`);
       await queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) });
     }
   });
@@ -6320,15 +6402,16 @@ export default function App() {
 
   function submitDraft(event: FormEvent) {
     event.preventDefault();
+    const generatedNode = (nodeBuilderResult?.evaluation?.node_draft || null) as Record<string, unknown> | null;
     const schema = nodeDraftSchemaQuery.data;
-    const missingFields = (schema?.fields || [])
+    const missingFields = generatedNode ? [] : (schema?.fields || [])
       .filter((field) => field.required && !String(draftInput[field.name as keyof NodeDraftInput] || "").trim())
       .map((field) => field.label || field.name);
     if (missingFields.length) {
       setDraftLocalError(`请先填写必填字段: ${missingFields.join(", ")}`);
       return;
     }
-    const nodeId = draftInput.node_id.trim();
+    const nodeId = String(generatedNode?.id || generatedNode?.node_id || draftInput.node_id || "").trim();
     if (nodeId && managedNodes.some((node) => node.nodeId === nodeId)) {
       setDraftLocalError(`节点 ID 已存在于生产 DAG: ${nodeId}`);
       return;
@@ -6829,7 +6912,27 @@ export default function App() {
           instance={instance}
           schema={nodeDraftSchemaQuery.data}
           draftInput={draftInput}
-          setDraftInput={(input) => { setDraftLocalError(""); setDraftInput(input); }}
+          setDraftInput={(input) => { setDraftLocalError(""); setNodeBuilderResult(null); setDraftInput(input); }}
+          nodeBuilderInstruction={nodeBuilderInstruction}
+          setNodeBuilderInstruction={setNodeBuilderInstruction}
+          nodeBuilderResult={nodeBuilderResult}
+          nodeBuilderRunning={evaluateNodeBuilderMutation.isPending}
+          nodeBuilderError={evaluateNodeBuilderMutation.error ? String((evaluateNodeBuilderMutation.error as Error).message || evaluateNodeBuilderMutation.error) : ""}
+          onEvaluateNodeBuilder={() => { setDraftLocalError(""); evaluateNodeBuilderMutation.mutate(); }}
+          latestDraft={latestNodeDraft}
+          nodeDraftActionResult={nodeDraftActionResult}
+          nodeDraftActionError={
+            testNodeDraftMutation.error ? String((testNodeDraftMutation.error as Error).message || testNodeDraftMutation.error)
+              : publishNodeDraftMutation.error ? String((publishNodeDraftMutation.error as Error).message || publishNodeDraftMutation.error)
+                : generateNodeDraftPersistenceMutation.error ? String((generateNodeDraftPersistenceMutation.error as Error).message || generateNodeDraftPersistenceMutation.error)
+                  : ""
+          }
+          testingDraft={testNodeDraftMutation.isPending}
+          publishingDraft={publishNodeDraftMutation.isPending}
+          generatingPersistence={generateNodeDraftPersistenceMutation.isPending}
+          onTestDraft={(draftId) => testNodeDraftMutation.mutate(draftId)}
+          onPublishDraft={(draftId) => publishNodeDraftMutation.mutate(draftId)}
+          onGeneratePersistencePlan={(draftId) => generateNodeDraftPersistenceMutation.mutate(draftId)}
           confirmRealDraft={confirmRealDraft}
           setConfirmRealDraft={setConfirmRealDraft}
           creatingDraft={createDraftMutation.isPending}
@@ -14883,7 +14986,7 @@ function NodesWorkspace({
     <aside className="node-list-panel">
       <div className="panel-head compact">
         <div><strong>Definition Groups</strong><span>{visibleNodes.length}/{nodes.length} definitions</span></div>
-        <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><CheckCircle2 size={16} />Draft</button>
+        <button type="button" className="primary" disabled={!instance || !runtime} onClick={onOpenDraft}><Plus size={16} />创建 Node</button>
       </div>
       <div className="node-list-tools">
         <label className="search-box"><Search size={14} /><input value={nodeSearch} onChange={(event) => onNodeSearch(event.target.value)} placeholder="Search node definition" /></label>
@@ -15296,11 +15399,11 @@ function NodeAssistPanel({
   return (
     <aside className="node-assist-panel">
       <section>
-        <div className="section-title"><span>Draft / Publish</span><span>disabled</span></div>
+        <div className="section-title"><span>Node Lifecycle</span><span>draft</span></div>
         <button type="button" className="primary wide" disabled={!instance || !runtime} onClick={onOpenDraft}>
-          <CheckCircle2 size={16} />Create Node Draft
+          <Plus size={16} />创建 Runtime Node
         </button>
-        <p className="body-copy">Draft 只写入 `raw/node-drafts` 并返回校验结果；Apply / Publish 第一版保持禁用。</p>
+        <p className="body-copy">从 Skill 安装命令生成草稿，测试后发布到当前 Runtime Node Catalog；正式 repo 持久化单独生成方案。</p>
       </section>
       <section>
         <div className="section-title"><span>Validation</span><span>{(node?.missingFields || []).length ? "warning" : "ready"}</span></div>
@@ -15335,6 +15438,21 @@ function NodeDraftDrawer({
   schema,
   draftInput,
   setDraftInput,
+  nodeBuilderInstruction,
+  setNodeBuilderInstruction,
+  nodeBuilderResult,
+  nodeBuilderRunning,
+  nodeBuilderError,
+  onEvaluateNodeBuilder,
+  latestDraft,
+  nodeDraftActionResult,
+  nodeDraftActionError,
+  testingDraft,
+  publishingDraft,
+  generatingPersistence,
+  onTestDraft,
+  onPublishDraft,
+  onGeneratePersistencePlan,
   confirmRealDraft,
   setConfirmRealDraft,
   creatingDraft,
@@ -15348,6 +15466,21 @@ function NodeDraftDrawer({
   schema: NodeDraftSchema | undefined;
   draftInput: NodeDraftInput;
   setDraftInput: (input: NodeDraftInput) => void;
+  nodeBuilderInstruction: string;
+  setNodeBuilderInstruction: (value: string) => void;
+  nodeBuilderResult: NodeBuilderResult | null;
+  nodeBuilderRunning: boolean;
+  nodeBuilderError: string;
+  onEvaluateNodeBuilder: () => void;
+  latestDraft?: NodeDraft;
+  nodeDraftActionResult: NodeDraftLifecycleResult | null;
+  nodeDraftActionError: string;
+  testingDraft: boolean;
+  publishingDraft: boolean;
+  generatingPersistence: boolean;
+  onTestDraft: (draftId: string) => void;
+  onPublishDraft: (draftId: string) => void;
+  onGeneratePersistencePlan: (draftId: string) => void;
   confirmRealDraft: boolean;
   setConfirmRealDraft: (value: boolean) => void;
   creatingDraft: boolean;
@@ -15355,20 +15488,62 @@ function NodeDraftDrawer({
   onClose: () => void;
   onCreateDraft: (event: FormEvent) => void;
 }) {
+  const evaluation = (nodeBuilderResult?.evaluation || {}) as Record<string, unknown>;
+  const generatedNode = (evaluation.node_draft || {}) as Record<string, unknown>;
+  const skill = (generatedNode.skill || {}) as Record<string, unknown>;
+  const executor = (generatedNode.executor || {}) as Record<string, unknown>;
+  const handoff = (generatedNode.handoff || {}) as Record<string, unknown>;
+  const outputs = (generatedNode.outputs || {}) as Record<string, unknown>;
+  const skillIdentity = (evaluation.skill_identity || {}) as Record<string, unknown>;
+  const risks = (evaluation.risks || []) as Array<Record<string, unknown>>;
+  const missingFields = (evaluation.missing_fields || []) as Array<unknown>;
+  const testPlan = (evaluation.test_plan || []) as Array<unknown>;
+  const draftTest = (latestDraft?.draftTest || {}) as Record<string, unknown>;
+  const runtimePublish = (latestDraft?.runtimePublish || {}) as Record<string, unknown>;
+  const persistencePlan = (latestDraft?.persistencePlan || {}) as Record<string, unknown>;
+  const draftId = latestDraft?.draftId || "";
+  const publishedNodeId = String(runtimePublish.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
+  const workflowId = instance.workflowBinding?.workflowId || "youtube-research-wiki";
+  const runtimeNodeRunHref = `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(publishedNodeId)}/runs?mode=${mode}`;
+  const statusTone = (status: unknown) => {
+    const value = String(status || "").toLowerCase();
+    if (["ready", "passed", "published", "generated", "done", "ok"].includes(value)) return "done";
+    if (["failed", "blocked", "error"].includes(value)) return "failed";
+    if (["warning", "needs_user_input"].includes(value)) return "waiting";
+    return "running";
+  };
+  const lifecycle = [
+    { id: "agent", title: "Node Builder Agent", status: evaluation.status || "waiting", note: "从安装命令生成 Node Draft" },
+    { id: "draft", title: "草稿", status: latestDraft ? "passed" : "waiting", note: latestDraft?.draftId || "保存到 raw/node-drafts" },
+    { id: "test", title: "草稿测试", status: draftTest.status || "waiting", note: "校验定义、交接契约和 manifest" },
+    { id: "runtime", title: "Runtime Node", status: runtimePublish.status || "waiting", note: "发布到当前 Runtime Catalog" },
+    { id: "repo", title: "正式持久化", status: persistencePlan.status || "waiting", note: "生成 agent-brain-plugins patch" },
+  ];
+
   return (
     <div className="drawer-backdrop" role="presentation">
-      <form className="side-drawer" onSubmit={onCreateDraft}>
+      <form className="side-drawer node-builder-drawer" onSubmit={onCreateDraft}>
         <div className="drawer-head">
           <div>
-            <h2>Create Node Draft</h2>
+            <h2>Create Runtime Node</h2>
             <span>{instance.instanceId} · {runtime.name}</span>
           </div>
           <button type="button" className="icon-btn" title="关闭草稿抽屉" onClick={onClose}><X size={16} /></button>
         </div>
         <div className="drawer-body">
-          <div className="drawer-note">
-            <strong>安全边界</strong>
-            <span>该操作只创建草稿；正式发布、写入 `sop.yaml` 和重启 Runtime 当前仍禁用。</span>
+          <div className="node-builder-lifecycle">
+            {lifecycle.map((item, index) => (
+              <div className={`node-builder-step ${statusTone(item.status)}`} key={item.id}>
+                <span>{index + 1}</span>
+                <strong>{item.title}</strong>
+                <small>{String(item.status || "waiting")}</small>
+                <em>{item.note}</em>
+              </div>
+            ))}
+          </div>
+          <div className="drawer-note node-builder-principle">
+            <strong>Node 只描述 Skill 执行能力</strong>
+            <span>上游 / 下游关系由 Edge 负责。新 Node 默认接收 upstream outputs directory、manifest 和交接说明，并输出标准 outputs 目录。</span>
           </div>
           {schema && (
             <div className="schema-note">
@@ -15378,31 +15553,152 @@ function NodeDraftDrawer({
               <span>{((schema.safety.writes as string[]) || []).slice(0, 1)[0] || "raw/node-drafts"}</span>
             </div>
           )}
-          <label>Skill install command<input value={draftInput.skill_install_command} onChange={(event) => setDraftInput({ ...draftInput, skill_install_command: event.target.value })} /></label>
-          <div className="draft-grid">
-            <label>Skill ID<input value={draftInput.skill_id} onChange={(event) => setDraftInput({ ...draftInput, skill_id: event.target.value })} /></label>
-            <label>Node ID<input value={draftInput.node_id} onChange={(event) => setDraftInput({ ...draftInput, node_id: event.target.value })} /></label>
-            <label>Title<input value={draftInput.title} onChange={(event) => setDraftInput({ ...draftInput, title: event.target.value })} /></label>
-            <label>Entry input<input value={draftInput.entry_input_name || draftInput.input_name || ""} onChange={(event) => setDraftInput({ ...draftInput, entry_input_name: event.target.value })} /></label>
-            <label>Input type<select value={draftInput.input_type || "string"} onChange={(event) => setDraftInput({ ...draftInput, input_type: event.target.value })}>
-              <option value="string">string</option>
-              <option value="file">file</option>
-              <option value="directory">directory</option>
-            </select></label>
-            <label>Value type<select value={draftInput.input_value_type || "text"} onChange={(event) => setDraftInput({ ...draftInput, input_value_type: event.target.value })}>
-              <option value="text">text</option>
-              <option value="url">url</option>
-              <option value="markdown">markdown</option>
-              <option value="json">json</option>
-            </select></label>
-            <label>Output name<input value={draftInput.output_name || ""} onChange={(event) => setDraftInput({ ...draftInput, output_name: event.target.value })} /></label>
-            <label>Output path<input value={draftInput.output_path || ""} onChange={(event) => setDraftInput({ ...draftInput, output_path: event.target.value })} /></label>
-          </div>
-          <div className="drawer-note">
-            <strong>Node 不绑定上游</strong>
-            <span>这里创建的是 Skill 节点定义；上游/下游关系在 Workflow Edge 里配置。</span>
-          </div>
-          <label>Description<textarea value={draftInput.description || ""} onChange={(event) => setDraftInput({ ...draftInput, description: event.target.value })} /></label>
+          <section className="node-builder-card">
+            <div className="node-builder-card-head">
+              <div>
+                <strong>1. 生成 Node Draft</strong>
+                <span>只需要安装命令和用途说明；Agent 负责提取 Skill 身份、执行器、交接契约和输出目录。</span>
+              </div>
+              <button type="button" className="secondary" onClick={onEvaluateNodeBuilder} disabled={nodeBuilderRunning || !String(draftInput.skill_install_command || "").trim()}>
+                {nodeBuilderRunning ? <Loader2 size={15} className="spin" /> : <Bot size={15} />}
+                {nodeBuilderRunning ? "生成中" : "生成草稿建议"}
+              </button>
+            </div>
+            <label>Skill install command<input value={draftInput.skill_install_command || ""} onChange={(event) => setDraftInput({ ...draftInput, skill_install_command: event.target.value })} /></label>
+            <label>用途说明<textarea value={nodeBuilderInstruction} onChange={(event) => setNodeBuilderInstruction(event.target.value)} /></label>
+            {nodeBuilderError && <div className="inline-error">{nodeBuilderError}</div>}
+          </section>
+
+          {nodeBuilderResult && (
+            <section className="node-builder-card">
+              <div className="node-builder-result-head">
+                <div>
+                  <span className={`status-pill ${statusTone(evaluation.status)}`}>{String(evaluation.status || "unknown")}</span>
+                  <strong>{String(evaluation.summary || "Node Builder Agent 已返回结果")}</strong>
+                </div>
+                <small>{String(skillIdentity.skill_id || skill.id || generatedNode.id || "unknown skill")}</small>
+              </div>
+              <div className="node-builder-summary-grid">
+                <div><span>Node ID</span><strong>{String(generatedNode.id || "-")}</strong></div>
+                <div><span>Title</span><strong>{String(generatedNode.title || "-")}</strong></div>
+                <div><span>Hermes Skill</span><strong>{String(executor.skill || skill.id || "-")}</strong></div>
+                <div><span>Outputs</span><strong>{String(outputs.root || "-")}</strong></div>
+              </div>
+              <div className="node-builder-contract-grid">
+                <article>
+                  <strong>Handoff 接收</strong>
+                  <code>{formatValue(handoff.accepts || {})}</code>
+                </article>
+                <article>
+                  <strong>Manifest 输出</strong>
+                  <code>{formatValue({ root: outputs.root, manifest: outputs.manifest })}</code>
+                </article>
+              </div>
+              {(missingFields.length > 0 || risks.length > 0) && (
+                <div className="node-builder-warning">
+                  <AlertTriangle size={15} />
+                  <div>
+                    {missingFields.length > 0 && <span>缺失字段：{missingFields.map(String).join(", ")}</span>}
+                    {risks.map((risk, index) => <span key={index}>{String(risk.code || "risk")}：{String(risk.message || "")}</span>)}
+                  </div>
+                </div>
+              )}
+              {testPlan.length > 0 && (
+                <ol className="node-builder-test-plan">
+                  {testPlan.map((item, index) => <li key={index}>{String(item)}</li>)}
+                </ol>
+              )}
+              <details className="node-builder-raw">
+                <summary>查看 Agent Trace / Raw Draft</summary>
+                <code>{formatValue({ request: nodeBuilderResult.request, evaluation, trace: nodeBuilderResult.trace })}</code>
+              </details>
+            </section>
+          )}
+
+          <details className="node-builder-advanced">
+            <summary>高级手动字段</summary>
+            <div className="draft-grid">
+              <label>Skill ID<input value={draftInput.skill_id || ""} onChange={(event) => setDraftInput({ ...draftInput, skill_id: event.target.value })} /></label>
+              <label>Node ID<input value={draftInput.node_id || ""} onChange={(event) => setDraftInput({ ...draftInput, node_id: event.target.value })} /></label>
+              <label>Title<input value={draftInput.title || ""} onChange={(event) => setDraftInput({ ...draftInput, title: event.target.value })} /></label>
+              <label>Entry input<input value={draftInput.entry_input_name || draftInput.input_name || ""} onChange={(event) => setDraftInput({ ...draftInput, entry_input_name: event.target.value })} /></label>
+              <label>Input type<select value={draftInput.input_type || "string"} onChange={(event) => setDraftInput({ ...draftInput, input_type: event.target.value })}>
+                <option value="string">string</option>
+                <option value="file">file</option>
+                <option value="directory">directory</option>
+              </select></label>
+              <label>Value type<select value={draftInput.input_value_type || "text"} onChange={(event) => setDraftInput({ ...draftInput, input_value_type: event.target.value })}>
+                <option value="text">text</option>
+                <option value="url">url</option>
+                <option value="markdown">markdown</option>
+                <option value="json">json</option>
+              </select></label>
+              <label>Output name<input value={draftInput.output_name || ""} onChange={(event) => setDraftInput({ ...draftInput, output_name: event.target.value })} /></label>
+              <label>Output path<input value={draftInput.output_path || ""} onChange={(event) => setDraftInput({ ...draftInput, output_path: event.target.value })} /></label>
+            </div>
+            <label>Description<textarea value={draftInput.description || ""} onChange={(event) => setDraftInput({ ...draftInput, description: event.target.value })} /></label>
+          </details>
+
+          <section className="node-builder-card">
+            <div className="node-builder-card-head">
+              <div>
+                <strong>2. 保存草稿并发布到 Runtime</strong>
+                <span>发布 Runtime Node 后，当前 Runtime 的 Node Registry 会立刻出现新节点；正式 repo 持久化仍是单独方案。</span>
+              </div>
+            </div>
+            {latestDraft ? (
+              <div className="node-draft-current">
+                <div>
+                  <span>当前草稿</span>
+                  <strong>{latestDraft.draftId}</strong>
+                  <small>{String(latestDraft.node.title || latestDraft.node.id || "")}</small>
+                </div>
+                <div className="node-draft-state-row">
+                  <span className={`status-pill ${statusTone(latestDraft.validation?.status)}`}>validation {String(latestDraft.validation?.status || "unknown")}</span>
+                  <span className={`status-pill ${statusTone(draftTest.status)}`}>draft test {String(draftTest.status || "waiting")}</span>
+                  <span className={`status-pill ${statusTone(runtimePublish.status)}`}>runtime {String(runtimePublish.status || "waiting")}</span>
+                  <span className={`status-pill ${statusTone(persistencePlan.status)}`}>repo plan {String(persistencePlan.status || "waiting")}</span>
+                </div>
+                <details className="node-builder-raw">
+                  <summary>查看草稿状态文件</summary>
+                  <code>{formatValue({
+                    validation: latestDraft.validation,
+                    draft_test: latestDraft.draftTest,
+                    runtime_publish: latestDraft.runtimePublish,
+                    persistence_plan: latestDraft.persistencePlan,
+                  })}</code>
+                </details>
+              </div>
+            ) : (
+              <div className="empty-inline">保存草稿后可继续测试、发布和生成正式持久化方案。</div>
+            )}
+            <div className="node-builder-action-row">
+              <button type="button" disabled={!draftId || testingDraft} onClick={() => onTestDraft(draftId)}>
+                {testingDraft ? <Loader2 size={15} className="spin" /> : <ListChecks size={15} />}
+                测试草稿
+              </button>
+              <button type="button" disabled={!draftId || publishingDraft || draftTest.status !== "passed"} onClick={() => onPublishDraft(draftId)}>
+                {publishingDraft ? <Loader2 size={15} className="spin" /> : <Server size={15} />}
+                发布 Runtime Node
+              </button>
+              <button type="button" disabled={!draftId || generatingPersistence} onClick={() => onGeneratePersistencePlan(draftId)}>
+                {generatingPersistence ? <Loader2 size={15} className="spin" /> : <Github size={15} />}
+                生成正式持久化方案
+              </button>
+              {runtimePublish.status === "published" && publishedNodeId && (
+                <a className="button-link" href={runtimeNodeRunHref}>
+                  <Play size={15} />测试 Runtime Node
+                </a>
+              )}
+            </div>
+            {nodeDraftActionError && <div className="inline-error">{nodeDraftActionError}</div>}
+            {nodeDraftActionResult && (
+              <details className="node-builder-raw">
+                <summary>最近动作结果：{nodeDraftActionResult.status}</summary>
+                <code>{formatValue(nodeDraftActionResult)}</code>
+              </details>
+            )}
+          </section>
           {mode === "real" && (
             <label className="confirm-row"><input type="checkbox" checked={confirmRealDraft} onChange={(event) => setConfirmRealDraft(event.target.checked)} />我确认要在真实 Runtime 上创建 Node Draft</label>
           )}
@@ -15412,7 +15708,7 @@ function NodeDraftDrawer({
           <button type="button" onClick={onClose}>Cancel</button>
           <button type="submit" className="primary" disabled={creatingDraft || (mode === "real" && !confirmRealDraft)}>
             {creatingDraft ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-            {creatingDraft ? "Creating" : "Create draft"}
+            {creatingDraft ? "Saving" : "保存 Node Draft"}
           </button>
         </div>
       </form>

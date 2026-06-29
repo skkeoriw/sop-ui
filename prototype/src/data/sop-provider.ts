@@ -8,8 +8,11 @@ import type {
   InstanceList,
   NodeConfig,
   NodeDetail,
+  NodeBuilderInput,
+  NodeBuilderResult,
   NodeDraft,
   NodeDraftInput,
+  NodeDraftLifecycleResult,
   NodeDraftSchema,
   NodeLog,
   NodeEvent,
@@ -934,9 +937,31 @@ function mapNodeDraft(raw: Record<string, unknown>): NodeDraft {
     draftType: raw.draft_type ? String(raw.draft_type) : raw.draftType ? String(raw.draftType) : undefined,
     draftPath: raw.draft_path ? String(raw.draft_path) : raw.draftPath ? String(raw.draftPath) : undefined,
     node: (raw.node as Record<string, unknown>) || {},
+    request: (raw.request as Record<string, unknown>) || {},
+    nodeBuilderEvaluation: (raw.node_builder_evaluation as Record<string, unknown>) || (raw.nodeBuilderEvaluation as Record<string, unknown>) || {},
     changeRequest: (raw.change_request as Record<string, unknown>) || (raw.changeRequest as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
+    draftTest: (raw.draft_test as Record<string, unknown>) || (raw.draftTest as Record<string, unknown>) || {},
+    runtimePublish: (raw.runtime_publish as Record<string, unknown>) || (raw.runtimePublish as Record<string, unknown>) || {},
+    persistencePlan: (raw.persistence_plan as Record<string, unknown>) || (raw.persistencePlan as Record<string, unknown>) || {},
+    trace: (raw.trace as Record<string, unknown>) || {},
   };
+}
+
+function mapNodeBuilderResult(raw: Record<string, unknown>): NodeBuilderResult {
+  return {
+    ok: Boolean(raw.ok),
+    mode: raw.mode ? String(raw.mode) : undefined,
+    request: (raw.request as Record<string, unknown>) || {},
+    config: (raw.config as Record<string, unknown>) || {},
+    evaluation: (raw.evaluation as Record<string, unknown>) || {},
+    trace: (raw.trace as Record<string, unknown>) || {},
+    stderr: raw.stderr ? String(raw.stderr) : undefined,
+  };
+}
+
+function mapNodeDraftLifecycleResult(raw: Record<string, unknown>): NodeDraftLifecycleResult {
+  return raw as NodeDraftLifecycleResult;
 }
 
 function mapNodeDraftSchema(raw: Record<string, unknown>): NodeDraftSchema {
@@ -1596,10 +1621,25 @@ export const sopProvider: SopDataProvider = {
     return (raw.drafts || []).map(mapNodeDraft);
   },
 
+  async getNodeDraft(runtime, instanceId, draftId) {
+    const raw = await requestJson<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}`
+    );
+    return mapNodeDraft(raw);
+  },
+
   async getNodeDraftSchema(runtime, instanceId) {
     return mapNodeDraftSchema(await requestJson<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/schema`
     ));
+  },
+
+  async evaluateNodeBuilder(runtime, instanceId, input: NodeBuilderInput) {
+    const raw = await postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-builder/evaluate`,
+      input
+    );
+    return mapNodeBuilderResult(raw);
   },
 
   async createNodeDraft(runtime, instanceId, input: NodeDraftInput) {
@@ -1608,6 +1648,30 @@ export const sopProvider: SopDataProvider = {
       input
     );
     return mapNodeDraft(raw);
+  },
+
+  async testNodeDraft(runtime, instanceId, draftId) {
+    const raw = await postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/test-draft`,
+      {}
+    );
+    return mapNodeDraftLifecycleResult(raw);
+  },
+
+  async publishNodeDraft(runtime, instanceId, draftId) {
+    const raw = await postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/publish-runtime`,
+      {}
+    );
+    return mapNodeDraftLifecycleResult(raw);
+  },
+
+  async generateNodeDraftPersistencePlan(runtime, instanceId, draftId) {
+    const raw = await postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/node-drafts/${encodeURIComponent(draftId)}/persistence-plan`,
+      {}
+    );
+    return mapNodeDraftLifecycleResult(raw);
   },
 
   async evaluateWorkflowEdge(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
