@@ -1458,6 +1458,87 @@ function defaultProbeInputsFromSpecs(specs: Record<string, unknown>) {
   return rows;
 }
 
+function probeStatus(value: Record<string, unknown> | undefined) {
+  return String(value?.status || value?.state || "").toLowerCase();
+}
+
+function probeRunIsLive(value: Record<string, unknown> | undefined) {
+  const status = probeStatus(value);
+  const result = (value?.result || {}) as Record<string, unknown>;
+  const resultStatus = String(result.status || "").toLowerCase();
+  return ["running", "queued", "pending"].includes(status) || ["running", "queued", "pending"].includes(resultStatus);
+}
+
+function nodeDraftHasLiveProbe(draft: NodeDraft) {
+  if (probeRunIsLive(draft.probeRun)) return true;
+  return (draft.probeRuns || []).some((probe) => probeRunIsLive(probe));
+}
+
+function firstNonEmpty(...values: unknown[]) {
+  for (const value of values) {
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return "";
+}
+
+function nodeDraftUpdatedAt(draft: NodeDraft) {
+  const latestProbe = draft.probeRun || (draft.probeRuns || [])[0] || {};
+  const validation = draft.validation || {};
+  const evaluation = draft.nodeBuilderEvaluation || {};
+  const request = draft.request || {};
+  return String(firstNonEmpty(
+    latestProbe.reconciled_at,
+    latestProbe.finished_at,
+    latestProbe.created_at,
+    validation.updated_at,
+    validation.created_at,
+    evaluation.evaluated_at,
+    evaluation.finished_at,
+    request.created_at,
+  ));
+}
+
+function probeOutputUrl(probe: Record<string, unknown> | undefined) {
+  const actual = (probe?.actual_outputs || {}) as Record<string, unknown>;
+  const candidates = [
+    actual.public_image_url,
+    actual.image_url,
+    actual.generated_images,
+    actual.images,
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate) && candidate.length) return String(candidate[0]);
+    if (candidate) return String(candidate);
+  }
+  return "";
+}
+
+function compactProbeRaw(probe: Record<string, unknown>) {
+  const result = (probe.result || {}) as Record<string, unknown>;
+  return {
+    probe_id: probe.probe_id,
+    draft_id: probe.draft_id,
+    node_id: probe.node_id,
+    node_run_id: probe.node_run_id,
+    status: probe.status,
+    http_status: probe.http_status,
+    created_at: probe.created_at,
+    reconciled_at: probe.reconciled_at,
+    manual_inputs: probe.manual_inputs,
+    validation: probe.validation,
+    actual_outputs: probe.actual_outputs,
+    output_manifest: probe.output_manifest || result.output_manifest,
+    result: {
+      status: result.status,
+      pending: result.pending,
+      started_at: result.started_at,
+      finished_at: result.finished_at,
+      elapsed_ms: result.elapsed_ms,
+      steps: result.steps,
+    },
+  };
+}
+
 function nodeEntryInputEntries(node: NodeRegistryItem | undefined): Array<[string, unknown]> {
   const entry = node?.entryInputs && Object.keys(node.entryInputs).length ? node.entryInputs : node?.inputs || {};
   return Object.entries(entry);
@@ -5607,7 +5688,11 @@ export default function App() {
   const nodeDraftsQuery = useQuery({
     queryKey: queryKeys.nodeDrafts(mode, runtime, instance?.instanceId || ""),
     queryFn: () => provider.listNodeDrafts(runtime!, instance!.instanceId),
-    enabled: Boolean(runtime && instance && (viewMode === "workflowBuilder" || viewMode === "nodes" || viewMode === "settings" || draftOpen))
+    enabled: Boolean(runtime && instance && (viewMode === "workflowBuilder" || viewMode === "nodes" || viewMode === "settings" || draftOpen)),
+    refetchInterval: (query) => {
+      const drafts = query.state.data || [];
+      return draftOpen && drafts.some(nodeDraftHasLiveProbe) ? 5000 : false;
+    }
   });
   const nodeDraftSchemaQuery = useQuery({
     queryKey: queryKeys.nodeDraftSchema(mode, runtime, instance?.instanceId || ""),
@@ -16297,22 +16382,28 @@ function NodeDraftDrawer({
               <span className="status-pill waiting">{drafts.length} drafts</span>
             </div>
             <div className="draft-history-list">
-              {drafts.slice(0, 8).map((draft) => (
-                <article key={draft.draftId} className={`draft-history-row ${draft.draftId === draftId ? "active" : ""}`}>
-                  <div>
-                    <strong>{draft.draftId}</strong>
-                    <span>{String(draft.node?.title || draft.node?.id || draft.draftType || "node draft")}</span>
-                    <small>{String((draft.validation || {}).status || "unknown")} · runtime {String((draft.runtimePublish || {}).status || "not published")}</small>
-                  </div>
-                  <div className="draft-item-actions">
-                    <button type="button" className="btn" onClick={() => onOpenDraftHistory(draft.draftId)}>Open Draft</button>
-                    <button type="button" className="btn danger-text" disabled={deletingDraft} onClick={() => onDeleteDraft(draft)}>
-                      {deletingDraft ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
-                      Delete Draft
-                    </button>
-                  </div>
-                </article>
-              ))}
+              {drafts.slice(0, 8).map((draft) => {
+                const latestProbe = draft.probeRun || (draft.probeRuns || [])[0] || {};
+                const latestProbeTime = String(firstNonEmpty(latestProbe.reconciled_at, latestProbe.finished_at, latestProbe.created_at));
+                return (
+                  <article key={draft.draftId} className={`draft-history-row ${draft.draftId === draftId ? "active" : ""}`}>
+                    <div>
+                      <strong>{draft.draftId}</strong>
+                      <span>{String(draft.node?.title || draft.node?.id || draft.draftType || "node draft")}</span>
+                      <small>{String((draft.validation || {}).status || "unknown")} · runtime {String((draft.runtimePublish || {}).status || "not published")}</small>
+                      <small>最新 Probe：{String(latestProbe.status || "none")} · {formatBeijingTime(latestProbeTime, "无时间")}</small>
+                      <small>草稿更新时间：{formatBeijingTime(nodeDraftUpdatedAt(draft), "无时间")}</small>
+                    </div>
+                    <div className="draft-item-actions">
+                      <button type="button" className="btn" onClick={() => onOpenDraftHistory(draft.draftId)}>Open Draft</button>
+                      <button type="button" className="btn danger-text" disabled={deletingDraft} onClick={() => onDeleteDraft(draft)}>
+                        {deletingDraft ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+                        Delete Draft
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
               {!drafts.length && <Empty text="还没有节点草稿" />}
             </div>
           </section>
@@ -16331,6 +16422,9 @@ function NodeDraftDrawer({
         {reportOpen && (
           <NodeBuilderReportModal
             report={reportOpen}
+            mode={mode}
+            runtime={runtime}
+            instance={instance}
             onClose={() => setReportOpen(null)}
             evaluation={analysisEvaluation}
             node={analysisNode}
@@ -16354,6 +16448,9 @@ function NodeDraftDrawer({
 
 function NodeBuilderReportModal({
   report,
+  mode,
+  runtime,
+  instance,
   onClose,
   evaluation,
   node,
@@ -16370,6 +16467,9 @@ function NodeBuilderReportModal({
   actionResult,
 }: {
   report: "analysis" | "static" | "probe" | "contract" | "runtime" | "persistence";
+  mode: DataMode;
+  runtime: Runtime;
+  instance: Instance;
   onClose: () => void;
   evaluation: Record<string, unknown>;
   node: Record<string, unknown>;
@@ -16400,6 +16500,13 @@ function NodeBuilderReportModal({
   const probeRecords = ((probeRun.manifest_records || []) as Array<Record<string, unknown>>).length
     ? (probeRun.manifest_records || []) as Array<Record<string, unknown>>
     : ((probeRun.manifestRecords || []) as Array<Record<string, unknown>>);
+  const workflowId = instance.workflowBinding?.workflowId || "youtube-research-wiki";
+  const probeNodeId = String(probeRun.node_id || node.id || node.node_id || "");
+  const probeNodeRunId = String(probeRun.node_run_id || "");
+  const probeRunHref = probeNodeId && probeNodeRunId
+    ? `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(probeNodeId)}/runs/${encodeURIComponent(probeNodeRunId)}?mode=${mode}`
+    : "";
+  const probeImageUrl = probeOutputUrl(probeRun);
   const titleMap = {
     analysis: "Node Builder 静态分析报告",
     static: "Static Analysis 报告",
@@ -16496,8 +16603,15 @@ function NodeBuilderReportModal({
                 probe_id: probeRun.probe_id || "-",
                 node_run_id: probeRun.node_run_id || "-",
                 http_status: probeRun.http_status || "-",
+                created_at: formatBeijingTime(String(probeRun.created_at || ""), "-"),
+                reconciled_at: formatBeijingTime(String(probeRun.reconciled_at || ""), "-"),
                 output_manifest: probeRun.output_manifest || (probeRun.manifest as Record<string, unknown> | undefined)?.path || "-",
+                output_url: probeImageUrl || "-",
               }} />
+              <div className="node-builder-action-row">
+                {probeRunHref ? <a className="button-link" href={probeRunHref}>Open Node Run</a> : null}
+                {probeImageUrl ? <a className="button-link" href={probeImageUrl} target="_blank" rel="noreferrer">Open Output</a> : null}
+              </div>
               <KeyValues data={{ manual_inputs: probeRun.manual_inputs || {}, validation: probeRun.validation || {} }} />
             </ReportSection>
             <ReportSection title="真实输出 Manifest">
@@ -16505,19 +16619,19 @@ function NodeBuilderReportModal({
                 {probeRecords.map((record, index) => (
                   <div key={`${record.path || index}`}>
                     <strong>{String(record.output || record.name || record.path || "-")}</strong>
-                    <span>{String(record.path || "-")} · {String(record.value_type || record.kind || record.type || "")}</span>
+                    <span>{String(record.path || record.value || "-")} · {String(record.value_type || record.kind || record.type || "")}</span>
                   </div>
                 ))}
-                {!probeRecords.length && <Empty text="本次 Probe 没有记录 manifest_records；需要查看 Raw Probe 判断执行是否产出 manifest。" />}
+                {!probeRecords.length && <Empty text="本次 Probe 暂无输出记录；如果状态仍是 running，页面会自动刷新 Probe 摘要。" />}
               </div>
-              <details className="node-builder-raw"><summary>Raw Probe</summary><code>{formatValue(probeRun)}</code></details>
+              <details className="node-builder-raw"><summary>Raw Probe（调试摘要）</summary><code>{formatValue(compactProbeRaw(probeRun))}</code></details>
             </ReportSection>
             <ReportSection title="Probe 历史">
               <div className="report-table">
                 {probeRuns.slice(0, 8).map((run, index) => (
                   <div key={`${run.probe_id || index}`}>
                     <strong>{String(run.probe_id || run.node_run_id || "-")}</strong>
-                    <span>{String(run.status || "-")} · {String(run.created_at || "")}</span>
+                    <span>{String(run.status || "-")} · {formatBeijingTime(String(firstNonEmpty(run.reconciled_at, run.finished_at, run.created_at)), "无时间")}</span>
                   </div>
                 ))}
                 {!probeRuns.length && <Empty text="暂无 Probe 历史" />}
