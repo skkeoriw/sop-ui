@@ -1615,7 +1615,13 @@ export const sopProvider: SopDataProvider = {
 
   async listNodeRuns(runtime, instanceId, workflowId, nodeId): Promise<NodeRunResult[]> {
     const url = `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}/runs`;
-    const raw = await requestJson<{ runs?: Array<Record<string, unknown>> }>(url);
+    let raw: { runs?: Array<Record<string, unknown>> };
+    try {
+      raw = await requestJson<{ runs?: Array<Record<string, unknown>> }>(url);
+    } catch (error) {
+      if (String((error as Error).message || error).startsWith("404 ")) return [];
+      throw error;
+    }
     return (raw.runs || []).map((item) => mapNodeRunResult(item, nodeId, String(item.node_run_id || item.pipeline_id || "")));
   },
 
@@ -1912,9 +1918,18 @@ export const sopProvider: SopDataProvider = {
     const suffix = nodeId
       ? `/nodes/${encodeURIComponent(nodeId)}/config/resolved`
       : "/config/resolved";
-    const raw = await requestJson<Record<string, unknown>>(
-      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}${suffix}`
-    );
+    let raw: Record<string, unknown>;
+    try {
+      raw = await requestJson<Record<string, unknown>>(
+        `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}${suffix}`
+      );
+    } catch (error) {
+      if (nodeId && String((error as Error).message || error).startsWith("404 ")) {
+        raw = { runtime_id: runtime.id, instance_id: instanceId, node_id: nodeId, items: [], note: "No node-scoped config is registered for this Runtime Node." };
+      } else {
+        throw error;
+      }
+    }
     return mapCapabilityConfigPreview(raw);
   },
 

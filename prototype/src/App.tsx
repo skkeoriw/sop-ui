@@ -3751,7 +3751,7 @@ function useNodeRunController({
   const historyQuery = useQuery({
     queryKey: queryKeys.nodeRuns(mode, runtime, instanceId, workflowId, nodeId),
     queryFn: () => provider.listNodeRuns(runtime!, instanceId, workflowId, nodeId),
-    enabled: Boolean(runtime && instanceId && workflowId && nodeId),
+    enabled: Boolean(runtime && instanceId && workflowId && nodeId && !(selectedNodeRunId && node?.source === "node-run-route")),
   });
   const activeNodeRunId = selectedNodeRunId || historyQuery.data?.[0]?.nodeRunId || "";
   const detailQuery = useQuery({
@@ -5163,7 +5163,7 @@ function NodeRunDetailPage({
                   runtime={runtime}
                   instance={instance}
                   mode={mode}
-                  nodeId={node?.nodeId}
+                  nodeId={node?.source === "node-run-route" ? undefined : node?.nodeId}
                   title="配置来源"
                   description="这里展示本次 Node Run 解析到的 Settings/Runtime/Instance 配置。当前页面不保存上游配置；默认值请去 Settings，工作区身份请去 Instance。"
                   compact
@@ -5828,7 +5828,9 @@ export default function App() {
   });
   const managedNodes = nodesQuery.data || [];
   const activeNodeDraft = (nodeDraftsQuery.data || []).find((draft) => draft.draftId === activeNodeDraftId);
-  const selectedManagedNode = managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
+  const selectedManagedNode = route.view === "nodes" && route.nodeId
+    ? managedNodes.find((node) => node.nodeId === route.nodeId)
+    : managedNodes.find((node) => node.nodeId === selectedManagedNodeId) || managedNodes[0];
   const nodeModulesQuery = useQuery({
     queryKey: queryKeys.nodeModules(mode, runtime, instance?.instanceId || "", selectedManagedNode?.nodeId || "", selectedRun?.pipelineId || ""),
     queryFn: () => provider.listNodeModules(runtime!, instance!.instanceId, selectedManagedNode!.nodeId, selectedRun?.pipelineId),
@@ -6596,7 +6598,7 @@ export default function App() {
   useEffect(() => { setSelectedManagedNodeId(""); }, [runtimeId, instanceId]);
   useEffect(() => {
     if (!managedNodes.length) return;
-    if (route.view === "nodes" && route.nodeId && managedNodes.some((node) => node.nodeId === route.nodeId)) {
+    if (route.view === "nodes" && route.nodeId) {
       setSelectedManagedNodeId(route.nodeId);
       return;
     }
@@ -7235,7 +7237,7 @@ export default function App() {
             routeNodeId={route.nodeId || ""}
             routeModuleId={route.moduleId || ""}
             nodeRunList={Boolean(route.nodeRunList)}
-            selectedNodeId={selectedManagedNode?.nodeId || ""}
+            selectedNodeId={selectedManagedNode?.nodeId || route.nodeId || ""}
             selectedNodeRunId={route.nodeRunId || ""}
             selectedNode={selectedManagedNode}
             modules={selectedNodeModules}
@@ -7261,7 +7263,8 @@ export default function App() {
             onDeleteDraft={confirmDeleteNodeDraft}
             onSelectModule={(moduleId) => {
               setSelectedNodeModuleId(moduleId);
-              if (selectedManagedNode) navigateTo("nodes", selectedManagedNode.nodeId, moduleId);
+              const targetNodeId = selectedManagedNode?.nodeId || route.nodeId;
+              if (targetNodeId) navigateTo("nodes", targetNodeId, moduleId);
             }}
             onOpenDraft={openNodeBuilderDraft}
           />
