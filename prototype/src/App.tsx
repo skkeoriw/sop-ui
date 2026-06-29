@@ -1310,8 +1310,15 @@ function nodeRunInputSourceLabel(value?: string) {
 }
 
 function nodeInputSourceExpression(spec: unknown) {
-  if (spec && typeof spec === "object" && "from" in spec) return String((spec as Record<string, unknown>).from || "");
-  return String(spec || "");
+  if (typeof spec === "string") return spec;
+  if (spec && typeof spec === "object") {
+    const record = spec as Record<string, unknown>;
+    for (const key of ["from", "source", "path", "value"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim()) return value;
+    }
+  }
+  return "";
 }
 
 function nodeDefinitionOrder(node: NodeRegistryItem) {
@@ -15310,6 +15317,11 @@ function NodesWorkspace({
               loading={loading}
               onSelectModule={onSelectModule}
             />
+            {selectedNode && nodeHasEntryInputs(selectedNode) ? (
+              <DetailBlock title="Entry Inputs">
+                <NodeEntryInputsPanel node={selectedNode} />
+              </DetailBlock>
+            ) : null}
             <NodeModuleInlinePanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} />
             <details className="node-definition-details">
               <summary><span>Developer Definition Details</span><ChevronDown size={15} /></summary>
