@@ -1258,7 +1258,7 @@ function nodeRunBusinessStatus(result: NodeRunResult | undefined) {
 
 function nodeRunBusinessTone(status?: string) {
   if (status === "passed") return "done";
-  if (status === "missing_required_outputs") return "failed";
+  if (status === "missing_required_outputs" || status === "failed_execution") return "failed";
   if (status === "missing_business_outputs" || status === "no_declared_business_outputs") return "waiting";
   return nodeRunTone(status);
 }
