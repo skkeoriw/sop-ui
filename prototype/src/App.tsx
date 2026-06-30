@@ -4828,7 +4828,7 @@ function NodeInputContractPanel({ node, payload }: { node: NodeRegistryItem; pay
   );
 }
 
-function NodeOutputContractPanel({ node, payload }: { node: NodeRegistryItem; payload: Record<string, unknown> }) {
+function NodeOutputContractPanel({ node, payload, showRaw = true }: { node: NodeRegistryItem; payload: Record<string, unknown>; showRaw?: boolean }) {
   const outputs = nodeOutputContractRows(node);
   const rawDefinition = {
     declared_outputs: node.outputs || {},
@@ -4861,10 +4861,12 @@ function NodeOutputContractPanel({ node, payload }: { node: NodeRegistryItem; pa
           <article><strong>整包交给下游判断</strong><span>显式传递所有可接续输出；索引文件只负责说明包内有什么。</span></article>
         </div>
       </DetailBlock>
-      <details className="node-run-step-raw">
-        <summary><span>Raw Definition</span><ChevronDown size={14} /></summary>
-        <code>{formatValue(rawDefinition)}</code>
-      </details>
+      {showRaw ? (
+        <details className="node-run-step-raw">
+          <summary><span>Raw Definition</span><ChevronDown size={14} /></summary>
+          <code>{formatValue(rawDefinition)}</code>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -16187,11 +16189,11 @@ function NodesWorkspace({
             <NodeDefinitionV1Panel
               node={selectedNode}
               modules={modules}
-              selectedModuleId={selectedModule?.id || routeModuleId}
+              selectedModuleId={routeModuleId}
               loading={loading}
               onSelectModule={onSelectModule}
             />
-            <NodeModuleInlinePanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} />
+            {routeModuleId ? <NodeModuleInlinePanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} /> : null}
           </section>
         </section>
       )}
@@ -16365,7 +16367,7 @@ function NodeDefinitionV1Panel({
       <DetailBlock title="Entry Inputs">
         <NodeEntryInputsPanel node={node} />
       </DetailBlock>
-      <NodeOutputContractPanel node={node} payload={{}} />
+      <NodeOutputContractPanel node={node} payload={{}} showRaw={false} />
 
       <div className="node-detail-module-strip">
         <span>Modules</span>
