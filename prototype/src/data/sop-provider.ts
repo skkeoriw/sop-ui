@@ -1054,6 +1054,7 @@ function mapNodeDraftSchema(raw: Record<string, unknown>): NodeDraftSchema {
 }
 
 function mapRuntime(raw: Record<string, unknown>): Runtime | null {
+  const runtimeInfo = (raw.runtime_info as Record<string, unknown>) || {};
   const metadata = normalizeMetadata(raw.metadata);
   const endpoint = normalizeEndpoint(String(raw.endpoint || raw.channel_url || raw.channelUrl || metadata.channel_url || metadata.endpoint_url || ""));
   if (!endpoint) return null;
@@ -1072,7 +1073,9 @@ function mapRuntime(raw: Record<string, unknown>): Runtime | null {
     channelUrl: endpoint,
     spiBaseUrl: String(raw.spi_base_url || raw.spiBaseUrl || metadata.spi_base_url || `${endpoint}/api/sop`),
     metadata,
-    agentRuntimes: (raw.agent_runtimes as Record<string, Record<string, unknown>>) || (metadata.agent_runtimes ? parseJsonObjectMap(metadata.agent_runtimes) : undefined),
+    agentRuntimes: (raw.agent_runtimes as Record<string, Record<string, unknown>>)
+      || (runtimeInfo.agent_runtimes as Record<string, Record<string, unknown>>)
+      || (metadata.agent_runtimes ? parseJsonObjectMap(metadata.agent_runtimes) : undefined),
     supportedSopTypes: Array.isArray(raw.supported_sop_types)
       ? raw.supported_sop_types.map(String)
       : Array.isArray(raw.supportedSopTypes)
