@@ -762,6 +762,7 @@ export interface NodeRunResult {
   coreOutputs?: NodeRunCoreOutput[];
   relayPackage?: NodeRunRelayPackage;
   executionEvidence?: NodeRunExecutionEvidence;
+  nodeRunResult?: Record<string, unknown>;
   actualOutputs?: Record<string, unknown>;
   outputCategories?: Record<string, unknown>;
   validation?: Record<string, unknown>;

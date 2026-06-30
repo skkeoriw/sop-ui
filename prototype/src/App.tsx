@@ -3061,6 +3061,57 @@ function NodeRunRelayPackageSummary({ result }: { result: NodeRunResult | undefi
   );
 }
 
+function NodeRunCanonicalResultSummary({ result }: { result: NodeRunResult | undefined }) {
+  const model = detailRecord(result?.nodeRunResult);
+  const namedOutputs = detailRecord(model.named_outputs);
+  const successEvidence = detailRecord(model.success_evidence);
+  const outputSpace = detailRecord(model.output_space);
+  const signals = Array.isArray(successEvidence.signals) ? successEvidence.signals as Array<Record<string, unknown>> : [];
+  const failures = Array.isArray(successEvidence.failures) ? successEvidence.failures as Array<Record<string, unknown>> : [];
+  const rows = Object.entries(namedOutputs).slice(0, 14);
+  if (!Object.keys(model).length) return <Empty text="当前 Node Run 还没有统一输出模型" />;
+  return (
+    <div className="node-run-canonical-result">
+      <div className="node-run-step-meta-grid">
+        <span><b>模型</b>{String(model.schema || "node-run-result/v1")}</span>
+        <span><b>状态</b>{String(model.status || "unknown")}</span>
+        <span><b>成功证据</b>{successEvidence.passed ? "passed" : "not confirmed"}</span>
+        <span><b>Named Outputs</b>{Object.keys(namedOutputs).length}</span>
+        <span><b>输出目录</b>{String(outputSpace.outputs_dir || "-")}</span>
+        <span><b>Manifest</b>{String(outputSpace.manifest_path || "-")}</span>
+      </div>
+      {signals.length || failures.length ? (
+        <div className="node-run-output-map">
+          {signals.slice(0, 8).map((item, index) => (
+            <span key={`signal-${index}`}><b>signal</b>{String(item.source || item.output || "evidence")}{item.kind ? ` · ${String(item.kind)}` : item.status ? ` · ${String(item.status)}` : ""}</span>
+          ))}
+          {failures.slice(0, 4).map((item, index) => (
+            <span key={`failure-${index}`}><b>failure</b>{String(item.source || "evidence")} · {String(item.status || "failed")}</span>
+          ))}
+        </div>
+      ) : null}
+      {rows.length ? (
+        <div className="node-run-core-output-list">
+          {rows.map(([name, raw]) => {
+            const item = detailRecord(raw);
+            return (
+              <article key={name} className="node-run-core-output-card">
+                <div>
+                  <strong>{name}</strong>
+                  <span className="status-pill done">{String(item.value_type || item.kind || "output")}</span>
+                </div>
+                <code>{nodeRunOutputValue(item.value)}</code>
+                {item.source ? <small>来源：{String(item.source)}</small> : null}
+                {item.path ? <small>文件：{String(item.path)}</small> : null}
+              </article>
+            );
+          })}
+        </div>
+      ) : <Empty text="没有 named outputs" />}
+    </div>
+  );
+}
+
 function NodeRunExecutionEvidenceSummary({ result }: { result: NodeRunResult | undefined }) {
   const artifacts = nodeRunDiagnosticArtifacts(result);
   if (!artifacts.length) return <Empty text="没有执行证据文件" />;
@@ -4559,6 +4610,9 @@ function NodeRunResultTabs({ result, events }: { result: NodeRunResult | undefin
               ))}
             </div>
           ) : null}
+          <DetailBlock title="统一输出模型">
+            <NodeRunCanonicalResultSummary result={result} />
+          </DetailBlock>
           <DetailBlock title={`核心输出 · ${coreOutputs.length}`}>
             <NodeRunCoreOutputsSummary result={result} />
           </DetailBlock>

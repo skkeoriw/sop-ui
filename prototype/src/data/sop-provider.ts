@@ -973,6 +973,7 @@ function mapNodeRunResult(raw: Record<string, unknown>, nodeId: string, fallback
     coreOutputs: ((raw.core_outputs as Array<Record<string, unknown>>) || []).map(mapNodeRunCoreOutput),
     relayPackage: mapNodeRunRelayPackage((raw.relay_package as Record<string, unknown>) || {}),
     executionEvidence: mapNodeRunExecutionEvidence((raw.execution_evidence as Record<string, unknown>) || {}),
+    nodeRunResult: (raw.node_run_result as Record<string, unknown>) || (raw.nodeRunResult as Record<string, unknown>) || {},
     actualOutputs: (raw.actual_outputs as Record<string, unknown>) || {},
     outputCategories: (raw.output_categories as Record<string, unknown>) || {},
     validation: (raw.validation as Record<string, unknown>) || {},
