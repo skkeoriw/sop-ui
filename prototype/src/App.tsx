@@ -4925,7 +4925,7 @@ function NodeModuleInlinePanel({
         <DetailBlock title="模块详情">
           <KeyValues data={payload} />
         </DetailBlock>
-        {isSkillModule(module, payload) && <SkillModuleBlocks node={node} payload={payload} />}
+        {shouldRenderSkillModule(module, payload, node) && <SkillModuleBlocks node={node} payload={payload} />}
         {module.id === "artifacts" && <DetailBlock title="产物"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
@@ -4948,6 +4948,12 @@ function skillInstallCommand(node: NodeConfig | NodeRegistryItem | undefined, pa
     || node?.executor?.install_command
     || ""
   ).trim();
+}
+
+function shouldRenderSkillModule(module: NodeModule | undefined, payload: Record<string, unknown>, node: NodeConfig | NodeRegistryItem | undefined) {
+  return isSkillModule(module, payload)
+    || Boolean(skillInstallCommand(node, payload))
+    || Boolean(payload.skill_readme || payload.skill_script || node?.skillReadme || node?.skillScript);
 }
 
 function SkillModuleBlocks({ node, payload = {} }: { node: NodeConfig | NodeRegistryItem; payload?: Record<string, unknown> }) {
@@ -16285,7 +16291,7 @@ function ModuleDetailPanel({
         <DetailBlock title={`${module.title} Detail`}>
           <KeyValues data={payload} />
         </DetailBlock>
-        {isSkillModule(module, payload) && <SkillModuleBlocks node={node} payload={payload} />}
+        {shouldRenderSkillModule(module, payload, node) && <SkillModuleBlocks node={node} payload={payload} />}
         {module.id === "artifacts" && <DetailBlock title="Artifacts"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
