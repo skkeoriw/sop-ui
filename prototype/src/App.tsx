@@ -4925,11 +4925,36 @@ function NodeModuleInlinePanel({
         <DetailBlock title="模块详情">
           <KeyValues data={payload} />
         </DetailBlock>
-        {module.id === "skill" && <DetailBlock title="Skill README"><pre className="log-box compact-log">{String((payload.skill_readme as string) || node.skillReadme || "No README")}</pre></DetailBlock>}
+        {module.id === "skill" && <SkillModuleBlocks node={node} payload={payload} />}
         {module.id === "artifacts" && <DetailBlock title="产物"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
     </section>
+  );
+}
+
+function skillInstallCommand(node: NodeRegistryItem, payload: Record<string, unknown>) {
+  const payloadSkill = detailRecord(payload.skill);
+  return String(
+    payload.install_command
+    || payloadSkill.install_command
+    || node.skill?.install_command
+    || node.executor?.install_command
+    || ""
+  ).trim();
+}
+
+function SkillModuleBlocks({ node, payload }: { node: NodeRegistryItem; payload: Record<string, unknown> }) {
+  const command = skillInstallCommand(node, payload);
+  return (
+    <>
+      <DetailBlock title="Skill Install Command">
+        {command ? <pre className="log-box compact-log">{command}</pre> : <Empty text="该节点没有记录 Skill 安装命令。" />}
+      </DetailBlock>
+      <DetailBlock title="Skill README">
+        <pre className="log-box compact-log">{String((payload.skill_readme as string) || node.skillReadme || "No README")}</pre>
+      </DetailBlock>
+    </>
   );
 }
 
@@ -16254,7 +16279,7 @@ function ModuleDetailPanel({
         <DetailBlock title={`${module.title} Detail`}>
           <KeyValues data={payload} />
         </DetailBlock>
-        {module.id === "skill" && <DetailBlock title="Skill README"><pre className="log-box compact-log">{String((payload.skill_readme as string) || node.skillReadme || "No README")}</pre></DetailBlock>}
+        {module.id === "skill" && <SkillModuleBlocks node={node} payload={payload} />}
         {module.id === "artifacts" && <DetailBlock title="Artifacts"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
