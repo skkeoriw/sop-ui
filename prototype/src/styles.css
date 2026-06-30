@@ -4149,6 +4149,31 @@ pre {
   gap: 7px;
 }
 
+.contract-group-grid,
+.contract-two-column {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.contract-group-grid article,
+.contract-two-column > div {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.contract-group-grid strong,
+.contract-two-column strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
 .button-link {
   display: inline-flex;
   align-items: center;
@@ -5611,6 +5636,11 @@ pre {
 }
 
 @media (max-width: 760px) {
+  .contract-group-grid,
+  .contract-two-column {
+    grid-template-columns: 1fr;
+  }
+
   .app-shell {
     display: block;
   }

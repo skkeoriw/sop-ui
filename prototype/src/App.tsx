@@ -1737,6 +1737,24 @@ function compactNodeBuilderActionRaw(action: Record<string, unknown>) {
   };
 }
 
+function compactContractSynthesisRaw(contract: Record<string, unknown>) {
+  return {
+    status: contract.status,
+    draft_id: contract.draft_id,
+    node_id: contract.node_id,
+    probe_id: contract.probe_id,
+    node_run_id: contract.node_run_id,
+    contract_summary: contract.contract_summary,
+    agent_review: contract.agent_review,
+    evidence: contract.evidence,
+    validation: contract.validation,
+    outputs: contract.outputs,
+    node_model: compactNodeDraftRaw(safeRecord(contract.node_model || contract.node)),
+    node_builder_contract_review: compactNodeBuilderActionRaw(safeRecord(contract.node_builder_contract_review)),
+    synthesized_at: contract.synthesized_at,
+  };
+}
+
 function nodeEntryInputEntries(node: NodeRegistryItem | undefined): Array<[string, unknown]> {
   const entry = node?.entryInputs && Object.keys(node.entryInputs).length ? node.entryInputs : node?.inputs || {};
   return Object.entries(entry);
@@ -16422,6 +16440,12 @@ function NodeDraftDrawer({
   const probeRun = (latestDraft?.probeRun || (["probe-run", "probe_run", "node-draft-probe-run"].includes(actionMode) ? actionResult : {})) as Record<string, unknown>;
   const probeRuns = latestDraft?.probeRuns || [];
   const contractSynthesis = (latestDraft?.contractSynthesis || (["contract-synthesis", "contract_synthesis"].includes(actionMode) ? actionResult : {})) as Record<string, unknown>;
+  const contractNode = safeRecord(contractSynthesis.node_model || contractSynthesis.node);
+  const contractSummary = safeRecord(contractSynthesis.contract_summary || contractNode.contract_summary);
+  const contractRecommendedOutputs = definitionStringList(contractSummary.recommended_edge_outputs);
+  const contractPrimaryOutputs = definitionStringList(contractSummary.primary_outputs);
+  const contractArtifactOutputs = definitionStringList(contractSummary.artifact_outputs);
+  const contractDiagnosticOutputs = definitionStringList(contractSummary.diagnostic_outputs);
   const runtimePublish = (latestDraft?.runtimePublish || (actionStatus === "published" ? actionResult : {})) as Record<string, unknown>;
   const runtimeDelete = (latestDraft?.runtimeDelete || (actionStatus === "deleted" ? actionResult : {})) as Record<string, unknown>;
   const persistencePlan = (latestDraft?.persistencePlan || (actionStatus === "generated" ? actionResult : {})) as Record<string, unknown>;
@@ -16745,7 +16769,18 @@ function NodeDraftDrawer({
                     <Info size={15} />查看契约报告
                   </button>
                 </div>
-                <code>{formatValue(contractSynthesis.status ? contractSynthesis : { status: "waiting" })}</code>
+                {contractSynthesis.status ? (
+                  <div className="node-builder-probe-summary">
+                    <span className={`status-pill ${statusTone(contractSynthesis.status)}`}>{String(contractSynthesis.status)}</span>
+                    <strong>{String(contractSynthesis.node_id || contractNode.id || "node contract")}</strong>
+                    <small>主输出：{contractPrimaryOutputs.join(", ") || "-"}</small>
+                    <small>业务产物：{contractArtifactOutputs.join(", ") || "-"}</small>
+                    <small>推荐交接：{contractRecommendedOutputs.join(", ") || "-"}</small>
+                    <small>诊断输出：{contractDiagnosticOutputs.join(", ") || "-"}</small>
+                  </div>
+                ) : (
+                  <div className="empty-inline">Probe Run 通过后点击 Synthesize Contract，生成最终 Node 输出契约。</div>
+                )}
               </article>
               <article>
                 <strong>Runtime Node</strong>
@@ -16937,6 +16972,24 @@ function NodeBuilderReportModal({
     ? `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(probeNodeId)}/runs/${encodeURIComponent(probeNodeRunId)}?mode=${mode}`
     : "";
   const probeImageUrl = probeOutputUrl(probeRun);
+  const contractNodeModel = safeRecord(contractSynthesis.node_model || contractSynthesis.node);
+  const contractSummary = safeRecord(contractSynthesis.contract_summary || contractNodeModel.contract_summary);
+  const contractAgentReview = safeRecord(contractSynthesis.agent_review || contractNodeModel.agent_review);
+  const contractEvidence = safeRecord(contractSynthesis.evidence || safeRecord(safeRecord(contractNodeModel.analysis).contract_synthesis));
+  const contractEntry = safeRecord(contractNodeModel.entry);
+  const contractEntryInputs = safeRecord(contractEntry.inputs || contractNodeModel.entry_inputs || contractNodeModel.inputs);
+  const contractOutputs = safeRecord(contractNodeModel.outputs || contractSynthesis.outputs);
+  const contractAliases = safeRecord(contractSummary.aliases);
+  const contractOutputGroups = [
+    { title: "主输出", key: "primary_outputs", tone: "done" },
+    { title: "业务产物", key: "artifact_outputs", tone: "running" },
+    { title: "辅助输出", key: "auxiliary_outputs", tone: "waiting" },
+    { title: "诊断输出", key: "diagnostic_outputs", tone: "failed" },
+    { title: "推荐给 Edge", key: "recommended_edge_outputs", tone: "done" },
+  ];
+  const contractWarnings = Array.isArray(contractAgentReview.warnings) ? contractAgentReview.warnings : [];
+  const contractRisks = Array.isArray(contractAgentReview.risks) ? contractAgentReview.risks : [];
+  const contractRecommendations = Array.isArray(contractAgentReview.recommendations) ? contractAgentReview.recommendations : [];
   const titleMap = {
     analysis: "Node Builder 静态分析报告",
     static: "Static Analysis 报告",
@@ -17077,8 +17130,90 @@ function NodeBuilderReportModal({
         {report === "contract" && (
           <div className="report-modal-body">
             <ReportSection title="契约合成结果">
-              <KeyValues data={{ status: contractSynthesis.status || "-", draft_id: contractSynthesis.draft_id || draft?.draftId || "-", node_id: contractSynthesis.node_id || node.id || "-" }} />
-              <details className="node-builder-raw" open><summary>合成契约</summary><code>{formatValue(contractSynthesis)}</code></details>
+              <KeyValues data={{
+                status: contractSynthesis.status || "-",
+                draft_id: contractSynthesis.draft_id || draft?.draftId || "-",
+                node_id: contractSynthesis.node_id || contractNodeModel.id || node.id || "-",
+                probe_id: contractSynthesis.probe_id || contractEvidence.probe_id || "-",
+                node_run_id: contractSynthesis.node_run_id || contractEvidence.node_run_id || "-",
+                manifest_record_count: contractEvidence.manifest_record_count ?? "-",
+                synthesized_at: formatBeijingTime(String(contractSynthesis.synthesized_at || contractEvidence.synthesized_at || ""), "-"),
+                node_builder_contract_review: Object.keys(safeRecord(contractSynthesis.node_builder_contract_review)).length ? "attached" : "fallback / not attached",
+              }} />
+            </ReportSection>
+            <ReportSection title="输出契约分组">
+              <div className="contract-group-grid">
+                {contractOutputGroups.map((group) => {
+                  const names = definitionStringList(contractSummary[group.key]);
+                  return (
+                    <article key={group.key}>
+                      <strong>{group.title}</strong>
+                      <div className="report-pill-list">
+                        {names.map((name) => <span key={`${group.key}-${name}`} className={`status-pill ${group.tone}`}>{name}</span>)}
+                        {!names.length && <span className="status-pill waiting">无</span>}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+              {!!Object.keys(contractAliases).length && <KeyValues data={{ aliases: contractAliases }} />}
+            </ReportSection>
+            <ReportSection title="最终 Node 模型摘要">
+              <KeyValues data={{
+                schema: contractNodeModel.schema || "-",
+                title: contractNodeModel.title || "-",
+                skill: (safeRecord(contractNodeModel.skill).id || safeRecord(contractNodeModel.executor).skill || "-"),
+                executor: safeRecord(contractNodeModel.executor),
+                handoff: safeRecord(contractNodeModel.handoff),
+              }} />
+              <div className="contract-two-column">
+                <div>
+                  <strong>Entry Inputs</strong>
+                  <KeyValues data={contractEntryInputs} />
+                </div>
+                <div>
+                  <strong>Outputs</strong>
+                  <div className="report-table">
+                    {Object.entries(contractOutputs).map(([name, spec]) => {
+                      const record = safeRecord(spec);
+                      const fields = safeRecord(record.fields);
+                      const resolved = safeRecord(fields.resolved_value);
+                      const localPath = safeRecord(fields.local_path);
+                      const sample = resolved.sample ?? record.sample ?? record.path ?? localPath.sample ?? "-";
+                      const fieldNames = Object.keys(fields).slice(0, 6).join(", ") || "-";
+                      return (
+                        <div key={name}>
+                          <strong>{name}</strong>
+                          <span>{String(record.value_type || record.type || record.kind || "-")} · fields: {fieldNames} · sample: {formatValue(sample)}</span>
+                        </div>
+                      );
+                    })}
+                    {!Object.keys(contractOutputs).length && <Empty text="Contract Synthesis 暂未生成输出契约" />}
+                  </div>
+                </div>
+              </div>
+            </ReportSection>
+            <ReportSection title="Node Builder Agent Review">
+              <KeyValues data={{
+                summary: contractAgentReview.summary || contractSynthesis.summary || "-",
+                agent: safeRecord(contractAgentReview.agent),
+              }} />
+              <div className="report-pill-list">
+                {contractRecommendations.map((item, index) => <span key={`recommendation-${index}`} className="status-pill done">{String(item)}</span>)}
+                {contractWarnings.map((item, index) => {
+                  const row = safeRecord(item);
+                  return <span key={`warning-${index}`} className="status-pill waiting">{String(row.code || "warning")}: {String(row.message || item)}</span>;
+                })}
+                {contractRisks.map((item, index) => {
+                  const row = safeRecord(item);
+                  return <span key={`risk-${index}`} className="status-pill failed">{String(row.code || "risk")}: {String(row.message || item)}</span>;
+                })}
+                {!contractRecommendations.length && !contractWarnings.length && !contractRisks.length && <span className="status-pill waiting">无附加建议</span>}
+              </div>
+            </ReportSection>
+            <ReportSection title="Evidence / Raw">
+              <KeyValues data={{ evidence: contractEvidence, validation: contractSynthesis.validation || {} }} />
+              <details className="node-builder-raw"><summary>Raw Contract Synthesis（调试摘要）</summary><code>{formatValue(compactContractSynthesisRaw(contractSynthesis))}</code></details>
             </ReportSection>
           </div>
         )}
