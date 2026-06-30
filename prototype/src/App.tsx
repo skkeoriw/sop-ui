@@ -4883,6 +4883,8 @@ function NodeModuleInlinePanel({
   if (loading) return <section className="module-detail-panel inline-module-detail"><Skeleton /></section>;
   if (!node || !module) return <section className="module-detail-panel inline-module-detail"><Empty text="选择模块查看详情" /></section>;
   const payload = detail?.detail || {};
+  const moduleInstallCommand = skillInstallCommand(node, payload);
+  const moduleSkillReadme = String((payload.skill_readme as string) || node.skillReadme || "").trim();
   if (module.id === "inputs") {
     return (
       <section className="module-detail-panel inline-module-detail">
@@ -4925,7 +4927,16 @@ function NodeModuleInlinePanel({
         <DetailBlock title="模块详情">
           <KeyValues data={payload} />
         </DetailBlock>
-        {shouldRenderSkillModule(module, payload, node) && <SkillModuleBlocks node={node} payload={payload} />}
+        {moduleInstallCommand ? (
+          <DetailBlock title="Skill Install Command">
+            <pre className="log-box compact-log">{moduleInstallCommand}</pre>
+          </DetailBlock>
+        ) : null}
+        {moduleSkillReadme ? (
+          <DetailBlock title="Skill README">
+            <pre className="log-box compact-log">{moduleSkillReadme}</pre>
+          </DetailBlock>
+        ) : null}
         {module.id === "artifacts" && <DetailBlock title="产物"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
