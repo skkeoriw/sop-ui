@@ -1989,6 +1989,7 @@ function outputContractType(spec: unknown) {
     if (record.kind) return String(record.kind);
     if (record.shape) return String(record.shape);
     if (record.type) return String(record.type);
+    if (record.value_type) return String(record.value_type);
   }
   const path = outputContractPath(spec);
   if (!path || path.startsWith("context.")) return "text";
@@ -3256,6 +3257,7 @@ function contractContentLabel(spec: Record<string, unknown>, fallback = "内容"
   if (valueType === "url") return "URL";
   if (valueType === "markdown") return "Markdown";
   if (valueType === "json") return "JSON";
+  if (valueType === "image") return "图片";
   return fallback;
 }
 
@@ -4841,8 +4843,8 @@ function NodeOutputContractPanel({ node, payload, showRaw = true }: { node: Node
           {outputs.map((output) => (
             <article key={output.name} className="node-contract-card">
               <div>
-                <span className="status-pill done">{contractRecord(output.spec).relayable === false ? "不可接续" : "可接续"}</span>
                 <strong>{output.name}</strong>
+                <span className="status-pill done">{contractRecord(output.spec).relayable === false ? "不可接续" : "可接续"}</span>
               </div>
               <div className="node-run-step-meta-grid">
                 <span><b>产物类型</b>{contractContentLabel(contractRecord(output.spec), output.type || "文件")}</span>
