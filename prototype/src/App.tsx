@@ -4905,7 +4905,7 @@ function NodeModuleInlinePanel({
           <div><strong>输出契约</strong><span>这些 outputs 是接力选择的规范，不是某次运行产物列表。</span></div>
           <span className="status-pill done">Definition</span>
         </div>
-        <NodeOutputContractPanel node={node} payload={payload} />
+        <NodeOutputContractPanel node={node} payload={payload} showRaw={false} />
       </section>
     );
   }
@@ -16186,13 +16186,24 @@ function NodesWorkspace({
                 <Edit3 size={14} />编辑定义
               </button>
             </div>
-            <NodeDefinitionV1Panel
-              node={selectedNode}
-              modules={modules}
-              selectedModuleId={routeModuleId}
-              loading={loading}
-              onSelectModule={onSelectModule}
-            />
+            {routeModuleId ? (
+              <NodeModuleRouteHeader
+                node={selectedNode}
+                module={selectedModule}
+                modules={modules}
+                selectedModuleId={routeModuleId}
+                loading={loading}
+                onSelectModule={onSelectModule}
+              />
+            ) : (
+              <NodeDefinitionV1Panel
+                node={selectedNode}
+                modules={modules}
+                selectedModuleId={routeModuleId}
+                loading={loading}
+                onSelectModule={onSelectModule}
+              />
+            )}
             {routeModuleId ? <NodeModuleInlinePanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} /> : null}
           </section>
         </section>
@@ -16374,6 +16385,52 @@ function NodeDefinitionV1Panel({
         {modules.map((module) => (
           <button key={module.id} type="button" className={`btn ${selectedModuleId === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
             {module.title || module.id}
+          </button>
+        ))}
+        {!modules.length ? <small>no modules</small> : null}
+      </div>
+    </section>
+  );
+}
+
+function NodeModuleRouteHeader({
+  node,
+  module,
+  modules,
+  selectedModuleId,
+  loading,
+  onSelectModule,
+}: {
+  node: NodeRegistryItem | undefined;
+  module: NodeModule | undefined;
+  modules: NodeModule[];
+  selectedModuleId?: string;
+  loading: boolean;
+  onSelectModule: (moduleId: string) => void;
+}) {
+  if (loading) return <section className="node-module-route-header"><Skeleton /></section>;
+  if (!node) return <section className="node-module-route-header"><Empty text="选择一个 Node 查看模块" /></section>;
+  const skill = detailRecord(node.skill);
+  return (
+    <section className="node-module-route-header">
+      <div className="node-definition-v1-hero compact">
+        <div>
+          <span className="status-pill done">node-definition/v1 module</span>
+          <h2>{module?.title || selectedModuleId || "Module"}</h2>
+          <p>{node.title || node.nodeId} · {module?.description || "节点模块详情"}</p>
+          <div className="overview-tags">
+            <span>{node.nodeId}</span>
+            <span>{String(node.source || "definition")}</span>
+            <span>{String(skill.id || node.executor?.skill || "skill")}</span>
+          </div>
+        </div>
+        <span className={`status-pill ${module?.status || "ready"}`}>{module?.status || "ready"}</span>
+      </div>
+      <div className="node-detail-module-strip">
+        <span>Modules</span>
+        {modules.map((item) => (
+          <button key={item.id} type="button" className={`btn ${selectedModuleId === item.id ? "active" : ""}`} onClick={() => onSelectModule(item.id)}>
+            {item.title || item.id}
           </button>
         ))}
         {!modules.length ? <small>no modules</small> : null}

@@ -5308,6 +5308,28 @@ pre {
   gap: 12px;
 }
 
+.node-contract-definition-view .node-contract-card {
+  min-height: 0;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 9px;
+}
+
+.node-contract-definition-view .node-contract-card > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.node-contract-definition-view .node-contract-card > div:first-child strong {
+  font-size: 13px;
+}
+
+.node-contract-definition-view .node-run-step-meta-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .node-run-relay-brief {
   display: grid;
   gap: 5px;
