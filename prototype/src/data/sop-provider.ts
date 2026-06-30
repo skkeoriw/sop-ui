@@ -687,6 +687,7 @@ function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
     ...base,
     description: raw.description ? String(raw.description) : undefined,
     case: raw.case ? String(raw.case) : undefined,
+    version: raw.version ? String(raw.version) : undefined,
     skill: (raw.skill as Record<string, unknown>) || {},
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
     actions: (raw.actions as Record<string, unknown>) || {},

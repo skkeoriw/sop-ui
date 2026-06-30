@@ -16184,53 +16184,14 @@ function NodesWorkspace({
                 <Edit3 size={14} />编辑定义
               </button>
             </div>
-            <section className="node-three-layer-grid">
-              <article>
-                <span className="status-pill done">Definition</span>
-                <strong>节点定义层</strong>
-                <small>来自 SOP / agent-brains 定义：Executor、Skill、Inputs、Outputs、默认 capability 和 GitHub 路径。</small>
-                <KeyValues data={{
-                  node_id: selectedNode?.nodeId || "-",
-                  executor: String(selectedNode?.executor?.type || selectedNode?.case || "-"),
-                  skill: String((selectedNode?.skill || {}).id || selectedNode?.executor?.skill || "-"),
-                  outputs: Object.keys(selectedNode?.outputs || {}).length,
-                }} />
-              </article>
-              <article>
-                <span className="status-pill running">Runtime Context</span>
-                <strong>运行环境层</strong>
-                <small>当前 Runtime + Instance 提供执行环境、repo、workspace、Hermes、TG/GitHub 配置。</small>
-                <KeyValues data={{
-                  runtime_id: runtime?.id || "-",
-                  instance_id: instance?.instanceId || "-",
-                  repo: instance?.repo || "-",
-                  wiki_local_path: instance?.wikiLocalPath || "-",
-                }} />
-              </article>
-              <article>
-                <span className="status-pill waiting">Runs</span>
-                <strong>执行记录层</strong>
-                <small>Node Run 保存本次输入、override、执行流、events、产物和能力结果。</small>
-                <button type="button" className="btn primary" disabled={!selectedNode} onClick={() => selectedNode && onOpenNodeRuns(selectedNode.nodeId)}>打开运行工作台</button>
-              </article>
-            </section>
-            <NodeDetailOverviewPanel
+            <NodeDefinitionV1Panel
               node={selectedNode}
               modules={modules}
               selectedModuleId={selectedModule?.id || routeModuleId}
               loading={loading}
               onSelectModule={onSelectModule}
             />
-            {selectedNode && nodeHasEntryInputs(selectedNode) ? (
-              <DetailBlock title="Entry Inputs">
-                <NodeEntryInputsPanel node={selectedNode} />
-              </DetailBlock>
-            ) : null}
             <NodeModuleInlinePanel node={selectedNode} module={selectedModule} detail={moduleDetail} loading={moduleLoading} />
-            <details className="node-definition-details">
-              <summary><span>Developer Definition Details</span><ChevronDown size={15} /></summary>
-              <NodeDetailPanel node={selectedNode} loading={loading} />
-            </details>
           </section>
         </section>
       )}
@@ -16305,6 +16266,115 @@ function ModuleDetailPanel({
         {shouldRenderSkillModule(module, payload, node) && <SkillModuleBlocks node={node} payload={payload} />}
         {module.id === "artifacts" && <DetailBlock title="Artifacts"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
+      </div>
+    </section>
+  );
+}
+
+function NodeDefinitionV1Panel({
+  node,
+  modules,
+  selectedModuleId,
+  loading,
+  onSelectModule,
+}: {
+  node: NodeRegistryItem | undefined;
+  modules: NodeModule[];
+  selectedModuleId?: string;
+  loading: boolean;
+  onSelectModule: (moduleId: string) => void;
+}) {
+  if (loading) return <section className="node-definition-v1-panel"><Skeleton /></section>;
+  if (!node) return <section className="node-definition-v1-panel"><Empty text="选择一个 Node 查看 node-definition/v1" /></section>;
+  const skill = detailRecord(node.skill);
+  const sourceDigest = detailRecord(skill.source_digest || node.sourceDigest);
+  const sourceFiles = detailList(sourceDigest.files);
+  const handoff = detailRecord(node.handoff);
+  const accepts = detailRecord(handoff.accepts);
+  const produces = detailRecord(handoff.produces);
+  const installCommand = skillInstallCommand(node);
+  const ready = !(node.missingFields || []).length;
+  return (
+    <section className="node-definition-v1-panel">
+      <div className="node-definition-v1-hero">
+        <div>
+          <span className="status-pill done">node-definition/v1</span>
+          <h2>{node.title || node.nodeId}</h2>
+          <p>{node.description || "Runtime Node 只描述执行能力；上下游关系由 Workflow Edge 决定。"}</p>
+          <div className="overview-tags">
+            <span>{node.nodeId}</span>
+            <span>{String(node.source || "definition")}</span>
+            <span>{String(skill.id || node.executor?.skill || "skill")}</span>
+          </div>
+        </div>
+        <span className={`status-pill ${ready ? "done" : "waiting"}`}>{ready ? "ready" : "review"}</span>
+      </div>
+
+      <div className="node-definition-v1-grid">
+        <DetailBlock title="Node Model">
+          <KeyValues data={{
+            schema: "node-definition/v1",
+            node_id: node.nodeId,
+            version: node.version || "0.1-runtime-draft",
+            source: node.source || "-",
+            mode: node.mode || "-",
+            editable: node.editable ? "yes" : "no",
+            publish_enabled: node.publishEnabled ? "yes" : "no",
+          }} />
+        </DetailBlock>
+        <DetailBlock title="Skill Source">
+          <div className="node-definition-v1-skill">
+            <KeyValues data={{
+              skill_id: String(skill.id || node.executor?.skill || "-"),
+              source: String(skill.source || node.source || "-"),
+              readme_path: String(skill.readme_path || "-"),
+            }} />
+            <div className="install-command-block">
+              <span>Skill Install Command</span>
+              {installCommand ? <pre className="log-box compact-log">{installCommand}</pre> : <Empty text="该节点没有记录 Skill 安装命令。" />}
+            </div>
+            {sourceFiles.length ? (
+              <div className="node-source-file-list">
+                {sourceFiles.map((file) => <code key={String(file.path || file.name || formatValue(file))}>{String(file.path || file.name || "-")}</code>)}
+              </div>
+            ) : null}
+          </div>
+        </DetailBlock>
+        <DetailBlock title="Executor">
+          <KeyValues data={{
+            type: String(node.executor?.type || "-"),
+            agent: String(node.executor?.agent || "-"),
+            skill: String(node.executor?.skill || skill.id || "-"),
+            request_template: String(node.executor?.request_template || "-"),
+          }} />
+        </DetailBlock>
+        <DetailBlock title="Handoff Interface">
+          <div className="node-handoff-v1-grid">
+            <article>
+              <strong>accepts</strong>
+              <KeyValues data={accepts} />
+            </article>
+            <article>
+              <strong>produces</strong>
+              <KeyValues data={produces} />
+            </article>
+          </div>
+        </DetailBlock>
+      </div>
+
+      <DetailBlock title="Entry Inputs">
+        <NodeEntryInputsPanel node={node} />
+      </DetailBlock>
+      <NodeOutputContractPanel node={node} payload={{}} />
+
+      <div className="node-detail-module-strip">
+        <span>Modules</span>
+        {modules.map((module) => (
+          <button key={module.id} type="button" className={`btn ${selectedModuleId === module.id ? "active" : ""}`} onClick={() => onSelectModule(module.id)}>
+            {module.title || module.id}
+          </button>
+        ))}
+        {!modules.length ? <small>no modules</small> : null}
       </div>
     </section>
   );

@@ -1906,6 +1906,87 @@ pre {
   border-top: 1px solid var(--line-2);
 }
 
+.node-definition-v1-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.node-definition-v1-hero {
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.node-definition-v1-hero > div {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.node-definition-v1-hero h2 {
+  margin: 0;
+  font-size: 23px;
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+.node-definition-v1-hero p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.node-definition-v1-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.node-definition-v1-grid .detail-block {
+  min-width: 0;
+}
+
+.node-definition-v1-skill {
+  display: grid;
+  gap: 10px;
+}
+
+.install-command-block {
+  display: grid;
+  gap: 6px;
+}
+
+.install-command-block > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.node-handoff-v1-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.node-handoff-v1-grid article {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.node-handoff-v1-grid strong {
+  font-size: 13px;
+}
+
 .node-detail-action-strip > div:first-child {
   min-width: 0;
   display: grid;
