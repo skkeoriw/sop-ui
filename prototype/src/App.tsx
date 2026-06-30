@@ -4925,7 +4925,7 @@ function NodeModuleInlinePanel({
         <DetailBlock title="模块详情">
           <KeyValues data={payload} />
         </DetailBlock>
-        {module.id === "skill" && <SkillModuleBlocks node={node} payload={payload} />}
+        {isSkillModule(module, payload) && <SkillModuleBlocks node={node} payload={payload} />}
         {module.id === "artifacts" && <DetailBlock title="产物"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
@@ -4933,18 +4933,24 @@ function NodeModuleInlinePanel({
   );
 }
 
-function skillInstallCommand(node: NodeRegistryItem, payload: Record<string, unknown>) {
+function isSkillModule(module: NodeModule | undefined, payload: Record<string, unknown>) {
+  const moduleId = String(module?.id || payload.id || payload.module_id || "").toLowerCase();
+  return moduleId === "skill";
+}
+
+function skillInstallCommand(node: NodeConfig | NodeRegistryItem | undefined, payload: Record<string, unknown> = {}) {
   const payloadSkill = detailRecord(payload.skill);
+  const nodeSkill = detailRecord((node as { skill?: unknown } | undefined)?.skill);
   return String(
     payload.install_command
     || payloadSkill.install_command
-    || node.skill?.install_command
-    || node.executor?.install_command
+    || nodeSkill.install_command
+    || node?.executor?.install_command
     || ""
   ).trim();
 }
 
-function SkillModuleBlocks({ node, payload }: { node: NodeRegistryItem; payload: Record<string, unknown> }) {
+function SkillModuleBlocks({ node, payload = {} }: { node: NodeConfig | NodeRegistryItem; payload?: Record<string, unknown> }) {
   const command = skillInstallCommand(node, payload);
   return (
     <>
@@ -16279,7 +16285,7 @@ function ModuleDetailPanel({
         <DetailBlock title={`${module.title} Detail`}>
           <KeyValues data={payload} />
         </DetailBlock>
-        {module.id === "skill" && <SkillModuleBlocks node={node} payload={payload} />}
+        {isSkillModule(module, payload) && <SkillModuleBlocks node={node} payload={payload} />}
         {module.id === "artifacts" && <DetailBlock title="Artifacts"><ArtifactList artifacts={((payload.artifacts as Artifact[]) || [])} /></DetailBlock>}
         {module.id === "actions" && <DetailBlock title="CLI"><KeyValues data={(payload.cli as Record<string, unknown>) || node.cli || {}} /></DetailBlock>}
       </div>
@@ -18879,11 +18885,7 @@ function NodeConfigDrawer({
               {node.params && Object.keys(node.params).length > 0 && (
                 <DetailBlock title="Params"><KeyValues data={node.params} /></DetailBlock>
               )}
-              {node.skillReadme && (
-                <DetailBlock title="Skill README">
-                  <pre className="log-box">{node.skillReadme}</pre>
-                </DetailBlock>
-              )}
+              <SkillModuleBlocks node={node} />
               {node.manifest && Object.keys(node.manifest).length > 0 && (
                 <DetailBlock title="Node Manifest"><KeyValues data={node.manifest} /></DetailBlock>
               )}
@@ -18926,6 +18928,7 @@ function NodeManagerInspector({ node, drafts, loading }: { node: NodeRegistryIte
                 install_command: node.executor?.install_command || "-",
               }} />
             </DetailBlock>
+            <SkillModuleBlocks node={node} />
 
             <DetailBlock title="Entry Inputs">
               <KeyValues data={(node.entryInputs as Record<string, unknown>) || (node.inputs as Record<string, unknown>) || {}} />
