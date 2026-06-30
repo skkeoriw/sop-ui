@@ -17,6 +17,7 @@ export interface Runtime {
   spiBaseUrl?: string;
   supportedSopTypes?: string[];
   metadata?: Record<string, string>;
+  agentRuntimes?: Record<string, Record<string, unknown>>;
   instanceCount?: number;
   health?: Record<string, unknown>;
   updatedAt?: string;
@@ -74,6 +75,8 @@ export interface Instance {
   runIndexStatus?: string;
   workflowBinding?: WorkflowBinding;
   capabilities?: Record<string, unknown>;
+  activeAgentRuntime?: string;
+  agentRuntimeStatus?: Record<string, unknown>;
   executionCount?: number;
   latestExecution?: Run;
   artifactCount?: number;

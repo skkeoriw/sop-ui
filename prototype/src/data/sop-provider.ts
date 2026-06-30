@@ -399,6 +399,8 @@ function mapInstance(item: Record<string, unknown>): Instance {
     runIndexStatus: item.run_index_status ? String(item.run_index_status) : undefined,
     workflowBinding: mapWorkflowBinding(item.workflow_binding),
     capabilities: (item.capabilities as Record<string, unknown>) || {},
+    activeAgentRuntime: item.active_agent_runtime ? String(item.active_agent_runtime) : item.agent_runtime ? String(item.agent_runtime) : undefined,
+    agentRuntimeStatus: (item.agent_runtime_status as Record<string, unknown>) || undefined,
     executionCount: Number(item.execution_count || 0),
     latestExecution: latest,
     artifactCount: Number(item.artifact_count || 0),
@@ -1070,6 +1072,7 @@ function mapRuntime(raw: Record<string, unknown>): Runtime | null {
     channelUrl: endpoint,
     spiBaseUrl: String(raw.spi_base_url || raw.spiBaseUrl || metadata.spi_base_url || `${endpoint}/api/sop`),
     metadata,
+    agentRuntimes: (raw.agent_runtimes as Record<string, Record<string, unknown>>) || (metadata.agent_runtimes ? parseJsonObjectMap(metadata.agent_runtimes) : undefined),
     supportedSopTypes: Array.isArray(raw.supported_sop_types)
       ? raw.supported_sop_types.map(String)
       : Array.isArray(raw.supportedSopTypes)
@@ -1086,6 +1089,17 @@ function parseStringArray(value: string): string[] {
     return Array.isArray(parsed) ? parsed.map(String) : [];
   } catch {
     return value.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+}
+
+function parseJsonObjectMap(value: string): Record<string, Record<string, unknown>> | undefined {
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "object" && parsed && !Array.isArray(parsed)
+      ? parsed as Record<string, Record<string, unknown>>
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 

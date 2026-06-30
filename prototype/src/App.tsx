@@ -337,6 +337,12 @@ const WORKFLOW_DRAFT_STORAGE_KEY = "sop-ui.workflow-draft-builder.v1";
 const DEFAULT_WORKFLOW_DRAFT_SOURCE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 const WORKFLOW_DRAFT_NODE_PRIORITY = ["youtube-fetch", "youtube-deep-research", "wiki-build"];
 type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
+type AgentRuntimeId = "hermes" | "openclaw" | "codex";
+const AGENT_RUNTIME_OPTIONS: Array<{ id: AgentRuntimeId; label: string; description: string }> = [
+  { id: "hermes", label: "Hermes", description: "Managed Hermes agent runtime with webhook and CLI checks." },
+  { id: "openclaw", label: "OpenClaw", description: "OpenClaw agent runtime on this host; install/auth is validated by Instance Test." },
+  { id: "codex", label: "Codex", description: "Codex CLI runtime; authentication is completed manually on the host." },
+];
 type RuntimeManagementConfigPreview = RuntimeInheritancePreview & {
   backend?: string;
   d1?: {
@@ -361,7 +367,15 @@ type RuntimeManagementFormDefaults = {
   deleteInstanceId: string;
   deleteInstanceRepo: string;
   deleteInstanceForce: boolean;
+  instanceAgentRuntime: AgentRuntimeId;
 };
+
+function normalizeAgentRuntimeId(value: unknown): AgentRuntimeId {
+  const raw = typeof value === "string" ? value.toLowerCase().replace("_", "-") : "";
+  if (raw === "openclaw" || raw === "open-claw") return "openclaw";
+  if (raw === "codex" || raw === "codex-cli" || raw === "openai-codex") return "codex";
+  return "hermes";
+}
 
 function stringFromStorage(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
@@ -463,6 +477,7 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
     deleteInstanceId: "wiki-sop-new-instance",
     deleteInstanceRepo: "skkeoriw/wiki-sop-new-instance",
     deleteInstanceForce: false,
+    instanceAgentRuntime: "hermes" as AgentRuntimeId,
   };
   try {
     const raw = window.localStorage.getItem(RUNTIME_MANAGEMENT_FORM_STORAGE_KEY);
@@ -482,6 +497,7 @@ function readRuntimeManagementFormDefaults(): RuntimeManagementFormDefaults {
       deleteInstanceId: stringFromStorage(stored.deleteInstanceId, defaults.deleteInstanceId),
       deleteInstanceRepo: stringFromStorage(stored.deleteInstanceRepo, defaults.deleteInstanceRepo),
       deleteInstanceForce: Boolean(stored.deleteInstanceForce),
+      instanceAgentRuntime: normalizeAgentRuntimeId(stored.instanceAgentRuntime || defaults.instanceAgentRuntime),
     };
   } catch {
     return defaults;
@@ -5662,6 +5678,7 @@ export default function App() {
   const [runtimeDeleteConfirmed, setRuntimeDeleteConfirmed] = useState(false);
   const [instanceCreateId, setInstanceCreateId] = useState(runtimeManagementDefaults.instanceId);
   const [instanceCreateRepo, setInstanceCreateRepo] = useState(runtimeManagementDefaults.instanceRepo);
+  const [instanceAgentRuntime, setInstanceAgentRuntime] = useState<AgentRuntimeId>(runtimeManagementDefaults.instanceAgentRuntime);
   const suggestedInstanceCreateId = useMemo(() => generateInstanceId(instanceCreateRepo), [instanceCreateRepo]);
   const [instanceTelegramTokenMode, setInstanceTelegramTokenMode] = useState<"global" | "override">("global");
   const [instanceTelegramToken, setInstanceTelegramToken] = useState("");
@@ -5858,6 +5875,7 @@ export default function App() {
     deleteForce: runtimeDeleteForce,
     instanceId: instanceCreateId,
     instanceRepo: instanceCreateRepo,
+    instanceAgentRuntime,
     deleteInstanceId: instanceDeleteId,
     deleteInstanceRepo: instanceDeleteRepo,
     deleteInstanceForce: instanceDeleteForce,
@@ -5880,6 +5898,7 @@ export default function App() {
       deleteForce: false,
       instanceId: "",
       instanceRepo: "",
+      instanceAgentRuntime: "hermes",
       deleteInstanceId: "",
       deleteInstanceRepo: "",
       deleteInstanceForce: false,
@@ -5896,6 +5915,7 @@ export default function App() {
     setRuntimeDeleteConfirmed(false);
     setInstanceCreateId(cleanDefaults.instanceId);
     setInstanceCreateRepo(cleanDefaults.instanceRepo);
+    setInstanceAgentRuntime(cleanDefaults.instanceAgentRuntime);
     setInstanceDeleteId(cleanDefaults.deleteInstanceId);
     setInstanceDeleteRepo(cleanDefaults.deleteInstanceRepo);
     setInstanceDeleteForce(cleanDefaults.deleteInstanceForce);
@@ -5914,6 +5934,7 @@ export default function App() {
       deleteForce: runtimeDeleteForce,
       instanceId: instanceCreateId,
       instanceRepo: instanceCreateRepo,
+      instanceAgentRuntime,
       deleteInstanceId: instanceDeleteId,
       deleteInstanceRepo: instanceDeleteRepo,
       deleteInstanceForce: instanceDeleteForce,
@@ -5929,6 +5950,7 @@ export default function App() {
     runtimeDeleteForce,
     instanceCreateId,
     instanceCreateRepo,
+    instanceAgentRuntime,
     instanceDeleteId,
     instanceDeleteRepo,
     instanceDeleteForce,
@@ -6336,6 +6358,7 @@ export default function App() {
         instance_id: resolvedInstanceId,
         repo,
         workspace_kind: "execution-workspace",
+        active_agent_runtime: instanceAgentRuntime,
         telegram: {
           chat_id: instanceTelegramChatId.trim(),
           token: instanceTelegramTokenMode === "override" ? instanceTelegramToken.trim() : "",
@@ -6356,6 +6379,8 @@ export default function App() {
           runtime_id: runtime?.id || runtimeId,
           channel_url: runtime?.channelUrl || runtime?.endpoint,
           instance_id: instancePayload.instance_id,
+          active_agent_runtime: instanceAgentRuntime,
+          agent_runtime: instanceAgentRuntime,
           repo: instancePayload.repo,
           instance_repo: instancePayload.repo,
           instance_telegram_chat_id: instanceTelegramChatId.trim(),
@@ -7846,6 +7871,8 @@ export default function App() {
           setInstanceCreateId={setInstanceCreateId}
           instanceCreateRepo={instanceCreateRepo}
           setInstanceCreateRepo={setInstanceCreateRepo}
+          instanceAgentRuntime={instanceAgentRuntime}
+          setInstanceAgentRuntime={setInstanceAgentRuntime}
           suggestedInstanceCreateId={suggestedInstanceCreateId}
           instanceTelegramTokenMode={instanceTelegramTokenMode}
           setInstanceTelegramTokenMode={setInstanceTelegramTokenMode}
@@ -13826,7 +13853,7 @@ function InstanceOverview({
     const query = instanceSearch.trim().toLowerCase();
     return instances.filter((item) => {
       const matchedStatus = instanceStatusFilter === "all" || item.status === instanceStatusFilter;
-      const searchable = [item.instanceId, item.title, item.repo, item.sopType, item.workflowBinding?.workflowName, item.status].filter(Boolean).join(" ").toLowerCase();
+      const searchable = [item.instanceId, item.title, item.repo, item.sopType, item.activeAgentRuntime, item.workflowBinding?.workflowName, item.status].filter(Boolean).join(" ").toLowerCase();
       return matchedStatus && (!query || searchable.includes(query));
     });
   }, [instanceSearch, instanceStatusFilter, instances]);
@@ -13913,6 +13940,7 @@ function InstanceOverview({
                   instance_id: instance.instanceId,
                   repo: instance.repo || "-",
                   workflow: instance.workflowBinding?.workflowName || instance.sopType || "-",
+                  agent_runtime: instance.activeAgentRuntime || "-",
                   latest_run: instance.latestExecution?.pipelineId || "-",
                   runs: instance.executionCount ?? "-",
                   artifacts: instance.artifactCount ?? 0,
@@ -13948,6 +13976,7 @@ function InstanceOverview({
         </div>
         <div className="workflow-metrics">
           <Metric label="Workspace" value={instance?.workspaceStatus || "unknown"} subtext={instance?.wikiLocalPath || "local path pending"} />
+          <Metric label="Agent Runtime" value={instance?.activeAgentRuntime || "hermes"} subtext={readableCapabilityStatus(instance?.agentRuntimeStatus || (instance?.capabilities || {}).agent_runtime)} />
           <Metric label="GitHub" value={capabilityStatus("git")} subtext={instance?.repo || "repo pending"} />
           <Metric label="Telegram" value={capabilityStatus("telegram")} subtext="instance notification" />
           <Metric label="Run Index" value={instance?.runIndexStatus || "unknown"} subtext={latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)}` : "no execution"} />
@@ -13973,6 +14002,8 @@ function InstanceOverview({
             registry: instance?.enabled === false ? "disabled" : "enabled",
             github: capabilityStatus("git"),
             telegram: capabilityStatus("telegram"),
+            agent_runtime: instance?.activeAgentRuntime || "-",
+            agent_runtime_command: String(instance?.agentRuntimeStatus?.command_status || ((instance?.agentRuntimeStatus?.command as string | undefined) ? "present" : "-")),
             run_index: instance?.runIndexStatus || "-",
           }} />
           <div className="instance-health-actions">
@@ -14063,7 +14094,7 @@ function InstanceOverview({
           <div className="runtime-list compact">
             {instances.map((item) => (
               <button key={item.instanceId} type="button" className={`runtime-select-card ${instance?.instanceId === item.instanceId ? "active" : ""}`} onClick={() => onOpenInstance(item.instanceId)}>
-                <div><strong>{item.title}</strong><span>{item.workflowBinding?.workflowName || item.sopType}</span></div>
+                <div><strong>{item.title}</strong><span>{item.workflowBinding?.workflowName || item.sopType} · agent: {item.activeAgentRuntime || "hermes"}</span></div>
                 <span className={`status-pill ${item.status === "failed" ? "failed" : item.status === "running" ? "running" : "done"}`}>{item.status || "ready"}</span>
               </button>
             ))}
@@ -14102,6 +14133,7 @@ function InstanceRow({
       </button>
       <div className="instance-meta">
         <span>{instance.workflowBinding?.workflowName || instance.sopType || "Workflow"}</span>
+        <span>agent: {instance.activeAgentRuntime || "hermes"}</span>
         <span>{instance.repo || "-"}</span>
         <span>{latest ? `${shortId(latest.pipelineId)} · ${statusLabel(latest.status)} · ${runProgressFromNodes(latest).percent}%` : "No execution"}</span>
         <span>{instance.artifactCount || 0} artifacts · {instance.pageCount || 0} pages</span>
@@ -18342,6 +18374,8 @@ function RuntimeManagementStartDrawer({
   setInstanceCreateId,
   instanceCreateRepo,
   setInstanceCreateRepo,
+  instanceAgentRuntime,
+  setInstanceAgentRuntime,
   suggestedInstanceCreateId,
   instanceTelegramTokenMode,
   setInstanceTelegramTokenMode,
@@ -18412,6 +18446,8 @@ function RuntimeManagementStartDrawer({
   setInstanceCreateId: (value: string) => void;
   instanceCreateRepo: string;
   setInstanceCreateRepo: (value: string) => void;
+  instanceAgentRuntime: AgentRuntimeId;
+  setInstanceAgentRuntime: (value: AgentRuntimeId) => void;
   suggestedInstanceCreateId: string;
   instanceTelegramTokenMode: "global" | "override";
   setInstanceTelegramTokenMode: (value: "global" | "override") => void;
@@ -18740,6 +18776,31 @@ function RuntimeManagementStartDrawer({
                 <input value={instanceCreateId} onChange={(event) => setInstanceCreateId(event.target.value)} disabled={pending} placeholder={suggestedInstanceCreateId} />
                 <span className="field-hint">留空时使用下方建议 ID；需要固定命名时可以直接修改。</span>
               </label>
+              <label>
+                <span>Agent Runtime</span>
+                <select
+                  value={instanceAgentRuntime}
+                  onChange={(event) => setInstanceAgentRuntime(normalizeAgentRuntimeId(event.target.value))}
+                  disabled={pending}
+                >
+                  {AGENT_RUNTIME_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+                <span className="field-hint">{AGENT_RUNTIME_OPTIONS.find((option) => option.id === instanceAgentRuntime)?.description}</span>
+              </label>
+              <section className="selected-machine-summary current-runtime-summary">
+                <div>
+                  <strong>Selected Agent Runtime</strong>
+                  <span>Instance Test 会验证命令、认证烟测和 skill 目录。</span>
+                </div>
+                <KeyValues data={{
+                  active_agent_runtime: instanceAgentRuntime,
+                  command_status: String((runtime.agentRuntimes?.[instanceAgentRuntime]?.command_status as string) || (runtime.agentRuntimes?.[instanceAgentRuntime]?.command ? "present" : "unknown")),
+                  auth_mode: String((runtime.agentRuntimes?.[instanceAgentRuntime]?.auth_mode as string) || "-"),
+                  skill_dir: String(((runtime.agentRuntimes?.[instanceAgentRuntime]?.skill_dir as Record<string, unknown> | undefined)?.status as string) || "-"),
+                }} />
+              </section>
               <div className="inline-warning">Will create: {resolvedCreateInstanceId || "select a repo first"}。Instance 只是当前 Runtime 上的执行工作空间，不绑定 Workflow Definition。</div>
               <section className="selected-machine-summary current-runtime-summary">
                 <div>
