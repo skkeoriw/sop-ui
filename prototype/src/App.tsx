@@ -1755,6 +1755,74 @@ function compactContractSynthesisRaw(contract: Record<string, unknown>) {
   };
 }
 
+function compactNodeDraftStageState(draft: NodeDraft) {
+  const probe = safeRecord(draft.probeRun);
+  const probeBusinessStatus = safeRecord(probe.business_output_status);
+  const contract = safeRecord(draft.contractSynthesis);
+  const contractNode = safeRecord(contract.node_model || contract.node);
+  const contractSummary = safeRecord(contract.contract_summary || contractNode.contract_summary);
+  const runtimePublish = safeRecord(draft.runtimePublish);
+  const runtimeDelete = safeRecord(draft.runtimeDelete);
+  const persistencePlan = safeRecord(draft.persistencePlan);
+  return {
+    draft_id: draft.draftId,
+    draft_path: draft.draftPath,
+    validation: {
+      status: draft.validation?.status,
+      node_builder: draft.validation?.node_builder,
+      contract_synthesis: draft.validation?.contract_synthesis,
+      node_builder_contract_review: draft.validation?.node_builder_contract_review,
+      output_count: draft.validation?.output_count,
+    },
+    static_analysis: {
+      status: safeRecord(draft.draftTest).status || draft.validation?.status || "-",
+      validation_status: safeRecord(safeRecord(draft.draftTest).validation).status,
+      next_step: safeRecord(draft.draftTest).next_step,
+    },
+    probe_run: {
+      status: probe.status || "-",
+      execution_status: probe.execution_status || "-",
+      business_output_status: probeBusinessStatus.status || "-",
+      present_outputs: Array.isArray(probeBusinessStatus.present_outputs) ? probeBusinessStatus.present_outputs : [],
+      expected_outputs: Array.isArray(probeBusinessStatus.expected_outputs) ? probeBusinessStatus.expected_outputs : [],
+      probe_id: probe.probe_id,
+      node_run_id: probe.node_run_id,
+      output_url: probeOutputUrl(probe),
+      created_at: probe.created_at,
+      reconciled_at: probe.reconciled_at,
+    },
+    contract_synthesis: {
+      status: contract.status || "-",
+      probe_id: contract.probe_id,
+      node_run_id: contract.node_run_id,
+      primary_outputs: definitionStringList(contractSummary.primary_outputs),
+      artifact_outputs: definitionStringList(contractSummary.artifact_outputs),
+      auxiliary_outputs: definitionStringList(contractSummary.auxiliary_outputs),
+      diagnostic_outputs: definitionStringList(contractSummary.diagnostic_outputs),
+      recommended_edge_outputs: definitionStringList(contractSummary.recommended_edge_outputs),
+      validation_status: safeRecord(contract.validation).status,
+      node_builder_contract_review: Object.keys(safeRecord(contract.node_builder_contract_review)).length ? "attached" : "fallback / not attached",
+      synthesized_at: contract.synthesized_at,
+    },
+    runtime_publish: {
+      status: runtimePublish.status || "-",
+      node_id: runtimePublish.node_id,
+      runtime_catalog_path: runtimePublish.runtime_catalog_path,
+      visible_in_nodes_api: runtimePublish.visible_in_nodes_api,
+    },
+    runtime_delete: {
+      status: runtimeDelete.status || "-",
+      node_id: runtimeDelete.node_id,
+      deleted_at: runtimeDelete.deleted_at,
+    },
+    persistence_plan: {
+      status: persistencePlan.status || "-",
+      target_repo: persistencePlan.target_repo,
+      patch_path: persistencePlan.patch_path || persistencePlan.official_patch_path,
+    },
+  };
+}
+
 function nodeEntryInputEntries(node: NodeRegistryItem | undefined): Array<[string, unknown]> {
   const entry = node?.entryInputs && Object.keys(node.entryInputs).length ? node.entryInputs : node?.inputs || {};
   return Object.entries(entry);
@@ -16686,16 +16754,8 @@ function NodeDraftDrawer({
                   <span className={`status-pill ${statusTone(persistencePlan.status)}`}>repo {String(persistencePlan.status || "waiting")}</span>
                 </div>
                 <details className="node-builder-raw">
-                  <summary>查看阶段状态文件</summary>
-                  <code>{formatValue({
-                    validation: latestDraft.validation,
-                    static_analysis: latestDraft.draftTest,
-                    probe_run: latestDraft.probeRun,
-                    contract_synthesis: latestDraft.contractSynthesis,
-                    runtime_publish: latestDraft.runtimePublish,
-                    runtime_delete: latestDraft.runtimeDelete,
-                    persistence_plan: latestDraft.persistencePlan,
-                  })}</code>
+                  <summary>查看阶段状态摘要</summary>
+                  <code>{formatValue(compactNodeDraftStageState(latestDraft))}</code>
                 </details>
               </div>
             ) : (
