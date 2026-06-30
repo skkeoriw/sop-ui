@@ -1495,6 +1495,12 @@ function inputSpecRequired(spec: unknown, fallback = true) {
   return record.required === undefined ? fallback : Boolean(record.required);
 }
 
+function inputSpecRuntimeManaged(spec: unknown) {
+  const record = inputSpecRecord(spec);
+  const uiGroup = String(record.ui_group || record.group || "").toLowerCase();
+  return Boolean(record.runtime_managed || record.managed_by_runtime || record.runtime_injected || uiGroup === "runtime");
+}
+
 function inputSpecLabel(name: string, spec: unknown) {
   const record = inputSpecRecord(spec);
   return String(record.label || record.title || name.replace(/_/g, " ")).trim();
@@ -1534,11 +1540,27 @@ function nodeDraftEntryInputsFromNode(node: Record<string, unknown> | undefined)
 function defaultProbeInputsFromSpecs(specs: Record<string, unknown>) {
   const rows: Record<string, string> = {};
   Object.entries(specs).forEach(([name, spec]) => {
+    if (inputSpecRuntimeManaged(spec)) return;
     const record = inputSpecRecord(spec);
     const value = record.default ?? record.example ?? record.sample ?? record.placeholder ?? "";
     rows[name] = value === undefined || value === null ? "" : String(value);
   });
   return rows;
+}
+
+function userProbeInputSpecsFromSpecs(specs: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(specs).filter(([, spec]) => !inputSpecRuntimeManaged(spec)));
+}
+
+function missingRequiredProbeInputNames(specs: Record<string, unknown>, values: Record<string, string>) {
+  return Object.entries(specs)
+    .filter(([, spec]) => inputSpecRequired(spec))
+    .filter(([name]) => !String(values[name] || "").trim())
+    .map(([name, spec]) => inputSpecLabel(name, spec));
+}
+
+function manualProbeInputsForSpecs(specs: Record<string, unknown>, values: Record<string, string>) {
+  return Object.fromEntries(Object.entries(values).filter(([name]) => !inputSpecRuntimeManaged(specs[name])));
 }
 
 function probeStatus(value: Record<string, unknown> | undefined) {
@@ -6673,8 +6695,10 @@ export default function App() {
   const runNodeDraftProbeMutation = useMutation({
     mutationFn: (draftId: string) => {
       if (!provider.runNodeDraftProbe) throw new Error("当前 Runtime SPI 不支持 Node Draft Probe Run");
+      const activeDraftNode = safeRecord(activeNodeDraft?.node);
+      const activeEntryInputs = nodeDraftEntryInputsFromNode(activeDraftNode);
       return provider.runNodeDraftProbe(runtime, instance.instanceId, draftId, {
-        manual_inputs: nodeDraftProbeInputs,
+        manual_inputs: manualProbeInputsForSpecs(activeEntryInputs, nodeDraftProbeInputs),
       });
     },
     onSuccess: async (result) => {
@@ -16751,6 +16775,9 @@ function NodeDraftDrawer({
   const runtimeDelete = (latestDraft?.runtimeDelete || (actionStatus === "deleted" ? actionResult : {})) as Record<string, unknown>;
   const persistencePlan = (latestDraft?.persistencePlan || (actionStatus === "generated" ? actionResult : {})) as Record<string, unknown>;
   const draftId = latestDraft?.draftId || "";
+  const userProbeInputSpecs = userProbeInputSpecsFromSpecs(probeInputSpecs);
+  const missingRequiredProbeInputs = missingRequiredProbeInputNames(userProbeInputSpecs, probeInputs);
+  const runProbeDisabled = !draftId || probingDraft || missingRequiredProbeInputs.length > 0;
   const publishedNodeId = String(runtimePublish.node_id || latestDraft?.node.id || generatedNode.id || draftInput.node_id || "");
   const workflowId = workflowIdForInstance(instance);
   const draftHref = nodeBuilderDraftHref(runtime.id, instance.instanceId, workflowId, draftId, mode);
@@ -17013,7 +17040,7 @@ function NodeDraftDrawer({
                 <strong>Probe Run</strong>
                 <small>用页面输入真实运行一次 Runtime harness，确认输入解析、执行和输出 manifest。</small>
                 <div className="node-builder-probe-inputs">
-                  {Object.entries(probeInputSpecs).map(([name, spec]) => (
+                  {Object.entries(userProbeInputSpecs).map(([name, spec]) => (
                     <label key={name}>
                       <span>{inputSpecLabel(name, spec)}{inputSpecRequired(spec) ? " *" : ""}</span>
                       <input
@@ -17024,10 +17051,18 @@ function NodeDraftDrawer({
                       {(inputSpecDescription(spec) || inputSpecEvidence(spec)) && <small>{inputSpecDescription(spec) || inputSpecEvidence(spec)}</small>}
                     </label>
                   ))}
-                  {!Object.keys(probeInputSpecs).length && <div className="empty-inline">该草稿没有声明 entry inputs；Probe Run 会只验证执行器和 manifest。</div>}
+                  {!Object.keys(userProbeInputSpecs).length && <div className="empty-inline">该草稿没有声明需要页面填写的 entry inputs；Probe Run 会只验证执行器和 manifest。</div>}
                 </div>
+                {draftId && missingRequiredProbeInputs.length ? (
+                  <div className="empty-inline">请先填写必填项：{missingRequiredProbeInputs.join(", ")}</div>
+                ) : null}
                 <div className="node-builder-action-row">
-                  <button type="button" disabled={!draftId || probingDraft} onClick={() => onRunProbe(draftId)}>
+                  <button
+                    type="button"
+                    disabled={runProbeDisabled}
+                    title={missingRequiredProbeInputs.length ? `请先填写必填项：${missingRequiredProbeInputs.join(", ")}` : undefined}
+                    onClick={() => onRunProbe(draftId)}
+                  >
                     {probingDraft ? <Loader2 size={15} className="spin" /> : <Activity size={15} />}
                     Run Probe
                   </button>
