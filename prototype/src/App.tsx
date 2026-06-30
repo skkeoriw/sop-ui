@@ -19403,7 +19403,19 @@ function TroubleshootingBlock({ nodeDetail }: { nodeDetail: NodeDetail | undefin
 function KeyValues({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data || {});
   if (!entries.length) return <Empty text="没有数据" />;
-  return <div className="kv">{entries.map(([key, value]) => <div key={key} className="kv-row"><span>{key}</span><code>{formatValue(value)}</code></div>)}</div>;
+  return (
+    <div className="kv">
+      {entries.map(([key, value]) => {
+        const isInstallCommand = key === "install_command" || key === "installCommand";
+        return (
+          <div key={key} className={`kv-row ${isInstallCommand ? "install-command-row" : ""}`}>
+            <span>{isInstallCommand ? "Skill Install Command" : key}</span>
+            <code>{formatValue(value)}</code>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function ActionList({ actions }: { actions: Record<string, unknown> }) {
