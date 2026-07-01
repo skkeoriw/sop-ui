@@ -473,6 +473,8 @@ export interface NodeConfig {
   manifest?: Record<string, unknown>;
   sourceDigest?: Record<string, unknown>;
   coverageReport?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  examples?: Record<string, unknown>;
   a2aAgent?: A2AAgentSummary;
 }
 
@@ -1027,6 +1029,7 @@ export interface SopDataProvider {
   evaluateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   getWorkflowEdgeEvaluation?(runtime: Runtime, instanceId: string, workflowId: string, evaluationId: string): Promise<WorkflowEdgeResult>;
   simulateWorkflowEdge?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
+  runWorkflowEdgeA2A?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   createWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   generateWorkflowEdgeRuntimeSop?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;
   applyWorkflowEdgeDraft?(runtime: Runtime, instanceId: string, workflowId: string, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult>;

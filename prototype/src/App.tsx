@@ -98,7 +98,7 @@ type AppRoute = {
   nodeRunId?: string;
   nodeRunList?: boolean;
   edgeId?: string;
-  nodeBuilder?: "new" | "draft";
+  nodeBuilder?: "new" | "draft" | "flow";
   nodeDraftId?: string;
 };
 type StreamStatus = "live" | "reconnecting" | "polling fallback" | "closed";
@@ -583,6 +583,9 @@ function readRoute(): AppRoute {
       const nodeIndex = parts.indexOf("nodes");
       const isNodeRoute = nodeIndex >= 0;
       const isNodeRunsRoute = isNodeRoute && parts[nodeIndex + 2] === "runs";
+      if (isNodeRoute && parts[nodeIndex + 1] === "new-builder") {
+        return { view: "nodes", ...empty, nodeBuilder: "flow" };
+      }
       if (isNodeRoute && parts[nodeIndex + 1] === "new") {
         return { view: "nodes", ...empty, nodeBuilder: "new" };
       }
@@ -616,6 +619,7 @@ function readRoute(): AppRoute {
     return { view: "workflow", ...empty, pipelineId: decodeURIComponent(parts[offset] || ""), nodeId: decodeURIComponent(parts[offset + 1] || "") };
   }
   if (parts[0] === "nodes") {
+    if (parts[1] === "new-builder") return { view: "nodes", ...empty, nodeBuilder: "flow" };
     if (parts[1] === "new") return { view: "nodes", ...empty, nodeBuilder: "new" };
     if (parts[1] === "drafts") return { view: "nodes", ...empty, nodeBuilder: "draft", nodeDraftId: decodeURIComponent(parts[2] || "") };
     return {
@@ -1043,6 +1047,12 @@ function nodeBuilderDraftHref(runtimeId: string, instanceId: string, workflowId:
     ? `/nodes/drafts/${encodeURIComponent(draftId)}`
     : "/nodes/new";
   return `/runtimes/${encodeURIComponent(runtimeId)}/instances/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}${builderPath}?${params.toString()}`;
+}
+
+function nodeBuilderFlowHref(runtimeId: string, instanceId: string, workflowId: string, mode: DataMode) {
+  const params = new URLSearchParams();
+  params.set("mode", mode);
+  return `/runtimes/${encodeURIComponent(runtimeId)}/instances/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/new-builder?${params.toString()}`;
 }
 
 function nodeCatalogHref(runtimeId: string, instanceId: string, workflowId: string, mode: DataMode) {
@@ -7889,6 +7899,15 @@ export default function App() {
             cancelRunPending={cancelRunMutation.isPending}
             retryPending={retryMutation.isPending}
             cancelNodePending={cancelNodeMutation.isPending}
+          />
+        ) : viewMode === "nodes" && route.nodeBuilder === "flow" && runtime && instance ? (
+          <NodeBuilderFlowPage
+            mode={mode}
+            runtime={runtime}
+            instance={instance}
+            provider={provider}
+            managedNodes={managedNodes}
+            onClose={closeNodeBuilderDraft}
           />
         ) : viewMode === "nodes" && isNodeBuilderRoute ? (
           renderNodeDraftWorkbench("page")
@@ -16225,7 +16244,7 @@ function NodesWorkspace({
   const [nodeView, setNodeView] = useState<"list" | "dag" | "contracts">("list");
   const workflowBinding = instance?.workflowBinding;
   const workflowId = workflowBinding?.workflowId || workflowBinding?.workflowName || instance?.sopType || "workflow";
-  const createNodeHref = runtime && instance ? nodeBuilderDraftHref(runtime.id, instance.instanceId, workflowId, "", mode) : "";
+  const createNodeHref = runtime && instance ? nodeBuilderFlowHref(runtime.id, instance.instanceId, workflowId, mode) : "";
   const routeNodeFallback = routeNodeId && !selectedNode
     ? ({
       nodeId: routeNodeId,
@@ -16354,7 +16373,7 @@ function NodesWorkspace({
       <div className="panel-head compact">
         <div><strong>Definition Groups</strong><span>{visibleNodes.length}/{nodes.length} definitions</span></div>
         {createNodeHref ? (
-          <a className="primary button-link" href={createNodeHref} onClick={(event) => { event.preventDefault(); onOpenDraft(); }}>
+          <a className="primary button-link" href={createNodeHref}>
             <Plus size={16} />创建 Node
           </a>
         ) : (
@@ -16707,6 +16726,10 @@ function NodeDefinitionV1Panel({
   const accepts = detailRecord(handoff.accepts);
   const produces = detailRecord(handoff.produces);
   const installCommand = skillInstallCommand(node);
+  const a2a = node.a2aAgent;
+  const examples = safeRecord(node.examples);
+  const provenance = safeRecord(node.provenance);
+  const exampleOutputUrl = probeOutputUrl(examples);
   const ready = !(node.missingFields || []).length;
   return (
     <section className="node-definition-v1-panel">
@@ -16724,6 +16747,36 @@ function NodeDefinitionV1Panel({
         <span className={`status-pill ${ready ? "done" : "waiting"}`}>{ready ? "ready" : "review"}</span>
       </div>
 
+      <div className="node-definition-v1-focus">
+        <article>
+          <div>
+            <span className="status-pill done"><Network size={13} />A2A Agent</span>
+            <strong>{a2a?.agentId || `${node.nodeId}`}</strong>
+          </div>
+          <p>这个 Node 可以作为 A2A Agent 被调用；Edge 交接会把上游产物包装成 Message Parts 后发送到 RPC。</p>
+          <div className="node-a2a-link-grid">
+            {a2a?.agentCardUrl ? <a href={a2a.agentCardUrl} target="_blank" rel="noreferrer">Open Agent Card</a> : <span>Agent Card URL missing</span>}
+            {a2a?.rpcUrl ? <code>{a2a.rpcUrl}</code> : <code>{a2a?.rpcPath || "POST /a2a/agents/{instance}/nodes/{node}/rpc"}</code>}
+          </div>
+        </article>
+        <article>
+          <div>
+            <span className={`status-pill ${examples.node_run_id ? "done" : "waiting"}`}><Activity size={13} />Probe Example</span>
+            <strong>{String(examples.node_run_id || provenance.node_run_id || "not recorded")}</strong>
+          </div>
+          <p>发布前真实 Probe Run 的输入和输出摘要，用来证明这个 Node 的契约不是纯静态猜测。</p>
+          <div className="node-a2a-link-grid">
+            {exampleOutputUrl ? <a href={exampleOutputUrl} target="_blank" rel="noreferrer">{exampleOutputUrl}</a> : <span>暂无可打开输出 URL</span>}
+            <code>{formatValue({
+              probe_id: examples.probe_id || provenance.probe_id,
+              status: examples.status || "-",
+              output_manifest: examples.output_manifest || "-",
+              business_output_status: examples.business_output_status || {},
+            })}</code>
+          </div>
+        </article>
+      </div>
+
       <div className="node-definition-v1-grid">
         <DetailBlock title="Node Model">
           <KeyValues data={{
@@ -16734,6 +16787,7 @@ function NodeDefinitionV1Panel({
             mode: node.mode || "-",
             editable: node.editable ? "yes" : "no",
             publish_enabled: node.publishEnabled ? "yes" : "no",
+            provenance: provenance.source || "-",
           }} />
         </DetailBlock>
         <DetailBlock title="Skill Source">
@@ -17011,6 +17065,470 @@ function NodeAssistPanel({
         </div>
       </section>
     </aside>
+  );
+}
+
+type NodeBuilderFlowStageId = "analyze" | "draft" | "probe" | "contract" | "publish";
+type NodeBuilderFlowStageStatus = "idle" | "running" | "done" | "failed" | "needs_input";
+type NodeBuilderFlowStage = {
+  id: NodeBuilderFlowStageId;
+  title: string;
+  status: NodeBuilderFlowStageStatus;
+  detail: string;
+};
+
+const NODE_BUILDER_FLOW_STAGES: NodeBuilderFlowStage[] = [
+  { id: "analyze", title: "Builder Agent", status: "idle", detail: "分析 Skill source digest 和用途说明" },
+  { id: "draft", title: "Node Draft", status: "idle", detail: "生成并保存 node-definition/v1 草稿" },
+  { id: "probe", title: "A2A Probe Run", status: "idle", detail: "通过 Draft Node Agent 真实执行一次" },
+  { id: "contract", title: "Contract", status: "idle", detail: "从真实 manifest 合成输入输出契约" },
+  { id: "publish", title: "Publish Gate", status: "idle", detail: "用户确认后发布 Runtime Node" },
+];
+
+function resetNodeBuilderFlowStages() {
+  return NODE_BUILDER_FLOW_STAGES.map((stage) => ({ ...stage }));
+}
+
+function updateNodeBuilderFlowStage(stages: NodeBuilderFlowStage[], id: NodeBuilderFlowStageId, patch: Partial<NodeBuilderFlowStage>) {
+  return stages.map((stage) => (stage.id === id ? { ...stage, ...patch } : stage));
+}
+
+function nodeBuilderFlowTone(status: unknown) {
+  const value = String(status || "").toLowerCase();
+  if (["done", "passed", "published", "synthesized", "ready", "completed", "success", "succeeded"].includes(value)) return "done";
+  if (["failed", "blocked", "error"].includes(value)) return "failed";
+  if (["running", "queued", "pending"].includes(value)) return "running";
+  if (["needs_input", "needs-user-input", "needs_user_input"].includes(value)) return "waiting";
+  return "waiting";
+}
+
+function parseManualInputsText(value: string) {
+  const text = value.trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Probe 输入 JSON 必须是对象");
+    }
+    return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).map(([key, item]) => [key, item == null ? "" : String(item)]));
+  } catch (error) {
+    const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const pairs = lines.map((line) => {
+      const separator = line.includes("=") ? "=" : line.includes(":") ? ":" : "";
+      if (!separator) throw error;
+      const index = line.indexOf(separator);
+      return [line.slice(0, index).trim(), line.slice(index + 1).trim()] as const;
+    });
+    if (!pairs.length || pairs.some(([key]) => !key)) throw error;
+    return Object.fromEntries(pairs);
+  }
+}
+
+function formatManualInputsForEditor(value: Record<string, string>) {
+  return JSON.stringify(value, null, 2);
+}
+
+function NodeBuilderFlowPage({
+  mode,
+  runtime,
+  instance,
+  provider,
+  managedNodes,
+  onClose,
+}: {
+  mode: DataMode;
+  runtime: Runtime;
+  instance: Instance;
+  provider: SopDataProvider;
+  managedNodes: NodeRegistryItem[];
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const workflowId = workflowIdForInstance(instance);
+  const existingNodeIds = useMemo(() => new Set(managedNodes.map((node) => node.nodeId)), [managedNodes]);
+  const [installCommand, setInstallCommand] = useState("");
+  const [instruction, setInstruction] = useState("把这个 Skill 转换成一个不绑定上下游的 Runtime Node；首节点测试时允许用户直接输入，也要保留 skill 暴露的可配置参数。");
+  const [manualInputsText, setManualInputsText] = useState("{\n  \"source_url\": \"https://www.youtube.com/watch?v=Ahfe-BW1cFc\"\n}");
+  const [confirmReal, setConfirmReal] = useState(mode !== "real");
+  const [stages, setStages] = useState<NodeBuilderFlowStage[]>(() => resetNodeBuilderFlowStages());
+  const [running, setRunning] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [error, setError] = useState("");
+  const [builderResult, setBuilderResult] = useState<NodeBuilderResult | null>(null);
+  const [draft, setDraft] = useState<NodeDraft | null>(null);
+  const [probeResult, setProbeResult] = useState<NodeDraftLifecycleResult | null>(null);
+  const [contractResult, setContractResult] = useState<NodeDraftLifecycleResult | null>(null);
+  const [publishResult, setPublishResult] = useState<NodeDraftLifecycleResult | null>(null);
+  const [requiredInputs, setRequiredInputs] = useState<string[]>([]);
+  const [activeStage, setActiveStage] = useState<NodeBuilderFlowStageId>("analyze");
+
+  const generatedEvaluation = safeRecord(builderResult?.evaluation);
+  const generatedNode = safeRecord(generatedEvaluation.node_draft || draft?.node);
+  const contractNode = safeRecord(contractResult?.node_model || contractResult?.node || draft?.node || generatedNode);
+  const currentNode = Object.keys(contractNode).length ? contractNode : generatedNode;
+  const currentNodeId = String((publishResult?.node_id as string | undefined) || draft?.node?.id || currentNode.id || currentNode.node_id || "");
+  const currentTitle = String(currentNode.title || currentNodeId || "New Runtime Node");
+  const entryInputs = nodeDraftEntryInputsFromNode(currentNode);
+  const probeOutput = probeOutputUrl((probeResult || {}) as Record<string, unknown>);
+  const probeNodeRunId = String(probeResult?.node_run_id || "");
+  const probeId = String(probeResult?.probe_id || "");
+  const contractOutputs = safeRecord(contractResult?.outputs || currentNode.outputs);
+  const a2aAgentCardUrl = currentNodeId
+    ? absoluteAppUrl(`/a2a/agents/${encodeURIComponent(instance.instanceId)}/nodes/${encodeURIComponent(currentNodeId)}/agent-card.json`)
+    : "";
+  const a2aRpcUrl = currentNodeId
+    ? absoluteAppUrl(`/a2a/agents/${encodeURIComponent(instance.instanceId)}/nodes/${encodeURIComponent(currentNodeId)}/rpc`)
+    : "";
+  const draftHref = draft?.draftId ? nodeBuilderDraftHref(runtime.id, instance.instanceId, workflowId, draft.draftId, mode) : "";
+  const nodeHref = currentNodeId ? `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(currentNodeId)}?mode=${mode}` : "";
+  const probeRunHref = currentNodeId && probeNodeRunId
+    ? `/runtimes/${encodeURIComponent(runtime.id)}/instances/${encodeURIComponent(instance.instanceId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(currentNodeId)}/runs/${encodeURIComponent(probeNodeRunId)}?mode=${mode}`
+    : "";
+
+  const flowNodes: Node[] = useMemo(() => stages.map((stage, index) => ({
+    id: stage.id,
+    position: { x: index * 228, y: 0 },
+    data: {
+      label: (
+        <div className="node-builder-flow-node-label">
+          <span className={`status-pill ${nodeBuilderFlowTone(stage.status)}`}>{stage.status === "needs_input" ? "needs input" : stage.status}</span>
+          <strong>{stage.title}</strong>
+          <small>{stage.detail}</small>
+        </div>
+      ),
+    },
+    style: {
+      width: 184,
+      borderRadius: 8,
+      border: stage.id === activeStage ? "2px solid #2563eb" : "1px solid #d6deea",
+      background: stage.status === "failed" ? "#fff1f2" : stage.status === "done" ? "#f0fbf4" : stage.status === "running" ? "#eff6ff" : "#ffffff",
+      boxShadow: stage.id === activeStage ? "0 12px 28px rgba(37, 99, 235, 0.16)" : "none",
+    },
+  })), [activeStage, stages]);
+
+  const flowEdges: Edge[] = useMemo(() => stages.slice(0, -1).map((stage, index) => ({
+    id: `${stage.id}-${stages[index + 1].id}`,
+    source: stage.id,
+    target: stages[index + 1].id,
+    animated: stages[index + 1].status === "running",
+    className: `node-builder-flow-edge ${nodeBuilderFlowTone(stage.status)}`,
+  })), [stages]);
+
+  function setStage(id: NodeBuilderFlowStageId, patch: Partial<NodeBuilderFlowStage>) {
+    setActiveStage(id);
+    setStages((current) => updateNodeBuilderFlowStage(current, id, patch));
+  }
+
+  async function invalidateNodeBuilderData() {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.nodeDrafts(mode, runtime, instance.instanceId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.nodes(mode, runtime, instance.instanceId) }),
+    ]);
+  }
+
+  async function runBuildFlow() {
+    if (!provider.evaluateNodeBuilder) throw new Error("当前 Runtime SPI 不支持 Node Builder Agent");
+    if (!provider.runNodeDraftProbe) throw new Error("当前 Runtime SPI 不支持 Node Draft Probe Run");
+    if (!provider.synthesizeNodeDraftContract) throw new Error("当前 Runtime SPI 不支持 Node Draft Contract Synthesis");
+    const command = installCommand.trim();
+    if (!command) {
+      setError("请先填写 base skill install command");
+      return;
+    }
+    if (mode === "real" && !confirmReal) {
+      setError("真实 Runtime 构建前需要确认");
+      return;
+    }
+    let manualInputs: Record<string, string> = {};
+    try {
+      manualInputs = parseManualInputsText(manualInputsText);
+    } catch (parseError) {
+      setError(`Probe 输入格式错误：${String((parseError as Error).message || parseError)}`);
+      return;
+    }
+
+    setRunning(true);
+    setError("");
+    setBuilderResult(null);
+    setDraft(null);
+    setProbeResult(null);
+    setContractResult(null);
+    setPublishResult(null);
+    setRequiredInputs([]);
+    setStages(resetNodeBuilderFlowStages());
+
+    try {
+      setStage("analyze", { status: "running", detail: "Node Builder Agent 正在分析 Skill source digest" });
+      const analysis = await provider.evaluateNodeBuilder(runtime, instance.instanceId, {
+        skill_install_command: command,
+        user_instruction: instruction,
+        fetch_metadata: true,
+      });
+      setBuilderResult(analysis);
+      const evaluation = safeRecord(analysis.evaluation);
+      const analyzedNode = safeRecord(evaluation.node_draft);
+      const analyzedSkill = safeRecord(analyzedNode.skill);
+      const analyzedNodeId = String(analyzedNode.id || analyzedNode.node_id || "").trim();
+      const runtimeNodeId = analyzedNodeId ? uniqueRuntimeNodeId(analyzedNodeId, existingNodeIds) : "";
+      setStage("analyze", { status: "done", detail: String(evaluation.summary || "Builder Agent analysis completed") });
+
+      setStage("draft", { status: "running", detail: "保存 node-definition/v1 Draft" });
+      const runtimeNodeDraft = analyzedNode && runtimeNodeId ? nodeDraftWithRuntimeId(analyzedNode, runtimeNodeId) : analyzedNode;
+      const draftPayload: NodeDraftInput = {
+        skill_install_command: command,
+        user_instruction: instruction,
+        skill_id: String(analyzedSkill.id || runtimeNodeId || ""),
+        node_id: runtimeNodeId,
+        title: String(analyzedNode.title || runtimeNodeId || ""),
+        description: instruction,
+        node_draft: runtimeNodeDraft,
+        node_builder_evaluation: analysis.evaluation,
+        request: analysis.request,
+        trace: analysis.trace,
+      };
+      const createdDraft = await provider.createNodeDraft(runtime, instance.instanceId, draftPayload);
+      setDraft(createdDraft);
+      setStage("draft", { status: "done", detail: `${createdDraft.draftId} 已保存` });
+
+      const createdEntryInputs = nodeDraftEntryInputsFromNode(createdDraft.node);
+      const defaults = defaultProbeInputsFromSpecs(createdEntryInputs);
+      const probeInputs = { ...defaults, ...manualInputs };
+      const missing = missingRequiredProbeInputNames(userProbeInputSpecsFromSpecs(createdEntryInputs), probeInputs);
+      if (missing.length) {
+        setManualInputsText(formatManualInputsForEditor(probeInputs));
+        setRequiredInputs(missing);
+        setStage("probe", { status: "needs_input", detail: `缺少 Probe 必填输入：${missing.join(", ")}` });
+        setError(`请补齐 Probe 输入后重新运行：${missing.join(", ")}`);
+        await invalidateNodeBuilderData();
+        return;
+      }
+      setManualInputsText(formatManualInputsForEditor(probeInputs));
+
+      setStage("probe", { status: "running", detail: "通过 Draft Node A2A Agent 发起真实 Probe Run" });
+      const probe = await provider.runNodeDraftProbe(runtime, instance.instanceId, createdDraft.draftId, {
+        manual_inputs: manualProbeInputsForSpecs(createdEntryInputs, probeInputs),
+      });
+      setProbeResult(probe);
+      const probeStatusText = String(probe.status || "").toLowerCase();
+      if (["failed", "blocked", "error"].includes(probeStatusText)) {
+        setStage("probe", { status: "failed", detail: String(probe.detail || probe.message || "Probe Run failed") });
+        await invalidateNodeBuilderData();
+        return;
+      }
+      setStage("probe", { status: "done", detail: `${String(probe.probe_id || "probe")} ${String(probe.status || "completed")}` });
+
+      setStage("contract", { status: "running", detail: "从 Probe manifest 合成 Node Contract" });
+      const contract = await provider.synthesizeNodeDraftContract(runtime, instance.instanceId, createdDraft.draftId, {
+        include_probe_evidence: true,
+      });
+      setContractResult(contract);
+      const contractStatus = String(contract.status || "").toLowerCase();
+      if (["failed", "blocked", "error"].includes(contractStatus)) {
+        setStage("contract", { status: "failed", detail: String(contract.detail || contract.message || "Contract Synthesis failed") });
+        await invalidateNodeBuilderData();
+        return;
+      }
+      setStage("contract", { status: "done", detail: `${String(contract.status || "synthesized")} · Publish Gate ready` });
+      setStage("publish", { status: "needs_input", detail: "确认契约和示例产物后发布 Runtime Node" });
+      await invalidateNodeBuilderData();
+    } catch (flowError) {
+      const message = String((flowError as Error).message || flowError);
+      setError(message);
+      setStages((current) => current.map((stage) => (stage.id === activeStage ? { ...stage, status: "failed", detail: message } : stage)));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function publishRuntimeNode() {
+    if (!draft?.draftId) return;
+    if (!provider.publishNodeDraft) {
+      setError("当前 Runtime SPI 不支持 Runtime Node 发布");
+      return;
+    }
+    setPublishing(true);
+    setError("");
+    setStage("publish", { status: "running", detail: "正在发布 Runtime Node" });
+    try {
+      const result = await provider.publishNodeDraft(runtime, instance.instanceId, draft.draftId);
+      setPublishResult(result);
+      const status = String(result.status || "").toLowerCase();
+      setStage("publish", {
+        status: ["published", "done", "passed", "success", "succeeded"].includes(status) ? "done" : "failed",
+        detail: String(result.message || result.detail || result.status || "Runtime Node publish finished"),
+      });
+      await invalidateNodeBuilderData();
+    } catch (publishError) {
+      const message = String((publishError as Error).message || publishError);
+      setError(message);
+      setStage("publish", { status: "failed", detail: message });
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  return (
+    <section className="node-builder-flow-page">
+      <header className="node-builder-flow-hero">
+        <div>
+          <span className="status-pill done"><Network size={14} />A2A Node Builder</span>
+          <h2>创建 Runtime Node</h2>
+          <p>输入 base skill 安装命令和用途说明，系统自动完成分析、草稿、A2A Probe、契约合成，最后停在发布确认。</p>
+        </div>
+        <div className="node-builder-flow-hero-actions">
+          <button type="button" className="secondary" onClick={onClose}><ArrowLeft size={15} />返回 Nodes</button>
+          <button type="button" className="primary" disabled={running || (mode === "real" && !confirmReal)} onClick={() => { void runBuildFlow(); }}>
+            {running ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
+            {running ? "构建中" : "Start Builder Flow"}
+          </button>
+        </div>
+      </header>
+
+      <div className="node-builder-flow-layout">
+        <aside className="node-builder-flow-form">
+          <section>
+            <strong>输入</strong>
+            <label>
+              <span>Base Skill Install Command</span>
+              <textarea value={installCommand} onChange={(event) => setInstallCommand(event.target.value)} placeholder="bash <(curl -fsSL 'https://skill.vyibc.com/install-xxx.sh?ts=...')" />
+            </label>
+            <label>
+              <span>用途说明 / 交接描述</span>
+              <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} />
+            </label>
+            <label>
+              <span>Probe 输入 JSON</span>
+              <textarea value={manualInputsText} onChange={(event) => setManualInputsText(event.target.value)} />
+              <small>也支持 key=value 多行格式。创建期真实 Probe 会用这些输入生成示例产物。</small>
+            </label>
+            {mode === "real" && (
+              <label className="confirm-row"><input type="checkbox" checked={confirmReal} onChange={(event) => setConfirmReal(event.target.checked)} />我确认在真实 Runtime 上构建 Node Draft 并运行 Probe</label>
+            )}
+            {requiredInputs.length ? <div className="inline-error">缺少必填 Probe 输入：{requiredInputs.join(", ")}</div> : null}
+            {error ? <div className="inline-error">{error}</div> : null}
+          </section>
+
+          <section>
+            <strong>发布前核心信息</strong>
+            <div className="node-builder-flow-kv">
+              <span>Runtime</span><b>{runtime.id}</b>
+              <span>Instance</span><b>{instance.instanceId}</b>
+              <span>Node</span><b>{currentNodeId || "not generated"}</b>
+              <span>Title</span><b>{currentTitle}</b>
+              <span>Draft</span>{draftHref ? <a href={draftHref}>{draft?.draftId}</a> : <b>not saved</b>}
+              <span>Probe</span><b>{probeId || "not run"}</b>
+              <span>Node Run</span>{probeRunHref ? <a href={probeRunHref}>{probeNodeRunId}</a> : <b>not created</b>}
+              <span>Output</span>{probeOutput ? <a href={probeOutput} target="_blank" rel="noreferrer">{probeOutput}</a> : <b>not available</b>}
+            </div>
+          </section>
+        </aside>
+
+        <main className="node-builder-flow-main">
+          <section className="node-builder-flow-canvas">
+            <ReactFlow
+              nodes={flowNodes}
+              edges={flowEdges}
+              fitView
+              nodesDraggable={false}
+              nodesConnectable={false}
+              elementsSelectable={false}
+              panOnDrag={false}
+              zoomOnScroll={false}
+              zoomOnPinch={false}
+              preventScrolling={false}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="#dfe4ec" gap={22} />
+              <Controls showInteractive={false} />
+            </ReactFlow>
+          </section>
+
+          <section className="node-builder-flow-panel">
+            <div className="node-builder-flow-panel-head">
+              <div>
+                <strong>{currentTitle}</strong>
+                <span>{currentNodeId || "Node ID 会在 Builder Agent 分析后生成"}</span>
+              </div>
+              <button type="button" className="primary" disabled={!draft?.draftId || !contractResult || publishing || running} onClick={() => { void publishRuntimeNode(); }}>
+                {publishing ? <Loader2 size={15} className="spin" /> : <Server size={15} />}
+                发布 Runtime Node
+              </button>
+            </div>
+
+            <div className="node-builder-flow-summary-grid">
+              <article>
+                <strong>A2A Agent</strong>
+                {a2aAgentCardUrl ? <a href={a2aAgentCardUrl} target="_blank" rel="noreferrer">Agent Card</a> : <span>发布前预览不可用</span>}
+                {a2aRpcUrl ? <code>{a2aRpcUrl}</code> : <code>{"POST /a2a/agents/{instance}/nodes/{node}/rpc"}</code>}
+              </article>
+              <article>
+                <strong>Skill Install Command</strong>
+                <code>{installCommand || String(safeRecord(currentNode.skill).install_command || "-")}</code>
+              </article>
+              <article>
+                <strong>Inputs Contract</strong>
+                <code>{formatValue(entryInputs)}</code>
+              </article>
+              <article>
+                <strong>Outputs Contract</strong>
+                <code>{formatValue(contractOutputs)}</code>
+              </article>
+            </div>
+
+            <section className="node-builder-flow-evidence">
+              <div className="node-builder-flow-panel-head">
+                <div>
+                  <strong>创建期真实产物</strong>
+                  <span>Probe Run 产物会作为这个 Node 的示例输出和发布判断依据。</span>
+                </div>
+                <div className="node-builder-flow-hero-actions">
+                  {probeRunHref ? <a className="button-link" href={probeRunHref}>Open Node Run</a> : null}
+                  {nodeHref && publishResult ? <a className="button-link" href={nodeHref}>Open Node</a> : null}
+                </div>
+              </div>
+              {probeResult ? (
+                <div className="node-builder-flow-summary-grid">
+                  <article>
+                    <strong>Probe Result</strong>
+                    <code>{formatValue({
+                      status: probeResult.status,
+                      probe_id: probeResult.probe_id,
+                      node_run_id: probeResult.node_run_id,
+                      business_output_status: probeResult.business_output_status,
+                    })}</code>
+                  </article>
+                  <article>
+                    <strong>Contract Result</strong>
+                    <code>{formatValue({
+                      status: contractResult?.status,
+                      output_count: contractResult?.validation && safeRecord(contractResult.validation).output_count,
+                      outputs: contractResult?.outputs,
+                    })}</code>
+                  </article>
+                </div>
+              ) : (
+                <Empty text="尚未产生 Probe 示例产物" />
+              )}
+            </section>
+
+            <details className="node-builder-raw">
+              <summary>Debug: Builder / Draft / Probe / Contract / Publish</summary>
+              <code>{formatValue({
+                builder: builderResult ? {
+                  status: builderResult.status,
+                  evaluation: compactNodeBuilderEvaluationRaw(safeRecord(builderResult.evaluation)),
+                  request: builderResult.request,
+                } : null,
+                draft,
+                probe: probeResult,
+                contract: contractResult,
+                publish: publishResult,
+              })}</code>
+            </details>
+          </section>
+        </main>
+      </div>
+    </section>
   );
 }
 

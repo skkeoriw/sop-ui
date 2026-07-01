@@ -619,6 +619,8 @@ function mapNodeConfig(raw: Record<string, unknown>, nodeId: string): NodeConfig
     manifest: (raw.manifest as Record<string, unknown>) || {},
     sourceDigest: ((raw.source_digest || raw.sourceDigest || ((raw.skill as Record<string, unknown> | undefined)?.source_digest)) as Record<string, unknown>) || {},
     coverageReport: ((raw.coverage_report || raw.coverageReport) as Record<string, unknown>) || {},
+    provenance: ((raw.provenance || raw.provenanceInfo) as Record<string, unknown>) || {},
+    examples: ((raw.examples || raw.example_outputs || raw.exampleOutputs) as Record<string, unknown>) || {},
   };
 }
 
@@ -1851,6 +1853,13 @@ export const sopProvider: SopDataProvider = {
   async simulateWorkflowEdge(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
     return postJsonResult<Record<string, unknown>>(
       `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/simulate`,
+      input
+    );
+  },
+
+  async runWorkflowEdgeA2A(runtime, instanceId, workflowId, input: WorkflowEdgeRequest): Promise<WorkflowEdgeResult> {
+    return postJsonResult<Record<string, unknown>>(
+      `${runtime.endpoint}/api/sop/${encodeURIComponent(instanceId)}/workflows/${encodeURIComponent(workflowId)}/edges/run-a2a`,
       input
     );
   },
