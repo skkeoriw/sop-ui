@@ -5821,6 +5821,53 @@ pre {
   font-size: 12px;
 }
 
+.node-relay-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.edge-a2a-result-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #b8d4ff;
+  border-radius: 8px;
+  background: #f7fbff;
+  padding: 10px;
+}
+
+.edge-a2a-result-head,
+.edge-a2a-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.edge-a2a-result-head {
+  justify-content: space-between;
+}
+
+.edge-a2a-result-head > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.edge-a2a-result-head strong,
+.edge-a2a-result-head span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edge-a2a-result-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .confirm-row input {
   width: 16px;
   min-height: 16px;

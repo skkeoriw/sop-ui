@@ -5355,6 +5355,7 @@ function NodeRunDetailPage({
   const [selectedRelayTargetId, setSelectedRelayTargetId] = useState("");
   const [relayMappings, setRelayMappings] = useState<NodeRunRelayMapping[]>([]);
   const [relayInstruction, setRelayInstruction] = useState("");
+  const queryClient = useQueryClient();
   const stepKey = (result?.steps || []).map((step) => step.id).join("|");
   const sourceOutputRows = useMemo(() => nodeOutputContractRows(node, result), [node?.nodeId, result?.nodeRunId, result?.relayPackage?.items?.length]);
   const sourceOutputNames = sourceOutputRows.map((item) => item.name).filter(Boolean);
@@ -5388,6 +5389,48 @@ function NodeRunDetailPage({
     return "";
   })();
   const relayReady = !relayDisabledReason;
+  const edgeA2aRpcUrl = selectedRelayTarget ? a2aNodeRpcUrl(instance?.a2aAgent, selectedRelayTarget.node.nodeId) : "";
+  const edgeA2aMutation = useMutation({
+    mutationFn: async () => {
+      if (!provider.runWorkflowEdgeA2A) throw new Error("当前 Runtime Provider 不支持 Edge A2A Handoff");
+      if (!runtime || !instance) throw new Error("缺少 Runtime 或 Instance 上下文");
+      if (!result?.nodeRunId) throw new Error("缺少上游 Node Run");
+      if (!selectedRelayTarget) throw new Error("缺少目标 Node");
+      return provider.runWorkflowEdgeA2A(runtime, instance.instanceId, workflowId, {
+        source_node_run_id: result.nodeRunId,
+        target_node_id: selectedRelayTarget.node.nodeId,
+        relay_mode: relayMode,
+        selected_outputs: relayMode === "selected_outputs" ? selectedRelayOutputs : [],
+        relay_mappings: relayMode === "selected_outputs" ? relayMappingRows : [],
+        edge_handoff_instruction: relayInstruction.trim() || `Use the upstream outputs from ${result.nodeRunId} as context for this downstream node run.`,
+        request_id: `sop-ui-edge-a2a-${Date.now()}`,
+      });
+    },
+    onSuccess: async (data) => {
+      if (!runtime || !instance || !selectedRelayTarget) return;
+      const targetNodeId = String(data.target_node_id || selectedRelayTarget.node.nodeId || "");
+      const responsePayload = a2aRecord(data.a2a_response || (data.task ? { result: data.task } : {}));
+      const taskStatus = Object.keys(responsePayload).length ? a2aTaskStatus(responsePayload) : undefined;
+      const taskNodeRunId = taskStatus?.nodeRunId && taskStatus.nodeRunId !== "-" ? taskStatus.nodeRunId : "";
+      const targetNodeRunId = String(data.target_node_run_id || data.targetNodeRunId || taskNodeRunId || "");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.nodeRuns(mode, runtime, instance.instanceId, workflowId, targetNodeId) }),
+        targetNodeRunId ? queryClient.invalidateQueries({ queryKey: queryKeys.nodeRun(mode, runtime, instance.instanceId, workflowId, targetNodeId, targetNodeRunId) }) : Promise.resolve(),
+      ]);
+    },
+  });
+  const edgeA2aData = edgeA2aMutation.data as Record<string, unknown> | undefined;
+  const edgeA2aRequest = edgeA2aData ? a2aRecord(edgeA2aData.a2a_request) : undefined;
+  const edgeA2aResponse = edgeA2aData
+    ? a2aRecord(edgeA2aData.a2a_response || (edgeA2aData.task ? { jsonrpc: "2.0", result: edgeA2aData.task } : {}))
+    : undefined;
+  const edgeA2aTask = edgeA2aResponse && Object.keys(edgeA2aResponse).length ? a2aTaskStatus(edgeA2aResponse) : undefined;
+  const edgeA2aTaskNodeRunId = edgeA2aTask?.nodeRunId && edgeA2aTask.nodeRunId !== "-" ? edgeA2aTask.nodeRunId : "";
+  const edgeA2aTargetNodeRunId = edgeA2aData ? String(edgeA2aData.target_node_run_id || edgeA2aData.targetNodeRunId || edgeA2aTaskNodeRunId || "") : "";
+  const edgeA2aTargetNodeId = String(edgeA2aData?.target_node_id || selectedRelayTarget?.node.nodeId || "");
+  const edgeA2aDisabledReason = relayDisabledReason
+    || (!provider.runWorkflowEdgeA2A ? "当前 Runtime Provider 不支持 Edge A2A Handoff" : "")
+    || (!runtime || !instance ? "缺少 Runtime 或 Instance 上下文" : "");
   function toggleRelayOutput(name: string) {
     if (!name) return;
     setSelectedRelayOutputs((current) => current.includes(name) ? current.filter((item) => item !== name) : [...current, name]);
@@ -5619,18 +5662,49 @@ function NodeRunDetailPage({
                   />
                   <small>这段说明会写入目标 Node Run 的 Relay Context Brief，并出现在 Agent Request 中。</small>
                 </label>
+                {edgeA2aMutation.error ? (
+                  <div className="inline-error">
+                    A2A Handoff 失败：{edgeA2aMutation.error instanceof Error ? edgeA2aMutation.error.message : String(edgeA2aMutation.error)}
+                  </div>
+                ) : null}
+                {edgeA2aData ? (
+                  <section className="edge-a2a-result-panel">
+                    <div className="edge-a2a-result-head">
+                      <div>
+                        <strong>Edge A2A Handoff Result</strong>
+                        <span>上游 manifest 已封装为 A2A Message，并通过目标 Node RPC 创建下游 Task。</span>
+                      </div>
+                      <div className="edge-a2a-result-actions">
+                        <span className={`status-pill ${String(edgeA2aData.edge_status || edgeA2aTask?.state || "").toLowerCase().includes("passed") || String(edgeA2aTask?.state || "").toLowerCase().includes("completed") ? "done" : "waiting"}`}>
+                          {String(edgeA2aData.edge_status || edgeA2aTask?.state || "returned")}
+                        </span>
+                        {edgeA2aTargetNodeRunId && edgeA2aTargetNodeId ? (
+                          <button type="button" className="btn" onClick={() => onOpenNodeRun(edgeA2aTargetNodeId, edgeA2aTargetNodeRunId)}>
+                            打开下游 Node Run
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <A2AExchangeModule kind="node" rpcUrl={edgeA2aRpcUrl} request={edgeA2aRequest} payload={edgeA2aResponse} />
+                    <details className="node-builder-raw">
+                      <summary>Raw Edge A2A Wrapper</summary>
+                      <code>{formatValue(edgeA2aData)}</code>
+                    </details>
+                  </section>
+                ) : null}
                 </div>
                 <div className="node-relay-footer">
                   <div>
                     <strong>{selectedRelayTarget?.node.title || selectedRelayTarget?.node.nodeId || "未选择目标节点"}</strong>
-                  <span>{relayDisabledReason || (relayMode === "selected_outputs" ? "手动映射会在运行前按目标输入契约校验。" : "运行时会按目标节点输入契约解析接力包。")}</span>
-                </div>
-                <button
-                  type="button"
-                  className="btn primary"
-                  disabled={!relayReady}
-                  title={relayDisabledReason || "打开目标运行工作台"}
-                  onClick={() => {
+                    <span>{edgeA2aDisabledReason || (relayMode === "selected_outputs" ? "手动映射会通过 A2A Message metadata 交给目标节点。" : "Runtime 会把上游 manifest 和产物封装成 A2A Message。")}</span>
+                  </div>
+                  <div className="node-relay-footer-actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!relayReady}
+                      title={relayDisabledReason || "打开目标运行工作台"}
+                      onClick={() => {
                       if (!selectedRelayTarget) return;
                       onRelayNodeRun(selectedRelayTarget.node.nodeId, result.nodeRunId, {
                         relayMode,
@@ -5640,9 +5714,20 @@ function NodeRunDetailPage({
                       });
                       setRelayOpen(false);
                     }}
-                  >
-                    打开目标运行工作台
-                  </button>
+                    >
+                      打开目标运行工作台
+                    </button>
+                    <button
+                      type="button"
+                      className="btn primary"
+                      disabled={Boolean(edgeA2aDisabledReason) || edgeA2aMutation.isPending}
+                      title={edgeA2aDisabledReason || "通过 A2A RPC 直接运行下游节点"}
+                      onClick={() => edgeA2aMutation.mutate()}
+                    >
+                      {edgeA2aMutation.isPending ? <Loader2 size={13} className="spin" /> : <Send size={13} />}
+                      Run A2A Handoff
+                    </button>
+                  </div>
                 </div>
               </section>
             </div>
