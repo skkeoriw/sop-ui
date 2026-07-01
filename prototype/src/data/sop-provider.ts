@@ -14,6 +14,7 @@ import type {
   NodeDraftInput,
   NodeDraftLifecycleResult,
   NodeDraftSchema,
+  A2AAgentSummary,
   NodeLog,
   NodeEvent,
   NodeModule,
@@ -401,6 +402,7 @@ function mapInstance(item: Record<string, unknown>): Instance {
     capabilities: (item.capabilities as Record<string, unknown>) || {},
     activeAgentRuntime: item.active_agent_runtime ? String(item.active_agent_runtime) : item.agent_runtime ? String(item.agent_runtime) : undefined,
     agentRuntimeStatus: (item.agent_runtime_status as Record<string, unknown>) || undefined,
+    a2aAgent: mapA2AAgentSummary(item.a2a_agent || item.a2aAgent),
     executionCount: Number(item.execution_count || 0),
     latestExecution: latest,
     artifactCount: Number(item.artifact_count || 0),
@@ -410,6 +412,25 @@ function mapInstance(item: Record<string, unknown>): Instance {
     spiBaseUrl: item.spi_base_url ? String(item.spi_base_url) : undefined,
     createdAt: item.created_at ? String(item.created_at) : undefined,
     updatedAt: item.updated_at ? String(item.updated_at) : undefined,
+  };
+}
+
+function mapA2AAgentSummary(raw: unknown): A2AAgentSummary | undefined {
+  const item = typeof raw === "object" && raw ? raw as Record<string, unknown> : {};
+  if (!Object.keys(item).length) return undefined;
+  return {
+    protocol: item.protocol ? String(item.protocol) : undefined,
+    protocolVersion: item.protocol_version ? String(item.protocol_version) : item.protocolVersion ? String(item.protocolVersion) : undefined,
+    agentId: item.agent_id ? String(item.agent_id) : item.agentId ? String(item.agentId) : undefined,
+    scope: item.scope ? String(item.scope) : undefined,
+    instanceId: item.instance_id ? String(item.instance_id) : item.instanceId ? String(item.instanceId) : undefined,
+    nodeId: item.node_id ? String(item.node_id) : item.nodeId ? String(item.nodeId) : undefined,
+    activeAgentRuntime: item.active_agent_runtime ? String(item.active_agent_runtime) : item.activeAgentRuntime ? String(item.activeAgentRuntime) : undefined,
+    agentCardUrl: item.agent_card_url ? String(item.agent_card_url) : item.agentCardUrl ? String(item.agentCardUrl) : undefined,
+    rpcUrl: item.rpc_url ? String(item.rpc_url) : item.rpcUrl ? String(item.rpcUrl) : undefined,
+    agentCardPath: item.agent_card_path ? String(item.agent_card_path) : item.agentCardPath ? String(item.agentCardPath) : undefined,
+    rpcPath: item.rpc_path ? String(item.rpc_path) : item.rpcPath ? String(item.rpcPath) : undefined,
+    gateway: item.gateway ? String(item.gateway) : undefined,
   };
 }
 
@@ -694,6 +715,7 @@ function mapNodeRegistryItem(raw: Record<string, unknown>): NodeRegistryItem {
     capabilities: (raw.capabilities as Record<string, unknown>) || {},
     actions: (raw.actions as Record<string, unknown>) || {},
     cli: (raw.cli as Record<string, string>) || {},
+    a2aAgent: mapA2AAgentSummary(raw.a2a_agent || raw.a2aAgent),
     modules: ((raw.modules as Array<Record<string, unknown>>) || []).map(mapNodeModule),
     source: raw.source ? String(raw.source) : undefined,
     runtimeCatalogPath: raw.runtime_catalog_path ? String(raw.runtime_catalog_path) : raw.runtimeCatalogPath ? String(raw.runtimeCatalogPath) : undefined,

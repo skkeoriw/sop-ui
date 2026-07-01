@@ -43,6 +43,21 @@ export interface WorkflowBinding {
   bindingStatus: string;
 }
 
+export interface A2AAgentSummary {
+  protocol?: string;
+  protocolVersion?: string;
+  agentId?: string;
+  scope?: string;
+  instanceId?: string;
+  nodeId?: string;
+  activeAgentRuntime?: string;
+  agentCardUrl?: string;
+  rpcUrl?: string;
+  agentCardPath?: string;
+  rpcPath?: string;
+  gateway?: string;
+}
+
 export interface WorkflowDefinition {
   workflowId: string;
   name: string;
@@ -77,6 +92,7 @@ export interface Instance {
   capabilities?: Record<string, unknown>;
   activeAgentRuntime?: string;
   agentRuntimeStatus?: Record<string, unknown>;
+  a2aAgent?: A2AAgentSummary;
   executionCount?: number;
   latestExecution?: Run;
   artifactCount?: number;
@@ -457,6 +473,7 @@ export interface NodeConfig {
   manifest?: Record<string, unknown>;
   sourceDigest?: Record<string, unknown>;
   coverageReport?: Record<string, unknown>;
+  a2aAgent?: A2AAgentSummary;
 }
 
 export type NodeDepClass = "independent" | "state_dependent" | "artifact_dependent";

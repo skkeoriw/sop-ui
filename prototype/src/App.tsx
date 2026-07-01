@@ -49,6 +49,7 @@ import type {
   DagEdge,
   DataMode,
   Instance,
+  A2AAgentSummary,
   NodeBuilderResult,
   NodeDraft,
   NodeDraftInput,
@@ -131,6 +132,13 @@ type RuntimeProbeResult = {
   latencyMs?: number;
   summary: string;
   checkedAt: string;
+};
+type A2ATestKind = "instance" | "node";
+type A2ATestState = {
+  kind: A2ATestKind;
+  loading?: boolean;
+  error?: string;
+  payload?: Record<string, unknown>;
 };
 type WorkflowDraftEdgeStatus = "compatible" | "needs_review" | "blocked" | "incompatible" | "stale";
 type WorkflowDraftNode = {
@@ -1050,6 +1058,60 @@ async function copyText(value: string) {
     // Fall through to the prompt fallback.
   }
   window.prompt("Copy", value);
+}
+
+function a2aNodeRpcUrl(agent: A2AAgentSummary | undefined, nodeId = "a2a-smoke-echo") {
+  const rpcUrl = agent?.rpcUrl || "";
+  if (!rpcUrl) return "";
+  return rpcUrl.replace(/\/rpc\/?$/, `/nodes/${encodeURIComponent(nodeId)}/rpc`);
+}
+
+function a2aTaskFromPayload(payload: Record<string, unknown> | undefined) {
+  if (!payload) return {};
+  const result = payload.result;
+  return typeof result === "object" && result ? result as Record<string, unknown> : payload;
+}
+
+function a2aTaskStatus(payload: Record<string, unknown> | undefined) {
+  const task = a2aTaskFromPayload(payload);
+  const status = typeof task.status === "object" && task.status ? task.status as Record<string, unknown> : {};
+  const metadata = typeof task.metadata === "object" && task.metadata ? task.metadata as Record<string, unknown> : {};
+  return {
+    task,
+    state: String(status.state || "-"),
+    taskId: String(task.id || "-"),
+    authStatus: String(metadata.auth_status || "-"),
+    nodeRunId: String(metadata.node_run_id || "-"),
+    outputManifest: String(metadata.output_manifest || "-"),
+    markerPresent: JSON.stringify(payload || {}).includes("sop-a2a-"),
+  };
+}
+
+async function sendA2ASmoke(rpcUrl: string, kind: A2ATestKind) {
+  const marker = kind === "node" ? "sop-a2a-node-ok" : "sop-a2a-agent-ok";
+  const response = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: `sop-ui-${kind}-smoke-${Date.now()}`,
+      method: "message/send",
+      params: {
+        message: {
+          role: "user",
+          parts: [{ text: `Print exactly ${marker}.` }],
+        },
+        configuration: {
+          acceptedOutputModes: ["text/plain", "application/json"],
+          returnImmediately: false,
+        },
+        metadata: { source: "sop-ui.instance-a2a-panel", smoke_kind: kind },
+      },
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 300)}`);
+  return JSON.parse(text) as Record<string, unknown>;
 }
 
 function searchForNodeRunsPage() {
@@ -13790,6 +13852,87 @@ function InstanceConfigEditor({
   );
 }
 
+function InstanceA2AAgentPanel({ instance }: { instance?: Instance }) {
+  const agent = instance?.a2aAgent;
+  const [testState, setTestState] = useState<A2ATestState>({ kind: "instance" });
+  const nodeRpcUrl = a2aNodeRpcUrl(agent);
+  const latest = testState.payload ? a2aTaskStatus(testState.payload) : undefined;
+  const latestTone = latest?.state === "completed" ? "done" : latest?.authStatus === "not_verifiable_by_default" ? "waiting" : latest ? "failed" : "waiting";
+
+  async function runSmoke(kind: A2ATestKind) {
+    const rpcUrl = kind === "node" ? nodeRpcUrl : agent?.rpcUrl || "";
+    if (!rpcUrl) return;
+    setTestState({ kind, loading: true });
+    try {
+      const payload = await sendA2ASmoke(rpcUrl, kind);
+      setTestState({ kind, payload });
+    } catch (error) {
+      setTestState({ kind, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  if (!instance) return <Empty text="请选择一个 Instance" />;
+  if (!agent) {
+    return (
+      <div className="a2a-agent-panel empty">
+        <Empty text="当前 Runtime 还没有返回 a2a_agent。请确认 Runtime bridge 已部署到包含 A2A Gateway 的版本。" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="a2a-agent-panel">
+      <div className="a2a-agent-summary">
+        <div>
+          <span className="status-pill done"><Network size={14} />A2A</span>
+          <strong>{agent.agentId || instance.instanceId}</strong>
+          <small>{agent.gateway || "runtime-a2a-gateway"} · {agent.activeAgentRuntime || instance.activeAgentRuntime || "-"}</small>
+        </div>
+        <div className="a2a-agent-actions">
+          {agent.agentCardUrl ? <a className="button-link" href={agent.agentCardUrl} target="_blank" rel="noreferrer">Open Agent Card</a> : null}
+          <button type="button" className="ghost-btn compact" disabled={!agent.rpcUrl} onClick={() => { void copyText(agent.rpcUrl || ""); }}><Copy size={13} />Copy RPC</button>
+        </div>
+      </div>
+      <KeyValues data={{
+        card: agent.agentCardUrl || "-",
+        rpc: agent.rpcUrl || "-",
+        node_rpc: nodeRpcUrl || "-",
+        protocol: agent.protocol || "a2a",
+        version: agent.protocolVersion || "-",
+        scope: agent.scope || "instance",
+      }} />
+      <div className="a2a-smoke-actions">
+        <button type="button" className="btn primary" disabled={!agent.rpcUrl || testState.loading} onClick={() => { void runSmoke("instance"); }}>
+          {testState.loading && testState.kind === "instance" ? <Loader2 size={14} className="spin" /> : <Send size={14} />}
+          Test Instance Agent
+        </button>
+        <button type="button" className="btn" disabled={!nodeRpcUrl || testState.loading} onClick={() => { void runSmoke("node"); }}>
+          {testState.loading && testState.kind === "node" ? <Loader2 size={14} className="spin" /> : <Play size={14} />}
+          Test A2A Smoke Node
+        </button>
+      </div>
+      {testState.error ? <div className="inline-error">{testState.error}</div> : null}
+      {latest ? (
+        <div className="a2a-test-result">
+          <div className="panel-head compact">
+            <div><strong>{testState.kind === "node" ? "Node-backed A2A Result" : "Instance A2A Result"}</strong><span>SendMessage 返回的 Task 摘要</span></div>
+            <span className={`status-pill ${latestTone}`}>{latest.state}</span>
+          </div>
+          <KeyValues data={{
+            task_id: latest.taskId,
+            state: latest.state,
+            auth_status: latest.authStatus,
+            marker_present: latest.markerPresent,
+            node_run_id: latest.nodeRunId,
+            output_manifest: latest.outputManifest,
+          }} />
+          <details className="node-builder-raw"><summary>Raw A2A Task</summary><code>{formatValue(testState.payload)}</code></details>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function InstanceOverview({
   runtime,
   instance,
@@ -14010,6 +14153,11 @@ function InstanceOverview({
             <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="github" />
             <InstanceHealthTestButton provider={provider} runtime={runtime} instance={instance} mode={mode} kind="telegram" />
           </div>
+        </div>
+
+        <div className="flow-panel a2a-agent-flow-panel">
+          <div className="panel-head"><div><strong>A2A Agent</strong><span>Instance 绑定的 Agent Runtime 通过 Runtime Gateway 暴露为 A2A Agent</span></div></div>
+          <InstanceA2AAgentPanel instance={instance} />
         </div>
 
         {configDialogOpen ? (

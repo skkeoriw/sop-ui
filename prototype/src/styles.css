@@ -4902,6 +4902,8 @@ pre {
 
 .kv-row span {
   color: var(--muted);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .kv-row code {
@@ -10104,6 +10106,70 @@ pre {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   padding: 0 14px 14px;
+}
+
+.a2a-agent-flow-panel {
+  overflow: hidden;
+}
+
+.a2a-agent-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.a2a-agent-panel.empty {
+  padding-top: 8px;
+}
+
+.a2a-agent-summary,
+.a2a-smoke-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.a2a-agent-summary > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.a2a-agent-summary strong,
+.a2a-agent-summary small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.a2a-agent-summary small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.a2a-agent-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.a2a-smoke-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.a2a-test-result {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  padding: 10px;
+  min-width: 0;
 }
 
 .instance-health-test {
