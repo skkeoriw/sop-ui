@@ -5403,6 +5403,7 @@ function NodeRunDetailPage({
         selected_outputs: relayMode === "selected_outputs" ? selectedRelayOutputs : [],
         relay_mappings: relayMode === "selected_outputs" ? relayMappingRows : [],
         edge_handoff_instruction: relayInstruction.trim() || `Use the upstream outputs from ${result.nodeRunId} as context for this downstream node run.`,
+        return_immediately: true,
         request_id: `sop-ui-edge-a2a-${Date.now()}`,
       });
     },
