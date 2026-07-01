@@ -138,7 +138,21 @@ type A2ATestState = {
   kind: A2ATestKind;
   loading?: boolean;
   error?: string;
+  rpcUrl?: string;
+  request?: Record<string, unknown>;
   payload?: Record<string, unknown>;
+};
+type A2APartPreview = {
+  kind: string;
+  filename: string;
+  mediaType: string;
+  text: string;
+};
+type A2AArtifactPreview = {
+  name: string;
+  description: string;
+  parts: A2APartPreview[];
+  text: string;
 };
 type WorkflowDraftEdgeStatus = "compatible" | "needs_review" | "blocked" | "incompatible" | "stale";
 type WorkflowDraftNode = {
@@ -1072,10 +1086,108 @@ function a2aTaskFromPayload(payload: Record<string, unknown> | undefined) {
   return typeof result === "object" && result ? result as Record<string, unknown> : payload;
 }
 
+function a2aRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function a2aArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function a2aValueText(value: unknown) {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value === "string") return value;
+  return formatValue(value);
+}
+
+function a2aPartPreview(part: unknown): A2APartPreview {
+  const record = a2aRecord(part);
+  const content = a2aRecord(record.content);
+  const contentCase = String(content.$case || content.case || "");
+  const mediaType = String(record.mediaType || record.media_type || "");
+  const filename = String(record.filename || "");
+  if (typeof record.text === "string") {
+    return { kind: "text", filename, mediaType, text: record.text };
+  }
+  if (contentCase === "text") {
+    return { kind: "text", filename, mediaType, text: a2aValueText(content.value) };
+  }
+  if (record.data !== undefined) {
+    return { kind: "data", filename, mediaType: mediaType || "application/json", text: a2aValueText(record.data) };
+  }
+  if (contentCase === "data") {
+    return { kind: "data", filename, mediaType: mediaType || "application/json", text: a2aValueText(content.value) };
+  }
+  if (record.url !== undefined) {
+    return { kind: "url", filename, mediaType, text: a2aValueText(record.url) };
+  }
+  if (contentCase === "url") {
+    return { kind: "url", filename, mediaType, text: a2aValueText(content.value) };
+  }
+  if (record.raw !== undefined) {
+    return { kind: "raw", filename, mediaType, text: a2aValueText(record.raw) };
+  }
+  if (contentCase === "raw") {
+    return { kind: "raw", filename, mediaType, text: a2aValueText(content.value) };
+  }
+  return { kind: "unknown", filename, mediaType, text: a2aValueText(record) };
+}
+
+function a2aMessageText(message: unknown) {
+  const parts = a2aArray(a2aRecord(message).parts).map(a2aPartPreview).filter((part) => part.text);
+  return parts.map((part) => part.text).join("\n").trim();
+}
+
+function a2aTaskMessageText(task: Record<string, unknown>) {
+  const status = a2aRecord(task.status);
+  return a2aMessageText(status.message) || a2aMessageText(task.message);
+}
+
+function a2aArtifactPreviews(task: Record<string, unknown>): A2AArtifactPreview[] {
+  return a2aArray(task.artifacts).map((artifact, index) => {
+    const record = a2aRecord(artifact);
+    const parts = a2aArray(record.parts).map(a2aPartPreview).filter((part) => part.text);
+    return {
+      name: String(record.name || record.artifactId || `artifact-${index + 1}`),
+      description: String(record.description || ""),
+      parts,
+      text: parts.map((part) => part.text).join("\n").trim(),
+    };
+  }).filter((artifact) => artifact.parts.length || artifact.text);
+}
+
+function a2aPrimaryResponse(messageText: string, artifacts: A2AArtifactPreview[]) {
+  const preferred = artifacts.find((artifact) => /agent-response|smoke-result|response|result/i.test(artifact.name) && artifact.text)
+    || artifacts.find((artifact) => artifact.text);
+  return (preferred?.text || messageText || "").trim();
+}
+
+function a2aRequestSummary(request: Record<string, unknown> | undefined, rpcUrl = "") {
+  const params = a2aRecord(request?.params);
+  const message = a2aRecord(params.message);
+  const configuration = a2aRecord(params.configuration);
+  const acceptedOutputModes = a2aArray(configuration.acceptedOutputModes);
+  return {
+    endpoint: rpcUrl || "-",
+    jsonrpc: String(request?.jsonrpc || "-"),
+    method: String(request?.method || "-"),
+    role: String(message.role || "-"),
+    parts: String(a2aArray(message.parts).length || "-"),
+    accepted_output_modes: acceptedOutputModes.length ? acceptedOutputModes.join(", ") : "-",
+  };
+}
+
+function a2aRequestMessageText(request: Record<string, unknown> | undefined) {
+  const params = a2aRecord(request?.params);
+  return a2aMessageText(params.message);
+}
+
 function a2aTaskStatus(payload: Record<string, unknown> | undefined) {
   const task = a2aTaskFromPayload(payload);
   const status = typeof task.status === "object" && task.status ? task.status as Record<string, unknown> : {};
   const metadata = typeof task.metadata === "object" && task.metadata ? task.metadata as Record<string, unknown> : {};
+  const messageText = a2aTaskMessageText(task);
+  const artifacts = a2aArtifactPreviews(task);
   return {
     task,
     state: String(status.state || "-"),
@@ -1084,34 +1196,42 @@ function a2aTaskStatus(payload: Record<string, unknown> | undefined) {
     nodeRunId: String(metadata.node_run_id || "-"),
     outputManifest: String(metadata.output_manifest || "-"),
     markerPresent: JSON.stringify(payload || {}).includes("sop-a2a-"),
+    messageText,
+    artifacts,
+    primaryResponse: a2aPrimaryResponse(messageText, artifacts),
   };
 }
 
 async function sendA2ASmoke(rpcUrl: string, kind: A2ATestKind) {
   const marker = kind === "node" ? "sop-a2a-node-ok" : "sop-a2a-agent-ok";
+  const request = {
+    jsonrpc: "2.0",
+    id: `sop-ui-${kind}-smoke-${Date.now()}`,
+    method: "message/send",
+    params: {
+      message: {
+        role: "user",
+        parts: [{ text: `Print exactly ${marker}.` }],
+      },
+      configuration: {
+        acceptedOutputModes: ["text/plain", "application/json"],
+        returnImmediately: false,
+      },
+      metadata: { source: "sop-ui.instance-a2a-panel", smoke_kind: kind },
+    },
+  };
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: `sop-ui-${kind}-smoke-${Date.now()}`,
-      method: "message/send",
-      params: {
-        message: {
-          role: "user",
-          parts: [{ text: `Print exactly ${marker}.` }],
-        },
-        configuration: {
-          acceptedOutputModes: ["text/plain", "application/json"],
-          returnImmediately: false,
-        },
-        metadata: { source: "sop-ui.instance-a2a-panel", smoke_kind: kind },
-      },
-    }),
+    body: JSON.stringify(request),
   });
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status}: ${text.slice(0, 300)}`);
-  return JSON.parse(text) as Record<string, unknown>;
+  return {
+    rpcUrl,
+    request,
+    response: JSON.parse(text) as Record<string, unknown>,
+  };
 }
 
 function searchForNodeRunsPage() {
@@ -13852,20 +13972,111 @@ function InstanceConfigEditor({
   );
 }
 
+function A2AExchangeModule({
+  kind,
+  rpcUrl,
+  request,
+  payload,
+}: {
+  kind: A2ATestKind;
+  rpcUrl?: string;
+  request?: Record<string, unknown>;
+  payload?: Record<string, unknown>;
+}) {
+  const latest = payload ? a2aTaskStatus(payload) : undefined;
+  const latestTone = latest?.state.toLowerCase().includes("completed") ? "done" : latest?.authStatus === "not_verifiable_by_default" ? "waiting" : latest ? "failed" : "waiting";
+  const requestText = a2aRequestMessageText(request);
+
+  return (
+    <div className="a2a-exchange-module">
+      <div className="panel-head compact">
+        <div>
+          <strong>{kind === "node" ? "Built-in Smoke Node A2A Exchange" : "Instance Agent A2A Exchange"}</strong>
+          <span>JSON-RPC SendMessage 请求与标准 A2A Task 返回</span>
+        </div>
+        {latest ? <span className={`status-pill ${latestTone}`}>{latest.state}</span> : <span className="status-pill waiting">pending</span>}
+      </div>
+      <div className="a2a-exchange-grid">
+        <section className="a2a-exchange-card">
+          <div className="a2a-exchange-title">
+            <strong>A2A Request</strong>
+            <small>Message / Parts</small>
+          </div>
+          <KeyValues data={a2aRequestSummary(request, rpcUrl)} />
+          {requestText ? (
+            <div className="a2a-response-block">
+              <span>Request Text Part</span>
+              <pre>{requestText}</pre>
+            </div>
+          ) : null}
+          {request ? <details className="node-builder-raw"><summary>Raw A2A Request</summary><code>{formatValue(request)}</code></details> : null}
+        </section>
+        <section className="a2a-exchange-card">
+          <div className="a2a-exchange-title">
+            <strong>A2A Response</strong>
+            <small>Task / Status / Artifacts</small>
+          </div>
+          {latest ? (
+            <>
+              <KeyValues data={{
+                task_id: latest.taskId,
+                state: latest.state,
+                auth_status: latest.authStatus,
+                marker_present: latest.markerPresent,
+                node_run_id: latest.nodeRunId,
+                output_manifest: latest.outputManifest,
+              }} />
+              {latest.primaryResponse ? (
+                <div className="a2a-response-block primary">
+                  <span>Agent Response</span>
+                  <pre>{latest.primaryResponse}</pre>
+                </div>
+              ) : null}
+              {latest.messageText && latest.messageText !== latest.primaryResponse ? (
+                <div className="a2a-response-block">
+                  <span>Status Message</span>
+                  <pre>{latest.messageText}</pre>
+                </div>
+              ) : null}
+              {latest.artifacts.length ? (
+                <div className="a2a-artifact-list">
+                  {latest.artifacts.map((artifact, artifactIndex) => (
+                    <div className="a2a-artifact-item" key={`${artifact.name}-${artifactIndex}`}>
+                      <div>
+                        <strong>{artifact.name}</strong>
+                        {artifact.description ? <small>{artifact.description}</small> : null}
+                      </div>
+                      {artifact.parts.map((part, partIndex) => (
+                        <div className="a2a-part-preview" key={`${artifact.name}-${part.kind}-${partIndex}`}>
+                          <span>{part.kind}{part.filename ? ` · ${part.filename}` : ""}{part.mediaType ? ` · ${part.mediaType}` : ""}</span>
+                          <pre>{part.text}</pre>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <details className="node-builder-raw"><summary>Raw A2A Response</summary><code>{formatValue(payload)}</code></details>
+            </>
+          ) : <Empty text="等待 A2A Response" />}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function InstanceA2AAgentPanel({ instance }: { instance?: Instance }) {
   const agent = instance?.a2aAgent;
   const [testState, setTestState] = useState<A2ATestState>({ kind: "instance" });
   const nodeRpcUrl = a2aNodeRpcUrl(agent);
-  const latest = testState.payload ? a2aTaskStatus(testState.payload) : undefined;
-  const latestTone = latest?.state === "completed" ? "done" : latest?.authStatus === "not_verifiable_by_default" ? "waiting" : latest ? "failed" : "waiting";
 
   async function runSmoke(kind: A2ATestKind) {
     const rpcUrl = kind === "node" ? nodeRpcUrl : agent?.rpcUrl || "";
     if (!rpcUrl) return;
     setTestState({ kind, loading: true });
     try {
-      const payload = await sendA2ASmoke(rpcUrl, kind);
-      setTestState({ kind, payload });
+      const result = await sendA2ASmoke(rpcUrl, kind);
+      setTestState({ kind, rpcUrl: result.rpcUrl, request: result.request, payload: result.response });
     } catch (error) {
       setTestState({ kind, error: error instanceof Error ? error.message : String(error) });
     }
@@ -13908,27 +14119,11 @@ function InstanceA2AAgentPanel({ instance }: { instance?: Instance }) {
         </button>
         <button type="button" className="btn" disabled={!nodeRpcUrl || testState.loading} onClick={() => { void runSmoke("node"); }}>
           {testState.loading && testState.kind === "node" ? <Loader2 size={14} className="spin" /> : <Play size={14} />}
-          Test A2A Smoke Node
+          Test Built-in A2A Smoke Node
         </button>
       </div>
       {testState.error ? <div className="inline-error">{testState.error}</div> : null}
-      {latest ? (
-        <div className="a2a-test-result">
-          <div className="panel-head compact">
-            <div><strong>{testState.kind === "node" ? "Node-backed A2A Result" : "Instance A2A Result"}</strong><span>SendMessage 返回的 Task 摘要</span></div>
-            <span className={`status-pill ${latestTone}`}>{latest.state}</span>
-          </div>
-          <KeyValues data={{
-            task_id: latest.taskId,
-            state: latest.state,
-            auth_status: latest.authStatus,
-            marker_present: latest.markerPresent,
-            node_run_id: latest.nodeRunId,
-            output_manifest: latest.outputManifest,
-          }} />
-          <details className="node-builder-raw"><summary>Raw A2A Task</summary><code>{formatValue(testState.payload)}</code></details>
-        </div>
-      ) : null}
+      {testState.request || testState.payload ? <A2AExchangeModule kind={testState.kind} rpcUrl={testState.rpcUrl} request={testState.request} payload={testState.payload} /> : null}
     </div>
   );
 }
