@@ -357,7 +357,12 @@ const DEFAULT_HERMES_SMOKE_ROUTE = "sop-runtime-hermes-smoke";
 const RUNTIME_MANAGEMENT_FORM_STORAGE_KEY = "sop-ui.runtime-management.form.v1";
 const WORKFLOW_DRAFT_STORAGE_KEY = "sop-ui.workflow-draft-builder.v1";
 const DEFAULT_WORKFLOW_DRAFT_SOURCE_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
-const WORKFLOW_DRAFT_NODE_PRIORITY = ["youtube-fetch", "youtube-deep-research", "wiki-build"];
+const YOUTUBE_A2A_METADATA_NODE_ID = "youtube-metadata-fetch-a2a";
+const YOUTUBE_A2A_DEEP_RESEARCH_NODE_ID = "youtube-deep-research-a2a";
+const YOUTUBE_A2A_EDGE_ID = "youtube-metadata-fetch-a2a-to-youtube-deep-research-a2a";
+const YOUTUBE_A2A_EDGE_INSTRUCTION = "把 YouTube Metadata Fetch A2A 的全部输出作为素材交给 YouTube Deep Research A2A。下游优先使用 metadata_json/result_json/source_url_txt 中的视频 URL、标题、频道、发布时间和摘要字段；如果存在多个 URL，以 source_url 或 url 字段为准。";
+const YOUTUBE_WIKI_TEMPLATE_NODE_IDS = ["youtube-fetch", "youtube-deep-research", "wiki-build"];
+const WORKFLOW_DRAFT_NODE_PRIORITY = [YOUTUBE_A2A_METADATA_NODE_ID, YOUTUBE_A2A_DEEP_RESEARCH_NODE_ID, ...YOUTUBE_WIKI_TEMPLATE_NODE_IDS];
 type RuntimeManagementAction = "create-runtime" | "delete-runtime" | "create-instance" | "delete-instance";
 type AgentRuntimeId = "hermes" | "openclaw" | "codex";
 const AGENT_RUNTIME_OPTIONS: Array<{ id: AgentRuntimeId; label: string; description: string }> = [
@@ -10909,8 +10914,54 @@ function WorkflowCatalog({
     setDraftEdgeSaveStates({});
     setWorkflowDraftRunState({});
   }
+  function seedYoutubeA2aDraft() {
+    const from = nodesById.get(YOUTUBE_A2A_METADATA_NODE_ID);
+    const to = nodesById.get(YOUTUBE_A2A_DEEP_RESEARCH_NODE_ID);
+    if (!from || !to) {
+      setDraftCanvasMessage("无法生成 A2A 链路：当前 Runtime 还没有加载 YouTube Metadata Fetch A2A 或 YouTube Deep Research A2A 节点。");
+      return;
+    }
+    const nextNodes = [from, to].map((node) => ({ nodeId: node.nodeId, signature: workflowDraftNodeSignature(node) }));
+    const nextPositions = {
+      [from.nodeId]: { x: 20, y: 130 },
+      [to.nodeId]: { x: 420, y: 130 },
+    };
+    const nextEdge: WorkflowDraftEdge = {
+      id: YOUTUBE_A2A_EDGE_ID,
+      from: from.nodeId,
+      to: to.nodeId,
+      sourceIntent: workflowDraftNodeOutputIntent(from),
+      targetIntent: workflowDraftNodeInputIntent(to),
+      instruction: YOUTUBE_A2A_EDGE_INSTRUCTION,
+      fromSignature: workflowDraftNodeSignature(from),
+      toSignature: workflowDraftNodeSignature(to),
+      relayMode: "all_outputs",
+      relayMappings: [],
+    };
+    setDraft({
+      name: "youtube-a2a-research-workflow",
+      goal: "Use A2A handoff to fetch YouTube metadata first, then pass the complete artifact packet to the Deep Research agent for a richer research output.",
+      nodes: nextNodes,
+      edges: [nextEdge],
+      positions: nextPositions,
+    });
+    setDraftNodePositions(nextPositions);
+    setDraftFromNode(from.nodeId);
+    setDraftToNode(to.nodeId);
+    setSelectedDraftNodeId("");
+    setSelectedDraftEdgeId(nextEdge.id);
+    setActiveDraftHandoffNodeId("");
+    setDraftAgentEvaluations({});
+    setDraftEdgeSimulationStates({});
+    setDraftEdgeSaveStates({});
+    setWorkflowDraftRunState({});
+    if (workflows.some((workflow) => workflow.workflowId === "youtube-research-wiki")) {
+      setSelectedWorkflowId("youtube-research-wiki");
+    }
+    setDraftCanvasMessage(`已生成正式 A2A 链路：${from.nodeId} -> ${to.nodeId}`);
+  }
   function seedYoutubeWikiDraft() {
-    const seedNodes = WORKFLOW_DRAFT_NODE_PRIORITY
+    const seedNodes = YOUTUBE_WIKI_TEMPLATE_NODE_IDS
       .map((nodeId) => nodesById.get(nodeId))
       .filter(Boolean) as NodeRegistryItem[];
     const nextNodes = seedNodes.map((node) => ({ nodeId: node.nodeId, signature: workflowDraftNodeSignature(node) }));
@@ -10962,6 +11013,8 @@ function WorkflowCatalog({
   const draftEdgeDisabledReason = workflowDraftEdgeDisabledReason(draft, draftFromNode, draftToNode, nodesById);
   const canAddEdge = !draftEdgeDisabledReason;
   const draftBuilderVisible = builderOnly || draftBuilderOpen;
+  const youtubeA2aTemplateReady = nodesById.has(YOUTUBE_A2A_METADATA_NODE_ID) && nodesById.has(YOUTUBE_A2A_DEEP_RESEARCH_NODE_ID);
+  const youtubeA2aTemplateActive = draft.edges.some((edge) => edge.id === YOUTUBE_A2A_EDGE_ID || (edge.from === YOUTUBE_A2A_METADATA_NODE_ID && edge.to === YOUTUBE_A2A_DEEP_RESEARCH_NODE_ID));
   const workflowDraftAiReadyCount = draft.edges.filter((edge) => edgeHandoffAgentCanSave(draftAgentEvaluations[edge.id]?.evaluation) && edgeHandoffAgentIsAppliedForEdge(edge, draftAgentEvaluations[edge.id])).length;
   const workflowDraftRuntimeSopPath = String(workflowDraftRunState.runtimeSopResult?.runtime_sop_path || workflowDraftRunState.runtimeSopResult?.runtimeSopPath || "");
   const workflowDraftSaveStatus = String(safeRecord(workflowDraftRunState.saveResult?.validation).status || "-");
@@ -11732,8 +11785,8 @@ function WorkflowCatalog({
       {builderOnly && !routeEdgeId && <section className={`flow-panel workflow-draft-builder ${draftBuilderVisible ? "open" : "collapsed"}`}>
         <div className="panel-head">
           <div>
-            <strong>New Workflow Draft Builder</strong>
-            <span>只用于新建/试验 Edge 草稿，不会修改当前已有 Workflow Definition。</span>
+            <strong>Workflow Draft Canvas</strong>
+            <span>把 Runtime Node Catalog 里的 A2A Node 连接成可保存、可试运行、可发布的 Workflow Edge。</span>
           </div>
           <div className="draft-builder-status">
             {!builderOnly && (
@@ -11754,27 +11807,43 @@ function WorkflowCatalog({
         )}
         <div className="workflow-draft-notice">
           <AlertTriangle size={16} />
-          <span>这里所有编辑都会自动保存为当前 Instance 的 Workflow Draft。只有点击“发布到当前 Runtime”后，才会出现在 Workflow Definition List；源码 SOP 仍保持不变。</span>
+          <span>这里编辑的是当前 Instance 的 Workflow Draft。保存和发布都只影响 Runtime 本地定义；源码 SOP 仓库不会被隐式修改。</span>
         </div>
         <div className="workflow-draft-concept-strip">
           <article>
             <span>1</span>
-            <strong>选择或创建 Edge</strong>
-            <small>节点是固定 skill；Edge 才描述两个 agent 之间如何交接。</small>
+            <strong>选择 A2A Node</strong>
+            <small>节点来自 Runtime Node Catalog，每个节点都可以作为 A2A Agent 被调用。</small>
           </article>
           <article>
             <span>2</span>
-            <strong>填写 Edge 交接说明</strong>
-            <small>这里就是之前讨论的“粘合剂”：把业务意图写在边上，而不是写死到节点里。</small>
+            <strong>连接正式 Edge</strong>
+            <small>Edge 保存上游产物如何包装成 A2A Message，以及下游如何消费。</small>
           </article>
           <article>
             <span>3</span>
-            <strong>检查下游 Agent 提示词</strong>
-            <small>系统把上下游 skill 说明、产物契约和 Edge 交接说明合成运行时指导提示词。</small>
+            <strong>发布 Runtime Workflow</strong>
+            <small>评估通过后生成 Runtime SOP 快照，并发布为可运行的 workflow definition。</small>
+          </article>
+        </div>
+        <div className="workflow-draft-template-grid">
+          <article className={`workflow-draft-template-card ${youtubeA2aTemplateActive ? "active" : ""}`}>
+            <div>
+              <span className={`status-pill ${youtubeA2aTemplateReady ? "done" : "failed"}`}>
+                {youtubeA2aTemplateReady ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                {youtubeA2aTemplateReady ? "A2A nodes ready" : "A2A nodes missing"}
+              </span>
+              <strong>YouTube A2A Research</strong>
+              <small>{YOUTUBE_A2A_METADATA_NODE_ID} → {YOUTUBE_A2A_DEEP_RESEARCH_NODE_ID}</small>
+              <p>把元数据节点的真实产物整包作为 A2A Message 交给深度研究节点，形成这次要持久化的正式 Canvas Edge。</p>
+            </div>
+            <button type="button" className="btn primary compact" disabled={!youtubeA2aTemplateReady} onClick={seedYoutubeA2aDraft}>
+              <Workflow size={14} />{youtubeA2aTemplateActive ? "重建 A2A 链路" : "生成 A2A 链路"}
+            </button>
           </article>
         </div>
         <div className="workflow-draft-toolbar">
-          <button type="button" className="btn primary" disabled={!WORKFLOW_DRAFT_NODE_PRIORITY.every((nodeId) => nodesById.has(nodeId))} onClick={seedYoutubeWikiDraft}>
+          <button type="button" className="btn" disabled={!YOUTUBE_WIKI_TEMPLATE_NODE_IDS.every((nodeId) => nodesById.has(nodeId))} onClick={seedYoutubeWikiDraft}>
             <Workflow size={15} />生成三节点 YouTube Wiki 草稿
           </button>
           <button type="button" className="btn" onClick={resetDraft}>

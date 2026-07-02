@@ -8117,6 +8117,53 @@ pre {
   padding: 0 12px;
 }
 
+.workflow-draft-template-grid {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 0 12px;
+}
+
+.workflow-draft-template-card {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+}
+
+.workflow-draft-template-card.active {
+  border-color: #86efac;
+  background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+}
+
+.workflow-draft-template-card > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.workflow-draft-template-card strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.workflow-draft-template-card small,
+.workflow-draft-template-card p {
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .workflow-draft-run-panel {
   min-width: 0;
   display: grid;
@@ -8310,7 +8357,7 @@ pre {
 .workflow-draft-layout {
   min-width: 0;
   display: grid;
-  grid-template-columns: 270px minmax(460px, 1fr) 340px;
+  grid-template-columns: 300px minmax(620px, 1fr) 360px;
   gap: 12px;
   padding: 0 12px 12px;
   align-items: stretch;
@@ -8497,7 +8544,7 @@ pre {
 
 .workflow-draft-react-flow {
   min-width: 0;
-  height: 560px;
+  height: 640px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -14333,6 +14380,11 @@ pre {
 
   .workflow-draft-run-actions {
     justify-content: flex-start;
+  }
+
+  .workflow-draft-template-card {
+    display: grid;
+    align-items: stretch;
   }
 
   .workflow-draft-edge-form {
